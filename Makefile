@@ -1,7 +1,7 @@
 LEFTHOOK_MODULE  ?= github.com/evilmartians/lefthook/v2
 LEFTHOOK_VERSION ?= v2.1.5
 
-.PHONY: help build test test-all test-integration bench fmt lint clean coverage govulncheck hooks examples regen-schema
+.PHONY: help build test test-all test-integration bench fmt lint clean coverage govulncheck hooks examples regen-schema shim install-shim
 
 help:
 	@echo "Codex Agent SDK for Go - Development Tasks"
@@ -84,6 +84,17 @@ hooks:
 	@mkdir -p .bin
 	@GOBIN=$(CURDIR)/.bin go install $(LEFTHOOK_MODULE)@$(LEFTHOOK_VERSION)
 	@PATH="$(CURDIR)/.bin:$$PATH" $(CURDIR)/.bin/lefthook install
+
+shim:
+	@echo "Building codex-sdk-hook-shim..."
+	@mkdir -p .bin
+	@go build -o .bin/codex-sdk-hook-shim ./cmd/codex-sdk-hook-shim/
+	@echo "Shim built at .bin/codex-sdk-hook-shim"
+
+install-shim:
+	@echo "Installing codex-sdk-hook-shim via go install..."
+	@go install ./cmd/codex-sdk-hook-shim/
+	@echo "Shim installed at $$(go env GOBIN || echo $$HOME/go/bin)/codex-sdk-hook-shim"
 
 regen-schema:
 	@echo "Regenerating JSON schema from local codex binary..."
