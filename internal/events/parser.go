@@ -172,6 +172,12 @@ func ParseEvent(n jsonrpc.Notification) (types.ThreadEvent, error) {
 	case "fuzzyFileSearch/sessionCompleted":
 		return &types.FuzzyFileSearchSessionCompleted{Params: cloneRaw(n.Params)}, nil
 
+	// --- Hooks (v0.2.0 observer; require --enable codex_hooks) ---
+	case "hook/started":
+		return parseHookEvent(n.Params, true)
+	case "hook/completed":
+		return parseHookEvent(n.Params, false)
+
 	// --- Errors ---
 	case "error":
 		return parseErrorEvent(n.Params)
@@ -894,6 +900,23 @@ func parseWindowsWorldWritableWarning(raw json.RawMessage) (types.ThreadEvent, e
 		FailedScan:  env.FailedScan,
 		SamplePaths: env.SamplePaths,
 	}, nil
+}
+
+// parseHookEvent handles both hook/started and hook/completed. started is
+// true for hook/started, false for hook/completed.
+func parseHookEvent(raw json.RawMessage, started bool) (types.ThreadEvent, error) {
+	var env struct {
+		ThreadID string               `json:"threadId"`
+		TurnID   *string              `json:"turnId"`
+		Run      types.HookRunSummary `json:"run"`
+	}
+	if err := unmarshalTo(raw, &env); err != nil {
+		return nil, err
+	}
+	if started {
+		return &types.HookStarted{ThreadID: env.ThreadID, TurnID: env.TurnID, Run: env.Run}, nil
+	}
+	return &types.HookCompleted{ThreadID: env.ThreadID, TurnID: env.TurnID, Run: env.Run}, nil
 }
 
 func parseWindowsSandboxSetupCompleted(raw json.RawMessage) (types.ThreadEvent, error) {

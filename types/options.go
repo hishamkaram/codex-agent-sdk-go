@@ -137,6 +137,36 @@ func (o *CodexOptions) WithApprovalCallback(cb ApprovalCallback) *CodexOptions {
 	return o
 }
 
+// WithFeatureEnabled appends one or more `--enable <name>` flags to the
+// `codex app-server` argv. Feature flags gate experimental codex
+// subsystems; see `codex features list` for the current set.
+//
+// Repeat calls accumulate — WithFeatureEnabled("a").WithFeatureEnabled("b")
+// enables both.
+func (o *CodexOptions) WithFeatureEnabled(names ...string) *CodexOptions {
+	for _, n := range names {
+		if n == "" {
+			continue
+		}
+		o.ExtraArgs = append(o.ExtraArgs, "--enable", n)
+	}
+	return o
+}
+
+// WithHooks is the convenience shortcut for enabling the codex_hooks
+// feature flag. When true, codex emits hook/started and hook/completed
+// notifications for registered hook handlers (see
+// ~/.codex/hooks.json or a CODEX_HOME override). The SDK observes them
+// as *types.HookStarted and *types.HookCompleted events.
+//
+// When false or unset, hook wire methods are never emitted.
+func (o *CodexOptions) WithHooks(enabled bool) *CodexOptions {
+	if enabled {
+		return o.WithFeatureEnabled("codex_hooks")
+	}
+	return o
+}
+
 // ThreadOptions overrides per-thread defaults when calling StartThread or
 // ResumeThread. Zero-value fields fall back to the CodexOptions defaults.
 type ThreadOptions struct {

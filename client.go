@@ -287,6 +287,48 @@ func extractThreadIDFromEvent(ev types.ThreadEvent) string {
 		return e.ThreadID
 	case *types.ContextCompacted:
 		return e.ThreadID
+	case *types.HookStarted:
+		return e.ThreadID
+	case *types.HookCompleted:
+		return e.ThreadID
+	case *types.ThreadArchived:
+		return e.ThreadID
+	case *types.ThreadUnarchived:
+		return e.ThreadID
+	case *types.ThreadClosed:
+		return e.ThreadID
+	case *types.ThreadNameUpdated:
+		return e.ThreadID
+	case *types.ThreadStatusChanged:
+		return e.ThreadID
+	case *types.TurnDiffUpdated:
+		return e.ThreadID
+	case *types.TurnPlanUpdated:
+		return e.ThreadID
+	case *types.ItemGuardianApprovalReviewStarted:
+		return e.ThreadID
+	case *types.ItemGuardianApprovalReviewCompleted:
+		return e.ThreadID
+	case *types.ModelRerouted:
+		return e.ThreadID
+	case *types.ServerRequestResolved:
+		return e.ThreadID
+	case *types.ThreadRealtimeStarted:
+		return e.ThreadID
+	case *types.ThreadRealtimeClosed:
+		return e.ThreadID
+	case *types.ThreadRealtimeError:
+		return e.ThreadID
+	case *types.ThreadRealtimeItemAdded:
+		return e.ThreadID
+	case *types.ThreadRealtimeOutputAudioDelta:
+		return e.ThreadID
+	case *types.ThreadRealtimeSdp:
+		return e.ThreadID
+	case *types.ThreadRealtimeTranscriptDelta:
+		return e.ThreadID
+	case *types.ThreadRealtimeTranscriptDone:
+		return e.ThreadID
 	}
 	return ""
 }
