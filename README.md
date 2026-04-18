@@ -141,9 +141,28 @@ opts = opts.WithApprovalCallback(func(ctx context.Context, req types.ApprovalReq
 - Codex-as-MCP-server mode (experimental upstream)
 - Dynamic OpenAI pricing table (use static rates in this SDK; fetch at integration time if needed)
 
-## Roadmap
+## Docs
 
-See `/home/hesham/.claude/plans/jaunty-crafting-flamingo.md` (local) for the full scaffolding + feature-slice plan.
+- [`docs/getting-started.md`](docs/getting-started.md) — install, first query, multi-turn, streaming, resume, approvals in ~2 pages
+- [`docs/architecture.md`](docs/architecture.md) — the four layers, dispatcher goroutine, turn lock, concurrency contract, shutdown ladder
+- [`docs/wire-protocol.md`](docs/wire-protocol.md) — JSON-RPC method reference, wire quirks (flat vs nested IDs, per-item delta methods), known-unknown methods
+- [`docs/approvals.md`](docs/approvals.md) — approval request/decision taxonomy, sandbox × policy matrix, deadlock warning
+
+## Examples
+
+Seven runnable examples under [`examples/`](examples/):
+
+| Example | What it shows |
+|---|---|
+| [`simple_query`](examples/simple_query/main.go) | One-shot `Query()` |
+| [`streaming`](examples/streaming/main.go) | Multi-turn `RunStreamed` + delta streaming |
+| [`resume`](examples/resume/main.go) | Persistent thread across process restarts |
+| [`fork`](examples/fork/main.go) | Branching a thread |
+| [`with_approvals`](examples/with_approvals/main.go) | Command + file approval callback |
+| [`with_mcp`](examples/with_mcp/main.go) | Registering MCP servers (stdio + HTTP) |
+| [`structured_output`](examples/structured_output/main.go) | JSON-schema-constrained final response |
+
+Build all: `make examples`. Run any: `go run ./examples/<name>`.
 
 ## License
 
