@@ -14,7 +14,7 @@
 //	for event := range events {
 //	    if completed, ok := event.(*types.ItemCompleted); ok {
 //	        if msg, ok := completed.Item.(*types.AgentMessage); ok {
-//	            fmt.Println(msg.Content)
+//	            fmt.Println(msg.Text)
 //	        }
 //	    }
 //	}

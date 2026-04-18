@@ -179,18 +179,18 @@ func TestClient_StartThreadAndRun_HappyPath(t *testing.T) {
 	srv.push(notify("turn/started", map[string]any{"threadId": "T-xyz", "turnId": "U-abc"}))
 	srv.push(notify("item/started", map[string]any{
 		"threadId": "T-xyz", "turnId": "U-abc", "itemId": "I-1",
-		"item": map[string]any{"type": "agent_message", "content": ""},
+		"item": map[string]any{"type": "agentMessage", "text": ""},
 	}))
 	srv.push(notify("item/agentMessage/delta", map[string]any{
 		"threadId": "T-xyz", "turnId": "U-abc", "itemId": "I-1", "delta": "Hello",
 	}))
 	srv.push(notify("item/completed", map[string]any{
 		"threadId": "T-xyz", "turnId": "U-abc", "itemId": "I-1",
-		"item": map[string]any{"type": "agent_message", "content": "Hello"},
+		"item": map[string]any{"type": "agentMessage", "text": "Hello"},
 	}))
 	srv.push(notify("turn/completed", map[string]any{
 		"threadId": "T-xyz", "turnId": "U-abc", "status": "success",
-		"usage": map[string]any{"input_tokens": 10, "output_tokens": 5},
+		"usage": map[string]any{"inputTokens": 10, "outputTokens": 5},
 	}))
 
 	// Drain.
@@ -217,7 +217,7 @@ func TestClient_StartThreadAndRun_HappyPath(t *testing.T) {
 			}
 		case *types.ItemCompleted:
 			saw.itemCompleted = true
-			if msg, ok := e.Item.(*types.AgentMessage); !ok || msg.Content != "Hello" {
+			if msg, ok := e.Item.(*types.AgentMessage); !ok || msg.Text != "Hello" {
 				t.Fatalf("item = %+v", e.Item)
 			}
 		case *types.TurnCompleted:
@@ -261,11 +261,11 @@ func TestClient_ThreadRun_BufferedTurnResult(t *testing.T) {
 		srv.push(notify("turn/started", map[string]any{"threadId": "T1", "turnId": "U1"}))
 		srv.push(notify("item/completed", map[string]any{
 			"threadId": "T1", "turnId": "U1", "itemId": "I-1",
-			"item": map[string]any{"type": "agent_message", "content": "Final answer"},
+			"item": map[string]any{"type": "agentMessage", "text": "Final answer"},
 		}))
 		srv.push(notify("turn/completed", map[string]any{
 			"threadId": "T1", "turnId": "U1", "status": "success",
-			"usage": map[string]any{"input_tokens": 3, "output_tokens": 7},
+			"usage": map[string]any{"inputTokens": 3, "outputTokens": 7},
 		}))
 	}()
 

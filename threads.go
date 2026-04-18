@@ -231,6 +231,11 @@ func (t *Thread) Run(ctx context.Context, prompt string, opts *types.RunOptions)
 		return nil, err
 	}
 	turn := &Turn{ThreadID: t.id}
+	// Track the latest usage snapshot seen on this thread — codex emits
+	// usage via thread/tokenUsage/updated notifications, NOT on
+	// turn/completed directly. We assign the latest snapshot to
+	// turn.Usage when the turn terminates.
+	var latestUsage types.TokenUsage
 	for ev := range events {
 		turn.Events = append(turn.Events, ev)
 		switch e := ev.(type) {
@@ -239,15 +244,28 @@ func (t *Thread) Run(ctx context.Context, prompt string, opts *types.RunOptions)
 		case *types.ItemCompleted:
 			turn.Items = append(turn.Items, e.Item)
 			if msg, ok := e.Item.(*types.AgentMessage); ok {
-				turn.FinalResponse = msg.Content
+				turn.FinalResponse = msg.Text
 			}
+		case *types.TokenUsageUpdated:
+			latestUsage = e.Usage
 		case *types.TurnCompleted:
 			turn.Status = e.Status
-			turn.Usage = e.Usage
+			// Prefer usage on turn/completed (flat shape, forward-compat)
+			// but fall back to the latest tokenUsage snapshot.
+			if e.Usage != (types.TokenUsage{}) {
+				turn.Usage = e.Usage
+			} else {
+				turn.Usage = latestUsage
+			}
 		case *types.TurnFailed:
 			turn.Status = "failed"
 			return turn, types.NewRPCError(-1, e.Message, nil)
 		}
+	}
+	// If we exited without TurnCompleted (e.g., ctx cancel) but saw
+	// usage snapshots, surface them anyway.
+	if turn.Usage == (types.TokenUsage{}) && latestUsage != (types.TokenUsage{}) {
+		turn.Usage = latestUsage
 	}
 	if ctx.Err() != nil {
 		return turn, fmt.Errorf("codex.Thread.Run: %w", ctx.Err())

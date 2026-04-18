@@ -11,7 +11,7 @@ func TestNewCodexOptions_Defaults(t *testing.T) {
 	if o.DefaultSandbox != SandboxReadOnly {
 		t.Fatalf("default sandbox = %q", o.DefaultSandbox)
 	}
-	if o.DefaultApprovalPolicy != ApprovalAuto {
+	if o.DefaultApprovalPolicy != ApprovalOnRequest {
 		t.Fatalf("default approval = %q", o.DefaultApprovalPolicy)
 	}
 	if o.ClientName == "" || o.ClientVersion == "" {

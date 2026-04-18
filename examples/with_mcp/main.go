@@ -30,7 +30,7 @@ func main() {
 			"fetch": types.McpStdioConfig{
 				Command:             "npx",
 				Args:                []string{"-y", "@modelcontextprotocol/server-fetch"},
-				DefaultApprovalMode: types.ApprovalAuto,
+				DefaultApprovalMode: types.ApprovalOnRequest,
 			},
 			"docs": types.McpStreamableHTTPConfig{
 				URL:      "https://mcp.example.com",

@@ -7,6 +7,8 @@ import (
 	"github.com/hishamkaram/codex-agent-sdk-go/types"
 )
 
+// Wire shapes verified against CLI 0.121.0 transcript captures. All
+// discriminators camelCase; field names per ground truth.
 func TestParseItem_KnownSubtypes(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -16,46 +18,56 @@ func TestParseItem_KnownSubtypes(t *testing.T) {
 		check    func(t *testing.T, item types.ThreadItem)
 	}{
 		{
-			name:     "agent_message",
-			raw:      `{"type":"agent_message","content":"Hello"}`,
-			wantType: "agent_message",
+			name:     "agentMessage",
+			raw:      `{"type":"agentMessage","id":"msg_1","text":"Hello","phase":"final_answer"}`,
+			wantType: "agentMessage",
 			check: func(t *testing.T, item types.ThreadItem) {
 				m := item.(*types.AgentMessage)
-				if m.Content != "Hello" {
-					t.Fatalf("content = %q", m.Content)
+				if m.ID != "msg_1" || m.Text != "Hello" || m.Phase != "final_answer" {
+					t.Fatalf("%+v", m)
 				}
 			},
 		},
 		{
-			name:     "user_message",
-			raw:      `{"type":"user_message","content":"Hi"}`,
-			wantType: "user_message",
+			name:     "userMessage",
+			raw:      `{"type":"userMessage","id":"u_1","content":[{"type":"text","text":"Hi"}]}`,
+			wantType: "userMessage",
 			check: func(t *testing.T, item types.ThreadItem) {
 				m := item.(*types.UserMessage)
-				if m.Content != "Hi" {
-					t.Fatalf("content = %q", m.Content)
+				if m.ID != "u_1" || len(m.Content) != 1 {
+					t.Fatalf("%+v", m)
+				}
+				if m.Content[0].Type != "text" || m.Content[0].Text != "Hi" {
+					t.Fatalf("part: %+v", m.Content[0])
 				}
 			},
 		},
 		{
-			name: "command_execution",
-			raw: `{"type":"command_execution","command":"ls","working_directory":"/tmp",` +
-				`"exit_code":0,"stdout":"file1\n","stderr":"","status":"success"}`,
-			wantType: "command_execution",
+			name: "commandExecution",
+			raw: `{"type":"commandExecution","id":"call_1","command":"/bin/bash -lc ls",` +
+				`"cwd":"/tmp","source":"agent","status":"success","exitCode":0,` +
+				`"aggregatedOutput":"file1\n","durationMs":42}`,
+			wantType: "commandExecution",
 			check: func(t *testing.T, item types.ThreadItem) {
 				c := item.(*types.CommandExecution)
-				if c.Command != "ls" || c.Cwd != "/tmp" || c.ExitCode != 0 || c.Status != "success" {
-					t.Fatalf("unexpected: %+v", c)
+				if c.Command != "/bin/bash -lc ls" || c.Cwd != "/tmp" || c.Source != "agent" {
+					t.Fatalf("%+v", c)
 				}
-				if c.Stdout != "file1\n" {
-					t.Fatalf("stdout: %q", c.Stdout)
+				if c.Status != "success" || c.AggregatedOutput != "file1\n" {
+					t.Fatalf("%+v", c)
+				}
+				if c.ExitCode == nil || *c.ExitCode != 0 {
+					t.Fatalf("ExitCode: %v", c.ExitCode)
+				}
+				if c.DurationMs == nil || *c.DurationMs != 42 {
+					t.Fatalf("DurationMs: %v", c.DurationMs)
 				}
 			},
 		},
 		{
-			name:     "file_change",
-			raw:      `{"type":"file_change","path":"/a.go","operation":"modify","diff":"---","status":"success"}`,
-			wantType: "file_change",
+			name:     "fileChange",
+			raw:      `{"type":"fileChange","path":"/a.go","operation":"modify","diff":"---","status":"success"}`,
+			wantType: "fileChange",
 			check: func(t *testing.T, item types.ThreadItem) {
 				f := item.(*types.FileChange)
 				if f.Path != "/a.go" || f.Operation != "modify" || f.Diff != "---" {
@@ -64,10 +76,10 @@ func TestParseItem_KnownSubtypes(t *testing.T) {
 			},
 		},
 		{
-			name: "mcp_tool_call",
-			raw: `{"type":"mcp_tool_call","server_name":"docs","tool_name":"search",` +
+			name: "mcpToolCall",
+			raw: `{"type":"mcpToolCall","serverName":"docs","toolName":"search",` +
 				`"input":{"q":"foo"},"result":{"hits":3},"status":"success"}`,
-			wantType: "mcp_tool_call",
+			wantType: "mcpToolCall",
 			check: func(t *testing.T, item types.ThreadItem) {
 				m := item.(*types.MCPToolCall)
 				if m.ServerName != "docs" || m.ToolName != "search" {
@@ -79,9 +91,9 @@ func TestParseItem_KnownSubtypes(t *testing.T) {
 			},
 		},
 		{
-			name:     "web_search",
-			raw:      `{"type":"web_search","query":"go maps","results":[{"title":"T","url":"U","snippet":"S"}]}`,
-			wantType: "web_search",
+			name:     "webSearch",
+			raw:      `{"type":"webSearch","query":"go maps","results":[{"title":"T","url":"U","snippet":"S"}]}`,
+			wantType: "webSearch",
 			check: func(t *testing.T, item types.ThreadItem) {
 				w := item.(*types.WebSearch)
 				if w.Query != "go maps" || len(w.Results) != 1 || w.Results[0].Title != "T" {
@@ -90,9 +102,9 @@ func TestParseItem_KnownSubtypes(t *testing.T) {
 			},
 		},
 		{
-			name:     "memory_read",
-			raw:      `{"type":"memory_read","query":"k","result":"v"}`,
-			wantType: "memory_read",
+			name:     "memoryRead",
+			raw:      `{"type":"memoryRead","query":"k","result":"v"}`,
+			wantType: "memoryRead",
 			check: func(t *testing.T, item types.ThreadItem) {
 				m := item.(*types.MemoryRead)
 				if m.Query != "k" || m.Result != "v" {
@@ -101,9 +113,9 @@ func TestParseItem_KnownSubtypes(t *testing.T) {
 			},
 		},
 		{
-			name:     "memory_write",
-			raw:      `{"type":"memory_write","key":"k","value":"v"}`,
-			wantType: "memory_write",
+			name:     "memoryWrite",
+			raw:      `{"type":"memoryWrite","key":"k","value":"v"}`,
+			wantType: "memoryWrite",
 			check: func(t *testing.T, item types.ThreadItem) {
 				m := item.(*types.MemoryWrite)
 				if m.Key != "k" || m.Value != "v" {
@@ -144,6 +156,17 @@ func TestParseItem_KnownSubtypes(t *testing.T) {
 				}
 			},
 		},
+		{
+			name:     "systemError",
+			raw:      `{"type":"systemError","id":"err_1","message":"model unavailable"}`,
+			wantType: "systemError",
+			check: func(t *testing.T, item types.ThreadItem) {
+				s := item.(*types.SystemError)
+				if s.ID != "err_1" || s.Message != "model unavailable" {
+					t.Fatalf("%+v", s)
+				}
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -164,7 +187,7 @@ func TestParseItem_KnownSubtypes(t *testing.T) {
 
 func TestParseItem_UnknownTypeFallback(t *testing.T) {
 	t.Parallel()
-	raw := json.RawMessage(`{"type":"future_subtype","brand_new_field":"x"}`)
+	raw := json.RawMessage(`{"type":"futureSubtype","brand_new_field":"x"}`)
 	it, err := ParseItem(raw)
 	if err != nil {
 		t.Fatal(err)
@@ -173,13 +196,13 @@ func TestParseItem_UnknownTypeFallback(t *testing.T) {
 	if !ok {
 		t.Fatalf("got %T, want *UnknownItem", it)
 	}
-	if u.Type != "future_subtype" {
+	if u.Type != "futureSubtype" {
 		t.Fatalf("Type = %q", u.Type)
 	}
 	if string(u.Raw) != string(raw) {
 		t.Fatalf("Raw not preserved: got %q, want %q", u.Raw, raw)
 	}
-	if u.ItemType() != "future_subtype" {
+	if u.ItemType() != "futureSubtype" {
 		t.Fatalf("ItemType() = %q", u.ItemType())
 	}
 }

@@ -22,26 +22,30 @@ const (
 
 // ApprovalPolicy controls when the codex server asks the client (via
 // server-initiated approval requests) before running an action.
+//
+// Values MUST match the server's accepted set. As of CLI 0.121.0 the
+// server rejects anything outside the 5 constants below with a JSON-RPC
+// "unknown variant" error on thread/start.
 type ApprovalPolicy string
 
 const (
-	// ApprovalAuto (default for version-controlled folders) auto-approves
-	// workspace-local reads/edits/commands. Network or out-of-workspace
-	// operations still prompt.
-	ApprovalAuto ApprovalPolicy = "auto"
-
-	// ApprovalReadOnly auto-approves reads; every mutation prompts.
-	ApprovalReadOnly ApprovalPolicy = "read-only"
-
-	// ApprovalUntrusted auto-approves known-safe reads; every state-mutating
-	// command prompts. Strictest practical policy.
+	// ApprovalUntrusted auto-approves known-safe reads; every state-
+	// mutating command prompts. Strictest practical policy.
 	ApprovalUntrusted ApprovalPolicy = "untrusted"
+
+	// ApprovalOnFailure only prompts after a command fails — the server
+	// runs the agent's plan optimistically and escalates on error.
+	ApprovalOnFailure ApprovalPolicy = "on-failure"
+
+	// ApprovalOnRequest is the server default. Prompts for destructive or
+	// out-of-workspace operations; auto-approves workspace-local reads.
+	ApprovalOnRequest ApprovalPolicy = "on-request"
+
+	// ApprovalGranular delegates per-action policy to a ruleset the server
+	// ships (see codex config for the full rule language).
+	ApprovalGranular ApprovalPolicy = "granular"
 
 	// ApprovalNever runs everything without prompting. Dangerous in
 	// combination with SandboxWorkspaceWrite or SandboxDangerFullAccess.
 	ApprovalNever ApprovalPolicy = "never"
-
-	// ApprovalOnRequest prompts only for a specific class of actions
-	// enumerated by the server (e.g., destructive operations).
-	ApprovalOnRequest ApprovalPolicy = "on-request"
 )

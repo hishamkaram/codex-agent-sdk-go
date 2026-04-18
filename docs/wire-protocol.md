@@ -104,6 +104,62 @@ tries flat first, falls back to nested.
 {"method":"turn/started","params":{"threadId":"T1","turnId":"U1"}}
 ```
 
+### Item discriminators are camelCase, not snake_case
+
+Early design used `agent_message`, `user_message`, `command_execution`
+etc. The real wire uses camelCase: `agentMessage`, `userMessage`,
+`commandExecution`, `fileChange`, `mcpToolCall`, `webSearch`,
+`memoryRead`, `memoryWrite`, `plan`, `reasoning`, `systemError`. The
+types package matches this ground truth.
+
+### Field names are camelCase too
+
+Same pattern in individual item fields — `aggregatedOutput` not
+`aggregated_output`, `exitCode` not `exit_code`, `durationMs` not
+`duration_ms`. TokenUsage uses `inputTokens`, `outputTokens`,
+`cachedInputTokens`, `reasoningOutputTokens`, `totalTokens`.
+
+### `AgentMessage.Text` not `AgentMessage.Content`
+
+Wire field is `text`. The struct exposes `Text string` with JSON tag
+`"text"`. `AgentMessage` additionally carries `ID`, `Phase`, and
+`MemoryCitation`.
+
+### `UserMessage.Content` is an ARRAY of parts
+
+```json
+{"type":"userMessage","content":[{"type":"text","text":"Reply with exactly: OK"}]}
+```
+
+The Go type is `Content []UserMessagePart` — not a single string.
+
+### `turn/completed` nests status inside `turn`
+
+```json
+{"threadId":"T1","turn":{"id":"U1","status":"completed","durationMs":2194}}
+```
+
+Status values observed: `"completed"` (success) and `"failed"`. The
+parser tolerates BOTH the nested shape and a flat fallback.
+
+### `turn/completed` does NOT carry usage
+
+Usage flows as a separate stream via `thread/tokenUsage/updated` with
+shape:
+
+```json
+{"threadId":"T1","turnId":"U1",
+ "tokenUsage":{"total":{"totalTokens":12632,"inputTokens":12615,
+                        "cachedInputTokens":4480,"outputTokens":17,
+                        "reasoningOutputTokens":10},
+               "last":{"…per-turn-slice…"},
+               "modelContextWindow":258400}}
+```
+
+The SDK surfaces `total` (running thread total) on
+`TokenUsageUpdated.Usage`. `Thread.Run` tracks the latest snapshot and
+assigns it to `Turn.Usage` when the turn terminates.
+
 ### `item/agentMessage/delta` is a per-item-type delta method
 
 Initial design assumed streaming text came via generic `item/updated`

@@ -60,13 +60,17 @@ than accept.
 
 `CodexOptions.WithApprovalPolicy` sets when the server prompts:
 
+Accepted values are fixed by the codex server (as of CLI 0.121.0 it
+rejects anything outside this set with a JSON-RPC "unknown variant"
+error at `thread/start`):
+
 | Policy | Behavior |
 |---|---|
-| `ApprovalAuto` (default) | Reads + edits + commands inside workspace are auto-approved. Network + out-of-workspace prompt. |
-| `ApprovalReadOnly` | Reads auto-approved. Every mutation prompts. |
 | `ApprovalUntrusted` | Known-safe reads auto-approved. Every state-mutating command prompts. Strictest practical policy. |
+| `ApprovalOnFailure` | Agent runs its plan optimistically; prompts only after a command fails. |
+| `ApprovalOnRequest` (**default**) | Prompts for destructive or out-of-workspace operations; workspace-local reads auto-approved. |
+| `ApprovalGranular` | Delegates per-action policy to a server-side ruleset (see codex config). |
 | `ApprovalNever` | Nothing prompts. Combine with `SandboxReadOnly` or trust the agent completely. |
-| `ApprovalOnRequest` | Server decides per-request which classes of action to ask about. |
 
 ## Sandbox modes
 

@@ -20,7 +20,7 @@ func main() {
 
 	opts := types.NewCodexOptions().
 		WithSandbox(types.SandboxReadOnly).
-		WithApprovalPolicy(types.ApprovalAuto)
+		WithApprovalPolicy(types.ApprovalOnRequest)
 
 	events, err := codex.Query(ctx, "Reply with exactly: OK", opts)
 	if err != nil {
@@ -30,7 +30,7 @@ func main() {
 	for ev := range events {
 		if c, ok := ev.(*types.ItemCompleted); ok {
 			if msg, ok := c.Item.(*types.AgentMessage); ok {
-				fmt.Println(msg.Content)
+				fmt.Println(msg.Text)
 			}
 		}
 		if tc, ok := ev.(*types.TurnCompleted); ok {

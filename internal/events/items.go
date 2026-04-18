@@ -27,53 +27,56 @@ func ParseItem(raw json.RawMessage) (types.ThreadItem, error) {
 	if err := json.Unmarshal(raw, &disc); err != nil {
 		return nil, types.NewJSONDecodeError(string(raw), err)
 	}
+	// Codex uses camelCase discriminators on the wire. See
+	// types/items.go for the complete mapping. Fall through to
+	// UnknownItem for any value not in this switch.
 	switch disc.Type {
-	case "agent_message":
+	case "agentMessage":
 		var it types.AgentMessage
 		if err := json.Unmarshal(raw, &it); err != nil {
-			return nil, wrapParseErr("agent_message", raw, err)
+			return nil, wrapParseErr("agentMessage", raw, err)
 		}
 		return &it, nil
-	case "user_message":
+	case "userMessage":
 		var it types.UserMessage
 		if err := json.Unmarshal(raw, &it); err != nil {
-			return nil, wrapParseErr("user_message", raw, err)
+			return nil, wrapParseErr("userMessage", raw, err)
 		}
 		return &it, nil
-	case "command_execution":
+	case "commandExecution":
 		var it types.CommandExecution
 		if err := json.Unmarshal(raw, &it); err != nil {
-			return nil, wrapParseErr("command_execution", raw, err)
+			return nil, wrapParseErr("commandExecution", raw, err)
 		}
 		return &it, nil
-	case "file_change":
+	case "fileChange":
 		var it types.FileChange
 		if err := json.Unmarshal(raw, &it); err != nil {
-			return nil, wrapParseErr("file_change", raw, err)
+			return nil, wrapParseErr("fileChange", raw, err)
 		}
 		return &it, nil
-	case "mcp_tool_call":
+	case "mcpToolCall":
 		var it types.MCPToolCall
 		if err := json.Unmarshal(raw, &it); err != nil {
-			return nil, wrapParseErr("mcp_tool_call", raw, err)
+			return nil, wrapParseErr("mcpToolCall", raw, err)
 		}
 		return &it, nil
-	case "web_search":
+	case "webSearch":
 		var it types.WebSearch
 		if err := json.Unmarshal(raw, &it); err != nil {
-			return nil, wrapParseErr("web_search", raw, err)
+			return nil, wrapParseErr("webSearch", raw, err)
 		}
 		return &it, nil
-	case "memory_read":
+	case "memoryRead":
 		var it types.MemoryRead
 		if err := json.Unmarshal(raw, &it); err != nil {
-			return nil, wrapParseErr("memory_read", raw, err)
+			return nil, wrapParseErr("memoryRead", raw, err)
 		}
 		return &it, nil
-	case "memory_write":
+	case "memoryWrite":
 		var it types.MemoryWrite
 		if err := json.Unmarshal(raw, &it); err != nil {
-			return nil, wrapParseErr("memory_write", raw, err)
+			return nil, wrapParseErr("memoryWrite", raw, err)
 		}
 		return &it, nil
 	case "plan":
@@ -86,6 +89,12 @@ func ParseItem(raw json.RawMessage) (types.ThreadItem, error) {
 		var it types.Reasoning
 		if err := json.Unmarshal(raw, &it); err != nil {
 			return nil, wrapParseErr("reasoning", raw, err)
+		}
+		return &it, nil
+	case "systemError":
+		var it types.SystemError
+		if err := json.Unmarshal(raw, &it); err != nil {
+			return nil, wrapParseErr("systemError", raw, err)
 		}
 		return &it, nil
 	default:

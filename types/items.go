@@ -10,73 +10,100 @@ import "encoding/json"
 // The interface is sealed via the unexported isThreadItem() marker — only
 // types declared in this package satisfy it. This prevents accidental
 // shape drift and makes exhaustive switch-handling tractable.
+//
+// Field names and JSON tags match the codex server's camelCase wire
+// format (verified against CLI 0.121.0 transcripts).
 type ThreadItem interface {
 	isThreadItem()
 	// ItemType returns the wire-level discriminator string (e.g.,
-	// "agent_message", "command_execution"). UnknownItem returns its Type
-	// field.
+	// "agentMessage", "commandExecution"). UnknownItem returns its
+	// Type field.
 	ItemType() string
 }
 
-// AgentMessage is a text response from the model.
+// AgentMessage is a text response from the model. Wire discriminator:
+// "agentMessage". The payload carries a flat "text" field plus metadata.
 type AgentMessage struct {
-	Content string `json:"content"`
+	ID             string          `json:"id,omitempty"`
+	Text           string          `json:"text"`
+	Phase          string          `json:"phase,omitempty"` // "final_answer" | …
+	MemoryCitation json.RawMessage `json:"memoryCitation,omitempty"`
 }
 
 func (*AgentMessage) isThreadItem()    {}
-func (*AgentMessage) ItemType() string { return "agent_message" }
+func (*AgentMessage) ItemType() string { return "agentMessage" }
 
-// UserMessage is user input submitted to the thread (echoed back in the
-// transcript).
+// UserMessage is user input echoed into the transcript. Content is an
+// ARRAY of parts (text, localImage, etc.) — the server normalizes the
+// client's input.
 type UserMessage struct {
-	Content string `json:"content"`
+	ID      string            `json:"id,omitempty"`
+	Content []UserMessagePart `json:"content,omitempty"`
+}
+
+// UserMessagePart is one element of a UserMessage.Content array.
+type UserMessagePart struct {
+	Type         string          `json:"type"` // "text" | "localImage" | …
+	Text         string          `json:"text,omitempty"`
+	Path         string          `json:"path,omitempty"`
+	TextElements json.RawMessage `json:"text_elements,omitempty"`
 }
 
 func (*UserMessage) isThreadItem()    {}
-func (*UserMessage) ItemType() string { return "user_message" }
+func (*UserMessage) ItemType() string { return "userMessage" }
 
 // CommandExecution reports a shell command the agent ran (or attempted to
-// run — see Status).
+// run — see Status). Wire discriminator: "commandExecution".
 type CommandExecution struct {
-	Command    string `json:"command"`
-	Cwd        string `json:"working_directory,omitempty"`
-	ExitCode   int    `json:"exit_code"`
-	Stdout     string `json:"stdout,omitempty"`
-	Stderr     string `json:"stderr,omitempty"`
-	Status     string `json:"status,omitempty"` // "success" | "failed" | "timed_out" | "denied"
-	DurationMs int64  `json:"duration_ms,omitempty"`
+	ID               string          `json:"id,omitempty"`
+	Command          string          `json:"command"`
+	Cwd              string          `json:"cwd,omitempty"`
+	Source           string          `json:"source,omitempty"` // "agent" | "user"
+	ProcessID        *int            `json:"processId,omitempty"`
+	Status           string          `json:"status,omitempty"` // "inProgress" | "success" | "failed" | "denied"
+	ExitCode         *int            `json:"exitCode,omitempty"`
+	AggregatedOutput string          `json:"aggregatedOutput,omitempty"`
+	DurationMs       *int64          `json:"durationMs,omitempty"`
+	CommandActions   json.RawMessage `json:"commandActions,omitempty"`
 }
 
 func (*CommandExecution) isThreadItem()    {}
-func (*CommandExecution) ItemType() string { return "command_execution" }
+func (*CommandExecution) ItemType() string { return "commandExecution" }
 
-// FileChange describes a single-file edit performed by the agent.
+// FileChange describes a single-file edit performed by the agent. Wire
+// discriminator: "fileChange". Field shapes not yet captured from a real
+// transcript — fields may expand in future versions.
 type FileChange struct {
+	ID        string `json:"id,omitempty"`
 	Path      string `json:"path"`
-	Operation string `json:"operation"` // "create" | "modify" | "delete"
+	Operation string `json:"operation,omitempty"` // "create" | "modify" | "delete"
 	Diff      string `json:"diff,omitempty"`
-	Status    string `json:"status,omitempty"` // "success" | "failed" | "denied"
+	Status    string `json:"status,omitempty"`
 }
 
 func (*FileChange) isThreadItem()    {}
-func (*FileChange) ItemType() string { return "file_change" }
+func (*FileChange) ItemType() string { return "fileChange" }
 
 // MCPToolCall captures a call the agent made to a Model Context Protocol
-// tool.
+// tool. Wire discriminator: "mcpToolCall". Shape inferred — not yet seen
+// in a captured transcript.
 type MCPToolCall struct {
-	ServerName string          `json:"server_name"`
-	ToolName   string          `json:"tool_name"`
+	ID         string          `json:"id,omitempty"`
+	ServerName string          `json:"serverName,omitempty"`
+	ToolName   string          `json:"toolName,omitempty"`
 	Input      json.RawMessage `json:"input,omitempty"`
 	Result     json.RawMessage `json:"result,omitempty"`
-	Status     string          `json:"status,omitempty"` // "success" | "failed" | "denied"
+	Status     string          `json:"status,omitempty"`
 	ErrorText  string          `json:"error,omitempty"`
 }
 
 func (*MCPToolCall) isThreadItem()    {}
-func (*MCPToolCall) ItemType() string { return "mcp_tool_call" }
+func (*MCPToolCall) ItemType() string { return "mcpToolCall" }
 
-// WebSearch records a search the agent performed.
+// WebSearch records a search the agent performed. Wire discriminator:
+// "webSearch". Shape inferred.
 type WebSearch struct {
+	ID      string            `json:"id,omitempty"`
 	Query   string            `json:"query"`
 	Results []WebSearchResult `json:"results,omitempty"`
 }
@@ -89,44 +116,45 @@ type WebSearchResult struct {
 }
 
 func (*WebSearch) isThreadItem()    {}
-func (*WebSearch) ItemType() string { return "web_search" }
+func (*WebSearch) ItemType() string { return "webSearch" }
 
-// MemoryRead captures a lookup against the knowledge store.
+// MemoryRead captures a lookup against the knowledge store. Shape inferred.
 type MemoryRead struct {
+	ID     string `json:"id,omitempty"`
 	Query  string `json:"query"`
 	Result string `json:"result,omitempty"`
 }
 
 func (*MemoryRead) isThreadItem()    {}
-func (*MemoryRead) ItemType() string { return "memory_read" }
+func (*MemoryRead) ItemType() string { return "memoryRead" }
 
-// MemoryWrite captures a write to the knowledge store.
+// MemoryWrite captures a write to the knowledge store. Shape inferred.
 type MemoryWrite struct {
+	ID    string `json:"id,omitempty"`
 	Key   string `json:"key"`
 	Value string `json:"value"`
 }
 
 func (*MemoryWrite) isThreadItem()    {}
-func (*MemoryWrite) ItemType() string { return "memory_write" }
+func (*MemoryWrite) ItemType() string { return "memoryWrite" }
 
-// Plan is a structured plan the agent produced (via the /plan tool or
-// explicit plan() call).
+// Plan is a structured plan the agent produced. Shape inferred.
 type Plan struct {
+	ID      string `json:"id,omitempty"`
 	Content string `json:"content"`
-	Status  string `json:"status,omitempty"` // "active" | "completed" | "abandoned"
+	Status  string `json:"status,omitempty"`
 }
 
 func (*Plan) isThreadItem()    {}
 func (*Plan) ItemType() string { return "plan" }
 
-// Reasoning is extended thinking output — usually emitted via item/updated
-// deltas rather than a single item/completed payload.
+// Reasoning is extended thinking output.
 //
 // Summary and Content are preserved as raw JSON elements because the codex
 // wire format uses variable shapes (empty arrays during streaming,
 // structured parts when completed). Callers interested in reasoning text
-// should unmarshal each element into their preferred shape or use the
-// reasoning_delta events which carry flat text chunks.
+// should iterate these arrays or use the reasoning_delta events which
+// carry flat text chunks.
 type Reasoning struct {
 	ID      string            `json:"id,omitempty"`
 	Summary []json.RawMessage `json:"summary,omitempty"`
@@ -135,6 +163,17 @@ type Reasoning struct {
 
 func (*Reasoning) isThreadItem()    {}
 func (*Reasoning) ItemType() string { return "reasoning" }
+
+// SystemError is emitted when the server wants to surface a non-turn-
+// terminating error as an item (e.g., model validation error mid-turn).
+// Wire discriminator: "systemError". Shape inferred.
+type SystemError struct {
+	ID      string `json:"id,omitempty"`
+	Message string `json:"message"`
+}
+
+func (*SystemError) isThreadItem()    {}
+func (*SystemError) ItemType() string { return "systemError" }
 
 // UnknownItem is emitted when the parser encounters an item.type it does
 // not recognize. The Type field carries the wire discriminator and Raw
@@ -178,8 +217,8 @@ type ReasoningDelta struct {
 func (*ReasoningDelta) isItemDelta()      {}
 func (*ReasoningDelta) DeltaType() string { return "reasoning_delta" }
 
-// CommandOutputDelta is a streaming chunk of a command_execution's stdout
-// or stderr.
+// CommandOutputDelta is a streaming chunk of a commandExecution's
+// aggregated output.
 type CommandOutputDelta struct {
 	StdoutChunk string `json:"stdout_chunk,omitempty"`
 	StderrChunk string `json:"stderr_chunk,omitempty"`
@@ -188,7 +227,7 @@ type CommandOutputDelta struct {
 func (*CommandOutputDelta) isItemDelta()      {}
 func (*CommandOutputDelta) DeltaType() string { return "command_output_delta" }
 
-// FileChangeOutputDelta is a streaming chunk of a file_change diff.
+// FileChangeOutputDelta is a streaming chunk of a fileChange diff.
 type FileChangeOutputDelta struct {
 	DiffChunk string `json:"diff_chunk"`
 }

@@ -58,14 +58,14 @@ type CodexOptions struct {
 }
 
 // NewCodexOptions returns a CodexOptions populated with sensible defaults:
-// default sandbox read-only, default approval policy auto, no CLI path
-// override, no MCP servers.
+// sandbox read-only, approval policy on-request (the server default), no
+// CLI path override, no MCP servers.
 func NewCodexOptions() *CodexOptions {
 	return &CodexOptions{
 		ClientName:            "codex-agent-sdk-go",
 		ClientVersion:         "0.1.0",
 		DefaultSandbox:        SandboxReadOnly,
-		DefaultApprovalPolicy: ApprovalAuto,
+		DefaultApprovalPolicy: ApprovalOnRequest,
 	}
 }
 

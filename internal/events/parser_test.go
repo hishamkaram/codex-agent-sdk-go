@@ -58,16 +58,36 @@ func TestParseEvent_TurnStarted(t *testing.T) {
 	}
 }
 
-func TestParseEvent_TurnCompletedWithUsage(t *testing.T) {
+func TestParseEvent_TurnCompleted_NestedRealShape(t *testing.T) {
 	t.Parallel()
+	// Real wire shape captured from CLI 0.121.0: status is nested inside
+	// turn.status, usage is NOT present on this event (usage flows via
+	// thread/tokenUsage/updated).
 	n := jsonrpc.Notification{
 		Method: "turn/completed",
-		Params: json.RawMessage(`{"threadId":"T","turnId":"U","status":"success",` +
-			`"usage":{"input_tokens":100,"cached_input_tokens":20,"output_tokens":50}}`),
+		Params: json.RawMessage(`{"threadId":"T","turn":{"id":"U","status":"success",` +
+			`"startedAt":1776371820,"completedAt":1776371822,"durationMs":2194}}`),
 	}
 	ev, _ := ParseEvent(n)
 	tc := ev.(*types.TurnCompleted)
-	if tc.Status != "success" || tc.Usage.InputTokens != 100 || tc.Usage.OutputTokens != 50 || tc.Usage.CachedInputTokens != 20 {
+	if tc.ThreadID != "T" || tc.TurnID != "U" || tc.Status != "success" {
+		t.Fatalf("%+v", tc)
+	}
+}
+
+func TestParseEvent_TurnCompleted_FlatFallbackShape(t *testing.T) {
+	t.Parallel()
+	// Forward-compat: older/other CLI versions may use flat turnId +
+	// flat status + flat usage.
+	n := jsonrpc.Notification{
+		Method: "turn/completed",
+		Params: json.RawMessage(`{"threadId":"T","turnId":"U","status":"success",` +
+			`"usage":{"inputTokens":100,"outputTokens":50,"cachedInputTokens":20}}`),
+	}
+	ev, _ := ParseEvent(n)
+	tc := ev.(*types.TurnCompleted)
+	if tc.Status != "success" || tc.Usage.InputTokens != 100 ||
+		tc.Usage.OutputTokens != 50 || tc.Usage.CachedInputTokens != 20 {
 		t.Fatalf("%+v", tc)
 	}
 }
@@ -90,7 +110,7 @@ func TestParseEvent_ItemStartedWithAgentMessage(t *testing.T) {
 	n := jsonrpc.Notification{
 		Method: "item/started",
 		Params: json.RawMessage(`{"threadId":"T","turnId":"U","itemId":"I-1",` +
-			`"item":{"type":"agent_message","content":"Hello"}}`),
+			`"item":{"type":"agentMessage","text":"Hello"}}`),
 	}
 	ev, err := ParseEvent(n)
 	if err != nil {
@@ -101,8 +121,8 @@ func TestParseEvent_ItemStartedWithAgentMessage(t *testing.T) {
 		t.Fatalf("ItemID = %q", is.ItemID)
 	}
 	msg := is.Item.(*types.AgentMessage)
-	if msg.Content != "Hello" {
-		t.Fatalf("content = %q", msg.Content)
+	if msg.Text != "Hello" {
+		t.Fatalf("text = %q", msg.Text)
 	}
 }
 
@@ -111,7 +131,8 @@ func TestParseEvent_ItemCompletedWithCommandExecution(t *testing.T) {
 	n := jsonrpc.Notification{
 		Method: "item/completed",
 		Params: json.RawMessage(`{"threadId":"T","turnId":"U","itemId":"I-2",` +
-			`"item":{"type":"command_execution","command":"ls","exit_code":0,"stdout":"f\n","status":"success"}}`),
+			`"item":{"type":"commandExecution","command":"ls","exitCode":0,` +
+			`"aggregatedOutput":"f\n","status":"success"}}`),
 	}
 	ev, err := ParseEvent(n)
 	if err != nil {
@@ -119,8 +140,11 @@ func TestParseEvent_ItemCompletedWithCommandExecution(t *testing.T) {
 	}
 	ic := ev.(*types.ItemCompleted)
 	cmd := ic.Item.(*types.CommandExecution)
-	if cmd.Command != "ls" || cmd.ExitCode != 0 {
+	if cmd.Command != "ls" || cmd.ExitCode == nil || *cmd.ExitCode != 0 {
 		t.Fatalf("%+v", cmd)
+	}
+	if cmd.AggregatedOutput != "f\n" {
+		t.Fatalf("output = %q", cmd.AggregatedOutput)
 	}
 }
 
@@ -139,11 +163,33 @@ func TestParseEvent_ItemUpdatedWithDelta(t *testing.T) {
 	}
 }
 
-func TestParseEvent_TokenUsageUpdated(t *testing.T) {
+func TestParseEvent_TokenUsageUpdated_RealShape(t *testing.T) {
 	t.Parallel()
+	// Real wire shape: tokenUsage.total (and .last) carry the running
+	// snapshots. The SDK surfaces .total.
 	n := jsonrpc.Notification{
 		Method: "thread/tokenUsage/updated",
-		Params: json.RawMessage(`{"threadId":"T","usage":{"input_tokens":5,"output_tokens":2}}`),
+		Params: json.RawMessage(`{"threadId":"T","turnId":"U",` +
+			`"tokenUsage":{"total":{"totalTokens":12632,"inputTokens":12615,` +
+			`"cachedInputTokens":4480,"outputTokens":17,"reasoningOutputTokens":10},` +
+			`"last":{"totalTokens":120,"inputTokens":100,"outputTokens":20},` +
+			`"modelContextWindow":258400}}`),
+	}
+	ev, _ := ParseEvent(n)
+	tu := ev.(*types.TokenUsageUpdated)
+	if tu.Usage.TotalTokens != 12632 || tu.Usage.InputTokens != 12615 ||
+		tu.Usage.CachedInputTokens != 4480 || tu.Usage.OutputTokens != 17 ||
+		tu.Usage.ReasoningOutputTokens != 10 {
+		t.Fatalf("%+v", tu.Usage)
+	}
+}
+
+func TestParseEvent_TokenUsageUpdated_FlatFallback(t *testing.T) {
+	t.Parallel()
+	// Forward-compat for flat usage shape.
+	n := jsonrpc.Notification{
+		Method: "thread/tokenUsage/updated",
+		Params: json.RawMessage(`{"threadId":"T","usage":{"inputTokens":5,"outputTokens":2}}`),
 	}
 	ev, _ := ParseEvent(n)
 	tu := ev.(*types.TokenUsageUpdated)
@@ -249,7 +295,7 @@ func TestParseEvent_ItemEnvelopeFallbackToInnerID(t *testing.T) {
 	n := jsonrpc.Notification{
 		Method: "item/started",
 		Params: json.RawMessage(`{"threadId":"T","turnId":"U",` +
-			`"item":{"id":"inner-id","type":"agent_message","content":"X"}}`),
+			`"item":{"id":"inner-id","type":"agentMessage","text":"X"}}`),
 	}
 	ev, _ := ParseEvent(n)
 	is := ev.(*types.ItemStarted)

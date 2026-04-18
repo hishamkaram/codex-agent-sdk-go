@@ -8,16 +8,17 @@ func TestItemType_EveryKnownItem(t *testing.T) {
 		item ThreadItem
 		want string
 	}{
-		{&AgentMessage{}, "agent_message"},
-		{&UserMessage{}, "user_message"},
-		{&CommandExecution{}, "command_execution"},
-		{&FileChange{}, "file_change"},
-		{&MCPToolCall{}, "mcp_tool_call"},
-		{&WebSearch{}, "web_search"},
-		{&MemoryRead{}, "memory_read"},
-		{&MemoryWrite{}, "memory_write"},
+		{&AgentMessage{}, "agentMessage"},
+		{&UserMessage{}, "userMessage"},
+		{&CommandExecution{}, "commandExecution"},
+		{&FileChange{}, "fileChange"},
+		{&MCPToolCall{}, "mcpToolCall"},
+		{&WebSearch{}, "webSearch"},
+		{&MemoryRead{}, "memoryRead"},
+		{&MemoryWrite{}, "memoryWrite"},
 		{&Plan{}, "plan"},
 		{&Reasoning{}, "reasoning"},
+		{&SystemError{}, "systemError"},
 		{&UnknownItem{Type: "future"}, "future"},
 	}
 	for _, c := range cases {

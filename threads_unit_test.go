@@ -53,7 +53,7 @@ func TestBuildThreadStartParams_DefaultsAndOverrides(t *testing.T) {
 		WithModel("gpt-5.4").
 		WithCwd("/default/cwd").
 		WithSandbox(types.SandboxReadOnly).
-		WithApprovalPolicy(types.ApprovalAuto)
+		WithApprovalPolicy(types.ApprovalOnRequest)
 
 	// No per-call overrides — should use client defaults.
 	p1 := buildThreadStartParams(clientOpts, nil)

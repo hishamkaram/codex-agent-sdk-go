@@ -98,18 +98,44 @@ func parseTurnStarted(raw json.RawMessage) (types.ThreadEvent, error) {
 }
 
 func parseTurnCompleted(raw json.RawMessage) (types.ThreadEvent, error) {
-	var env identifiersEnvelope
-	if err := unmarshalEnvelope(raw, &env); err != nil {
+	// Real wire shape (CLI 0.121.0): params carries {"threadId","turn":
+	// {"id","status","error":{"message":...},"startedAt","completedAt",
+	// "durationMs","items":[]}}. Earlier design-time assumptions used
+	// flat {"turnId","status","usage"} — we tolerate both for
+	// forward-compat.
+	var env struct {
+		ThreadID string `json:"threadId"`
+		TurnID   string `json:"turnId"`
+		Turn     *struct {
+			ID     string `json:"id"`
+			Status string `json:"status"`
+			Error  *struct {
+				Message string `json:"message"`
+			} `json:"error,omitempty"`
+		} `json:"turn,omitempty"`
+		Status string            `json:"status,omitempty"`
+		Usage  *types.TokenUsage `json:"usage,omitempty"`
+	}
+	if err := unmarshalTo(raw, &env); err != nil {
 		return nil, err
 	}
-	threadID, turnID, _ := env.resolveIDs()
-	ev := &types.TurnCompleted{
-		ThreadID: threadID,
-		TurnID:   turnID,
-		Status:   env.Status,
+	turnID := env.TurnID
+	status := env.Status
+	if env.Turn != nil {
+		if turnID == "" {
+			turnID = env.Turn.ID
+		}
+		if status == "" {
+			status = env.Turn.Status
+		}
 	}
-	if env.UsageObj != nil {
-		ev.Usage = *env.UsageObj
+	ev := &types.TurnCompleted{
+		ThreadID: env.ThreadID,
+		TurnID:   turnID,
+		Status:   status,
+	}
+	if env.Usage != nil {
+		ev.Usage = *env.Usage
 	}
 	return ev, nil
 }
@@ -229,16 +255,47 @@ func parseItemCompleted(raw json.RawMessage) (types.ThreadEvent, error) {
 }
 
 func parseTokenUsageUpdated(raw json.RawMessage) (types.ThreadEvent, error) {
-	var env identifiersEnvelope
-	if err := unmarshalEnvelope(raw, &env); err != nil {
+	// Real wire shape (CLI 0.121.0): params has
+	//   {"threadId","turnId","tokenUsage":{"last":{…},"total":{…},
+	//    "modelContextWindow":258400}}
+	// "last" is the per-turn slice; "total" is the running thread total.
+	// The SDK surfaces "total" as the canonical Usage on TokenUsageUpdated
+	// so callers tracking lifetime cost see the cumulative figure.
+	// Also accept the flat shape {"usage":{…}} for forward-compat.
+	var env struct {
+		ThreadID   string `json:"threadId"`
+		TokenUsage *struct {
+			Total *types.TokenUsage `json:"total,omitempty"`
+			Last  *types.TokenUsage `json:"last,omitempty"`
+		} `json:"tokenUsage,omitempty"`
+		Usage *types.TokenUsage `json:"usage,omitempty"`
+	}
+	if err := unmarshalTo(raw, &env); err != nil {
 		return nil, err
 	}
-	threadID, _, _ := env.resolveIDs()
 	var usage types.TokenUsage
-	if env.UsageObj != nil {
-		usage = *env.UsageObj
+	switch {
+	case env.TokenUsage != nil && env.TokenUsage.Total != nil:
+		usage = *env.TokenUsage.Total
+	case env.TokenUsage != nil && env.TokenUsage.Last != nil:
+		usage = *env.TokenUsage.Last
+	case env.Usage != nil:
+		usage = *env.Usage
 	}
-	return &types.TokenUsageUpdated{ThreadID: threadID, Usage: usage}, nil
+	return &types.TokenUsageUpdated{ThreadID: env.ThreadID, Usage: usage}, nil
+}
+
+// unmarshalTo is a local helper mirroring unmarshalEnvelope but for
+// arbitrary envelope types. Skips empty payloads and wraps decode errors
+// in types.JSONDecodeError.
+func unmarshalTo(raw json.RawMessage, v any) error {
+	if len(raw) == 0 {
+		return nil
+	}
+	if err := json.Unmarshal(raw, v); err != nil {
+		return types.NewJSONDecodeError(string(raw), err)
+	}
+	return nil
 }
 
 func parseCompactionEvent(raw json.RawMessage) (types.ThreadEvent, error) {

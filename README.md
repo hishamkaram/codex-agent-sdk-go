@@ -22,7 +22,7 @@ Codex's app-server exposes a JSON-RPC 2.0 protocol over stdio — bidirectional,
 | Thread start / resume / fork / archive / list | ✅ |
 | `thread.Run()` (buffered) + `thread.RunStreamed()` (channel) | ✅ |
 | Streaming events: turn/started, turn/completed, item/started, item/updated, item/completed, error, tokenUsage, compaction | ✅ |
-| ThreadItem variants: agent_message, user_message, command_execution, file_change, mcp_tool_call, web_search, memory_read/write, plan, reasoning | ✅ |
+| ThreadItem variants: agentMessage, userMessage, commandExecution, fileChange, mcpToolCall, webSearch, memoryRead/Write, plan, reasoning, systemError | ✅ |
 | Input variants: text, localImage | ✅ |
 | Sandbox modes: read-only, workspace-write, danger-full-access | ✅ |
 | Approval policies: auto, read-only, untrusted, never, on-request | ✅ |
@@ -72,7 +72,7 @@ func main() {
 	opts := types.NewCodexOptions().
 		WithModel("gpt-5.4").
 		WithSandbox(types.SandboxReadOnly).
-		WithApprovalPolicy(types.ApprovalAuto)
+		WithApprovalPolicy(types.ApprovalOnRequest)
 
 	events, err := codex.Query(ctx, "Summarize the repo in the current directory", opts)
 	if err != nil {
