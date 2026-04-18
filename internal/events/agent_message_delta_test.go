@@ -34,7 +34,7 @@ func TestParseEvent_AgentMessageDelta_FromRealWireShape(t *testing.T) {
 	if d.TextChunk != "OK" {
 		t.Fatalf("TextChunk = %q", d.TextChunk)
 	}
-	if d.DeltaType() != "agent_message_delta" {
+	if d.DeltaType() != "agentMessage/delta" {
 		t.Fatalf("DeltaType = %q", d.DeltaType())
 	}
 }

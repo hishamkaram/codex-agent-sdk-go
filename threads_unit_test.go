@@ -139,7 +139,7 @@ func TestExtractThreadIDFromEvent(t *testing.T) {
 		{"ItemUpdated", &types.ItemUpdated{ThreadID: "T6"}, "T6"},
 		{"ItemCompleted", &types.ItemCompleted{ThreadID: "T7"}, "T7"},
 		{"TokenUsageUpdated", &types.TokenUsageUpdated{ThreadID: "T8"}, "T8"},
-		{"CompactionEvent", &types.CompactionEvent{ThreadID: "T9"}, "T9"},
+		{"ContextCompacted", &types.ContextCompacted{ThreadID: "T9"}, "T9"},
 		{"ErrorEvent_no_thread_id", &types.ErrorEvent{}, ""},
 		{"UnknownEvent_no_thread_id", &types.UnknownEvent{Method: "x"}, ""},
 	}

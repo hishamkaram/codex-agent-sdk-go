@@ -38,11 +38,15 @@ func TestDeltaType_EveryKnownDelta(t *testing.T) {
 		delta ItemDelta
 		want  string
 	}{
-		{&AgentMessageDelta{}, "agent_message_delta"},
-		{&ReasoningDelta{}, "reasoning_delta"},
-		{&CommandOutputDelta{}, "command_output_delta"},
-		{&FileChangeOutputDelta{}, "file_change_output_delta"},
-		{&MCPToolCallProgress{}, "mcp_tool_call_progress"},
+		{&AgentMessageDelta{}, "agentMessage/delta"},
+		{&ReasoningTextDelta{}, "reasoning/textDelta"},
+		{&ReasoningSummaryTextDelta{}, "reasoning/summaryTextDelta"},
+		{&ReasoningSummaryPartAdded{}, "reasoning/summaryPartAdded"},
+		{&CommandOutputDelta{}, "commandExecution/outputDelta"},
+		{&FileChangeOutputDelta{}, "fileChange/outputDelta"},
+		{&PlanDelta{}, "plan/delta"},
+		{&MCPToolCallProgress{}, "mcpToolCall/progress"},
+		{&TerminalInteraction{}, "commandExecution/terminalInteraction"},
 		{&UnknownDelta{Type: "future"}, "future"},
 	}
 	for _, c := range cases {

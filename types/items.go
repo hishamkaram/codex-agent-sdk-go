@@ -201,49 +201,92 @@ type ItemDelta interface {
 }
 
 // AgentMessageDelta is a streaming chunk of agent message text.
+// Populated from the flat "delta" string on item/agentMessage/delta.
 type AgentMessageDelta struct {
 	TextChunk string `json:"text_chunk"`
 }
 
 func (*AgentMessageDelta) isItemDelta()      {}
-func (*AgentMessageDelta) DeltaType() string { return "agent_message_delta" }
+func (*AgentMessageDelta) DeltaType() string { return "agentMessage/delta" }
 
-// ReasoningDelta is a streaming chunk of extended-thinking text.
-type ReasoningDelta struct {
-	TextChunk    string `json:"text_chunk,omitempty"`
-	SummaryChunk string `json:"summary_chunk,omitempty"`
+// ReasoningTextDelta is a streaming chunk of extended-thinking body text.
+// Emitted on item/reasoning/textDelta.
+type ReasoningTextDelta struct {
+	TextChunk    string `json:"text_chunk"`
+	ContentIndex int    `json:"content_index"`
 }
 
-func (*ReasoningDelta) isItemDelta()      {}
-func (*ReasoningDelta) DeltaType() string { return "reasoning_delta" }
+func (*ReasoningTextDelta) isItemDelta()      {}
+func (*ReasoningTextDelta) DeltaType() string { return "reasoning/textDelta" }
+
+// ReasoningSummaryTextDelta is a streaming chunk of the reasoning summary.
+// Emitted on item/reasoning/summaryTextDelta.
+type ReasoningSummaryTextDelta struct {
+	SummaryChunk string `json:"summary_chunk"`
+	SummaryIndex int    `json:"summary_index"`
+}
+
+func (*ReasoningSummaryTextDelta) isItemDelta()      {}
+func (*ReasoningSummaryTextDelta) DeltaType() string { return "reasoning/summaryTextDelta" }
+
+// ReasoningSummaryPartAdded signals that a new summary part started.
+// Emitted on item/reasoning/summaryPartAdded. Carries no text payload —
+// follow-up textDelta events fill the part.
+type ReasoningSummaryPartAdded struct {
+	SummaryIndex int `json:"summary_index"`
+}
+
+func (*ReasoningSummaryPartAdded) isItemDelta()      {}
+func (*ReasoningSummaryPartAdded) DeltaType() string { return "reasoning/summaryPartAdded" }
 
 // CommandOutputDelta is a streaming chunk of a commandExecution's
-// aggregated output.
+// aggregated output. Wire shape is the flat "delta" string on
+// item/commandExecution/outputDelta — codex does not split stdout and
+// stderr at the SDK layer.
 type CommandOutputDelta struct {
-	StdoutChunk string `json:"stdout_chunk,omitempty"`
-	StderrChunk string `json:"stderr_chunk,omitempty"`
+	OutputChunk string `json:"output_chunk"`
 }
 
 func (*CommandOutputDelta) isItemDelta()      {}
-func (*CommandOutputDelta) DeltaType() string { return "command_output_delta" }
+func (*CommandOutputDelta) DeltaType() string { return "commandExecution/outputDelta" }
 
 // FileChangeOutputDelta is a streaming chunk of a fileChange diff.
+// Emitted on item/fileChange/outputDelta.
 type FileChangeOutputDelta struct {
 	DiffChunk string `json:"diff_chunk"`
 }
 
 func (*FileChangeOutputDelta) isItemDelta()      {}
-func (*FileChangeOutputDelta) DeltaType() string { return "file_change_output_delta" }
+func (*FileChangeOutputDelta) DeltaType() string { return "fileChange/outputDelta" }
+
+// PlanDelta is a streaming chunk of a plan item's body.
+// Emitted on item/plan/delta.
+type PlanDelta struct {
+	Chunk string `json:"chunk"`
+}
+
+func (*PlanDelta) isItemDelta()      {}
+func (*PlanDelta) DeltaType() string { return "plan/delta" }
 
 // MCPToolCallProgress is a status update emitted during a long-running MCP
-// tool call.
+// tool call. Wire message is the flat "message" string on
+// item/mcpToolCall/progress.
 type MCPToolCallProgress struct {
-	Stage    string `json:"stage,omitempty"`
-	Progress int    `json:"progress,omitempty"`
+	Message string `json:"message"`
 }
 
 func (*MCPToolCallProgress) isItemDelta()      {}
-func (*MCPToolCallProgress) DeltaType() string { return "mcp_tool_call_progress" }
+func (*MCPToolCallProgress) DeltaType() string { return "mcpToolCall/progress" }
+
+// TerminalInteraction carries stdin sent to a running command's tty.
+// Emitted on item/commandExecution/terminalInteraction.
+type TerminalInteraction struct {
+	ProcessID string `json:"process_id"`
+	Stdin     string `json:"stdin"`
+}
+
+func (*TerminalInteraction) isItemDelta()      {}
+func (*TerminalInteraction) DeltaType() string { return "commandExecution/terminalInteraction" }
 
 // UnknownDelta is the forward-compat hatch for unrecognized delta types.
 type UnknownDelta struct {

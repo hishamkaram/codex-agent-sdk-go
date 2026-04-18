@@ -122,6 +122,28 @@ func TestFixtureReplay_SpikeTranscript(t *testing.T) {
 	for m, n := range unknown {
 		t.Logf("  unknown %-40s %d", m, n)
 	}
+
+	// Hard invariant: the captured transcript represents a known subset of
+	// the wire protocol. Every method in it MUST resolve to a typed event.
+	// When codex adds a new notification method (future 0.12x release),
+	// this assertion fires — at which point the contract is:
+	//
+	//   1. Re-run `make regen-schema` to refresh testdata/schema/.
+	//   2. Add the new method's types in types/events.go.
+	//   3. Add the parser switch arm in parser.go.
+	//   4. Re-capture the fixture transcript (or accept the old fixture if
+	//      the new method isn't in it yet).
+	//
+	// See docs/wire-protocol.md for the full contract.
+	if len(unknown) > 0 {
+		methods := make([]string, 0, len(unknown))
+		for m := range unknown {
+			methods = append(methods, m)
+		}
+		t.Fatalf("fixture contains %d wire methods not typed by the SDK: %v\n"+
+			"See the comment above this assertion for the update protocol.",
+			len(unknown), methods)
+	}
 }
 
 // TestFixtureReplay_ItemsExercised confirms that among the events that are

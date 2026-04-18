@@ -285,7 +285,7 @@ func extractThreadIDFromEvent(ev types.ThreadEvent) string {
 		return e.ThreadID
 	case *types.TokenUsageUpdated:
 		return e.ThreadID
-	case *types.CompactionEvent:
+	case *types.ContextCompacted:
 		return e.ThreadID
 	}
 	return ""

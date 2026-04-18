@@ -1,7 +1,7 @@
 LEFTHOOK_MODULE  ?= github.com/evilmartians/lefthook/v2
 LEFTHOOK_VERSION ?= v2.1.5
 
-.PHONY: help build test test-all test-integration bench fmt lint clean coverage govulncheck hooks examples
+.PHONY: help build test test-all test-integration bench fmt lint clean coverage govulncheck hooks examples regen-schema
 
 help:
 	@echo "Codex Agent SDK for Go - Development Tasks"
@@ -84,5 +84,15 @@ hooks:
 	@mkdir -p .bin
 	@GOBIN=$(CURDIR)/.bin go install $(LEFTHOOK_MODULE)@$(LEFTHOOK_VERSION)
 	@PATH="$(CURDIR)/.bin:$$PATH" $(CURDIR)/.bin/lefthook install
+
+regen-schema:
+	@echo "Regenerating JSON schema from local codex binary..."
+	@command -v codex > /dev/null || { echo "codex CLI not found on PATH — install @openai/codex"; exit 1; }
+	@rm -rf internal/events/testdata/schema
+	@mkdir -p internal/events/testdata/schema
+	@codex --enable codex_hooks app-server generate-json-schema \
+	    --out internal/events/testdata/schema/
+	@echo "Schema regenerated. Review git diff + update parser.go if new methods appeared."
+	@echo "Then run: make test"
 
 .DEFAULT_GOAL := help

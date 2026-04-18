@@ -16,7 +16,7 @@ func TestEventMethod_EveryKnownEvent(t *testing.T) {
 		{&ItemUpdated{}, "item/updated"},
 		{&ItemCompleted{}, "item/completed"},
 		{&TokenUsageUpdated{}, "thread/tokenUsage/updated"},
-		{&CompactionEvent{}, "compaction_event"},
+		{&ContextCompacted{}, "thread/compacted"},
 		{&ErrorEvent{}, "error"},
 		{&UnknownEvent{Method: "future/event"}, "future/event"},
 	}

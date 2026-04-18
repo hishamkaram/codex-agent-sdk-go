@@ -198,16 +198,31 @@ func TestParseEvent_TokenUsageUpdated_FlatFallback(t *testing.T) {
 	}
 }
 
-func TestParseEvent_CompactionEvent(t *testing.T) {
+func TestParseEvent_ContextCompacted(t *testing.T) {
+	t.Parallel()
+	// Real wire method: thread/compacted.
+	n := jsonrpc.Notification{
+		Method: "thread/compacted",
+		Params: json.RawMessage(`{"threadId":"T","turnId":"U"}`),
+	}
+	ev, _ := ParseEvent(n)
+	cc := ev.(*types.ContextCompacted)
+	if cc.ThreadID != "T" || cc.TurnID != "U" {
+		t.Fatalf("%+v", cc)
+	}
+}
+
+// TestParseEvent_ContextCompactedLegacy confirms the old v0.1.0
+// "compaction_event" method still resolves to ContextCompacted.
+func TestParseEvent_ContextCompactedLegacy(t *testing.T) {
 	t.Parallel()
 	n := jsonrpc.Notification{
 		Method: "compaction_event",
-		Params: json.RawMessage(`{"threadId":"T","tokens_freed":2048,"strategy":"handoff_summary"}`),
+		Params: json.RawMessage(`{"threadId":"T","turnId":"U"}`),
 	}
 	ev, _ := ParseEvent(n)
-	ce := ev.(*types.CompactionEvent)
-	if ce.TokensFreed != 2048 || ce.Strategy != "handoff_summary" {
-		t.Fatalf("%+v", ce)
+	if _, ok := ev.(*types.ContextCompacted); !ok {
+		t.Fatalf("got %T, want *types.ContextCompacted", ev)
 	}
 }
 

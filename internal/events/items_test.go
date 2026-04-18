@@ -229,83 +229,26 @@ func TestParseItem_EmptyPayload(t *testing.T) {
 	}
 }
 
-func TestParseItemDelta_KnownDeltas(t *testing.T) {
+// TestParseItemDelta exercises the LEGACY ParseItemDelta path where a
+// delta payload carries a {"type":"..."} discriminator. Real codex wire
+// never uses this shape — the actual streaming methods (item/agentMessage
+// /delta etc.) carry flat string deltas handled by parseFlatDelta /
+// parseReasoningTextDelta / etc. in parser.go. ParseItemDelta is retained
+// as a forward-compat hatch in case a future codex item/updated method
+// uses discriminated deltas.
+func TestParseItemDelta_LegacyAgentMessageShape(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
-		name     string
-		raw      string
-		wantType string
-		check    func(t *testing.T, d types.ItemDelta)
-	}{
-		{
-			name:     "agent_message_delta",
-			raw:      `{"type":"agent_message_delta","text_chunk":"Hel"}`,
-			wantType: "agent_message_delta",
-			check: func(t *testing.T, d types.ItemDelta) {
-				x := d.(*types.AgentMessageDelta)
-				if x.TextChunk != "Hel" {
-					t.Fatal(x.TextChunk)
-				}
-			},
-		},
-		{
-			name:     "reasoning_delta",
-			raw:      `{"type":"reasoning_delta","text_chunk":"ttt","summary_chunk":"sss"}`,
-			wantType: "reasoning_delta",
-			check: func(t *testing.T, d types.ItemDelta) {
-				x := d.(*types.ReasoningDelta)
-				if x.TextChunk != "ttt" || x.SummaryChunk != "sss" {
-					t.Fatalf("%+v", x)
-				}
-			},
-		},
-		{
-			name:     "command_output_delta",
-			raw:      `{"type":"command_output_delta","stdout_chunk":"A","stderr_chunk":"B"}`,
-			wantType: "command_output_delta",
-			check: func(t *testing.T, d types.ItemDelta) {
-				x := d.(*types.CommandOutputDelta)
-				if x.StdoutChunk != "A" || x.StderrChunk != "B" {
-					t.Fatalf("%+v", x)
-				}
-			},
-		},
-		{
-			name:     "file_change_output_delta",
-			raw:      `{"type":"file_change_output_delta","diff_chunk":"+line"}`,
-			wantType: "file_change_output_delta",
-			check: func(t *testing.T, d types.ItemDelta) {
-				x := d.(*types.FileChangeOutputDelta)
-				if x.DiffChunk != "+line" {
-					t.Fatal(x.DiffChunk)
-				}
-			},
-		},
-		{
-			name:     "mcp_tool_call_progress",
-			raw:      `{"type":"mcp_tool_call_progress","stage":"running","progress":42}`,
-			wantType: "mcp_tool_call_progress",
-			check: func(t *testing.T, d types.ItemDelta) {
-				x := d.(*types.MCPToolCallProgress)
-				if x.Stage != "running" || x.Progress != 42 {
-					t.Fatalf("%+v", x)
-				}
-			},
-		},
+	raw := json.RawMessage(`{"type":"agent_message_delta","text_chunk":"Hel"}`)
+	d, err := ParseItemDelta(raw)
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, tt := range tests {
-		tt := tt
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			d, err := ParseItemDelta(json.RawMessage(tt.raw))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if d.DeltaType() != tt.wantType {
-				t.Fatalf("DeltaType() = %q, want %q", d.DeltaType(), tt.wantType)
-			}
-			tt.check(t, d)
-		})
+	if d.DeltaType() != "agentMessage/delta" {
+		t.Fatalf("DeltaType() = %q", d.DeltaType())
+	}
+	x := d.(*types.AgentMessageDelta)
+	if x.TextChunk != "Hel" {
+		t.Fatalf("TextChunk = %q", x.TextChunk)
 	}
 }
 

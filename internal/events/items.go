@@ -125,7 +125,8 @@ func ParseItemDelta(raw json.RawMessage) (types.ItemDelta, error) {
 		}
 		return &d, nil
 	case "reasoning_delta":
-		var d types.ReasoningDelta
+		// Legacy discriminator (not in v2 schema). Map to text delta.
+		var d types.ReasoningTextDelta
 		if err := json.Unmarshal(raw, &d); err != nil {
 			return nil, wrapParseErr("reasoning_delta", raw, err)
 		}
