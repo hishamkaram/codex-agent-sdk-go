@@ -60,12 +60,14 @@ type CodexOptions struct {
 	// approval prompts are denied.
 	ApprovalCallback ApprovalCallback
 
-	// --- Hook bridge (v0.2.0) ---
+	// --- Hook bridge (v0.3.0) ---
 
-	// HookCallback is invoked by the SDK when codex fires a hook handler
-	// registered through the SDK's tempdir CODEX_HOME override. Nil means
+	// HookCallback is invoked by the SDK when codex fires a hook handler.
+	// Setting it causes Connect to write ~/.codex/hooks.json (backing up
+	// any existing user config) so codex routes hooks through the SDK's
+	// shim binary; Close restores the user's original config. Nil means
 	// no bridge is set up — the codex_hooks feature alone only delivers
-	// HookStarted/HookCompleted observer events.
+	// HookStarted/HookCompleted observer events. See docs/hooks.md.
 	HookCallback HookHandler
 
 	// ShimPath overrides auto-discovery of the codex-sdk-hook-shim binary.

@@ -129,19 +129,64 @@ func (*HookCompleted) EventMethod() string { return "hook/completed" }
 //
 // The Raw field holds the full JSON payload unmodified for callers that
 // need fields the SDK hasn't typed yet.
+//
+// HookEventName normalization: codex writes the event name in PascalCase
+// on stdin (e.g. "PreToolUse") but the SDK's HookEventName constants are
+// camelCase (e.g. HookPreToolUse = "preToolUse") to match the wire
+// notification body. UnmarshalJSON converts PascalCase → camelCase
+// transparently so callers always see the camelCase form.
 type HookInput struct {
 	HookEventName        HookEventName   `json:"hook_event_name"`
 	SessionID            string          `json:"session_id,omitempty"`
 	TranscriptPath       string          `json:"transcript_path,omitempty"`
 	Cwd                  string          `json:"cwd,omitempty"`
 	PermissionMode       string          `json:"permission_mode,omitempty"`
+	Model                string          `json:"model,omitempty"`
 	TurnID               *string         `json:"turn_id,omitempty"`
 	Prompt               *string         `json:"prompt,omitempty"`                 // userPromptSubmit / sessionStart
 	LastAssistantMessage *string         `json:"last_assistant_message,omitempty"` // stop
+	ToolName             string          `json:"tool_name,omitempty"`              // preToolUse / postToolUse
 	ToolInput            json.RawMessage `json:"tool_input,omitempty"`             // preToolUse
 	ToolResult           json.RawMessage `json:"tool_result,omitempty"`            // postToolUse
+	ToolUseID            string          `json:"tool_use_id,omitempty"`            // preToolUse / postToolUse
 	Source               *string         `json:"source,omitempty"`                 // sessionStart: "startup"|"resume"|"clear"
 	Raw                  json.RawMessage `json:"-"`                                // full payload for escape-hatch inspection
+}
+
+// UnmarshalJSON parses the hook stdin payload, normalizing the
+// hook_event_name from codex's PascalCase wire form to the SDK's
+// camelCase HookEventName constants. Unknown event names pass through
+// verbatim.
+func (h *HookInput) UnmarshalJSON(data []byte) error {
+	type alias HookInput
+	var a alias
+	if err := json.Unmarshal(data, &a); err != nil {
+		return err
+	}
+	a.HookEventName = NormalizeHookEventName(a.HookEventName)
+	*h = HookInput(a)
+	return nil
+}
+
+// NormalizeHookEventName converts codex's PascalCase hook_event_name
+// values ("PreToolUse", "PostToolUse", "SessionStart", "UserPromptSubmit",
+// "Stop") to the SDK's camelCase HookEventName constants. Already-camelCase
+// values pass through unchanged. Unknown names pass through verbatim so
+// future codex versions don't break parsing.
+func NormalizeHookEventName(name HookEventName) HookEventName {
+	switch name {
+	case "PreToolUse":
+		return HookPreToolUse
+	case "PostToolUse":
+		return HookPostToolUse
+	case "SessionStart":
+		return HookSessionStart
+	case "UserPromptSubmit":
+		return HookUserPromptSubmit
+	case "Stop":
+		return HookStop
+	}
+	return name
 }
 
 // HookDecision is the value a HookHandler returns. Exactly one of the

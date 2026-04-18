@@ -97,8 +97,12 @@ func TestListener_PreToolUseDeny(t *testing.T) {
 	}
 }
 
-func TestListener_PreToolUseAllowWithRewrite(t *testing.T) {
+func TestListener_PreToolUseAllowIsSilent(t *testing.T) {
 	t.Parallel()
+	// codex 0.121.0 rejects `permissionDecision:"allow"` and
+	// `updatedInput` for PreToolUse. The SDK emits empty stdout with
+	// exit 0 — codex defaults to allow. UpdatedInput is silently
+	// dropped because codex does not consume it.
 	dir := t.TempDir()
 	socket := filepath.Join(dir, "s.sock")
 
@@ -116,16 +120,16 @@ func TestListener_PreToolUseAllowWithRewrite(t *testing.T) {
 	if resp.ExitCode != 0 {
 		t.Fatalf("ExitCode = %d, want 0 (allow)", resp.ExitCode)
 	}
-	if !strings.Contains(resp.Stdout, `"permissionDecision":"allow"`) {
-		t.Fatalf("missing allow: %q", resp.Stdout)
-	}
-	if !strings.Contains(resp.Stdout, `"echo rewritten"`) {
-		t.Fatalf("missing rewritten command: %q", resp.Stdout)
+	if resp.Stdout != "" {
+		t.Errorf("PreToolUse allow stdout must be empty (codex rejects allow JSON), got %q", resp.Stdout)
 	}
 }
 
-func TestListener_PreToolUseAsk(t *testing.T) {
+func TestListener_PreToolUseAskIsSilent(t *testing.T) {
 	t.Parallel()
+	// codex 0.121.0 rejects `permissionDecision:"ask"`. The SDK emits
+	// empty stdout with exit 0, which lets codex's normal approval flow
+	// run when the policy gates the action.
 	dir := t.TempDir()
 	socket := filepath.Join(dir, "s.sock")
 
@@ -139,8 +143,8 @@ func TestListener_PreToolUseAsk(t *testing.T) {
 	if resp.ExitCode != 0 {
 		t.Fatalf("ExitCode = %d, want 0", resp.ExitCode)
 	}
-	if !strings.Contains(resp.Stdout, `"permissionDecision":"ask"`) {
-		t.Fatalf("missing ask decision: %q", resp.Stdout)
+	if resp.Stdout != "" {
+		t.Errorf("PreToolUse ask stdout must be empty (codex rejects ask JSON), got %q", resp.Stdout)
 	}
 }
 
@@ -216,20 +220,27 @@ func TestListener_CloseRemovesSocket(t *testing.T) {
 
 func TestGenerateHooksJSON_Shape(t *testing.T) {
 	t.Parallel()
-	data, err := GenerateHooksJSON("/bin/codex-sdk-hook-shim", 30_000)
+	data, err := GenerateHooksJSON("/bin/codex-sdk-hook-shim", 30)
 	if err != nil {
 		t.Fatal(err)
 	}
 	s := string(data)
-	// All five hook event names present.
-	for _, name := range []string{"preToolUse", "postToolUse", "sessionStart", "userPromptSubmit", "stop"} {
+	// All five hook event names present in PascalCase (codex 0.121.0
+	// rejects camelCase keys silently).
+	for _, name := range []string{"PreToolUse", "PostToolUse", "SessionStart", "UserPromptSubmit", "Stop"} {
 		if !strings.Contains(s, `"`+name+`"`) {
 			t.Errorf("missing hook event %q in generated config:\n%s", name, s)
 		}
 	}
-	// Matcher is wildcard.
-	if !strings.Contains(s, `"matcher": "*"`) {
-		t.Errorf("missing wildcard matcher:\n%s", s)
+	// Old camelCase keys MUST NOT appear — that was the v0.2.0 bug.
+	for _, name := range []string{`"preToolUse"`, `"postToolUse"`, `"sessionStart"`, `"userPromptSubmit"`, `"stop"`} {
+		if strings.Contains(s, name) {
+			t.Errorf("legacy camelCase key %s leaked into generated config:\n%s", name, s)
+		}
+	}
+	// Matcher is `.*` (codex parses it as a regex; `*` alone is not valid).
+	if !strings.Contains(s, `"matcher": ".*"`) {
+		t.Errorf("missing `.*` matcher:\n%s", s)
 	}
 	// Command points at shim.
 	if !strings.Contains(s, `"command": "/bin/codex-sdk-hook-shim"`) {
@@ -239,11 +250,65 @@ func TestGenerateHooksJSON_Shape(t *testing.T) {
 	if !strings.Contains(s, `"type": "command"`) {
 		t.Errorf("missing type=command:\n%s", s)
 	}
+	// Timeout is in seconds — 30, NOT 30000.
+	if !strings.Contains(s, `"timeout": 30`) {
+		t.Errorf("missing seconds-unit timeout:\n%s", s)
+	}
+	if strings.Contains(s, `"timeout": 30000`) {
+		t.Errorf("legacy ms-unit timeout leaked (must be seconds):\n%s", s)
+	}
+}
+
+func TestGenerateHooksJSON_DefaultTimeout(t *testing.T) {
+	t.Parallel()
+	data, err := GenerateHooksJSON("/bin/codex-sdk-hook-shim", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"timeout": 30`) {
+		t.Errorf("default timeout should be 30 seconds:\n%s", data)
+	}
+}
+
+func TestGenerateHooksJSON_RoundTripsHooksConfig(t *testing.T) {
+	t.Parallel()
+	data, err := GenerateHooksJSON("/path/to/shim", 45)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg HooksConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	for _, name := range []string{"PreToolUse", "PostToolUse", "SessionStart", "UserPromptSubmit", "Stop"} {
+		groups, ok := cfg.Hooks[name]
+		if !ok {
+			t.Errorf("missing hook event %q", name)
+			continue
+		}
+		if len(groups) != 1 || len(groups[0].Hooks) != 1 {
+			t.Errorf("event %q: unexpected handler shape: %+v", name, groups)
+			continue
+		}
+		h := groups[0].Hooks[0]
+		if h.Type != "command" {
+			t.Errorf("event %q: type = %q, want command", name, h.Type)
+		}
+		if h.Command != "/path/to/shim" {
+			t.Errorf("event %q: command = %q", name, h.Command)
+		}
+		if h.Timeout != 45 {
+			t.Errorf("event %q: timeout = %d, want 45", name, h.Timeout)
+		}
+		if groups[0].Matcher != ".*" {
+			t.Errorf("event %q: matcher = %q, want .*", name, groups[0].Matcher)
+		}
+	}
 }
 
 func TestGenerateHooksJSON_EmptyShim(t *testing.T) {
 	t.Parallel()
-	_, err := GenerateHooksJSON("", 30_000)
+	_, err := GenerateHooksJSON("", 30)
 	if err == nil {
 		t.Fatal("expected error for empty shim path")
 	}

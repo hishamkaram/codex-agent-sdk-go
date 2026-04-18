@@ -48,24 +48,13 @@ func allowResponse(event types.HookEventName, a types.HookAllow) HookResponse {
 func buildAllowOutput(event types.HookEventName, a types.HookAllow) (string, error) {
 	switch event {
 	case types.HookPreToolUse:
-		out := PreToolUseOutput{
-			HookSpecificOutput: PreToolUseHookSpecific{
-				HookEventName:      "PreToolUse",
-				PermissionDecision: "allow",
-			},
-		}
-		if a.SystemMessage != nil {
-			out.SystemMessage = *a.SystemMessage
-		}
-		if len(a.UpdatedInput) > 0 {
-			var updated any
-			if err := json.Unmarshal(a.UpdatedInput, &updated); err != nil {
-				return "", err
-			}
-			out.HookSpecificOutput.UpdatedInput = updated
-		}
-		b, err := json.Marshal(out)
-		return string(b), err
+		// codex 0.121.0 rejects `permissionDecision:"allow"`, `updatedInput`,
+		// and `additionalContext` for PreToolUse with a logged warning.
+		// The supported allow path is: exit 0 with empty stdout — codex
+		// then defaults to allow. SystemMessage / AdditionalContext /
+		// UpdatedInput passed by the caller are silently dropped on
+		// PreToolUse for this codex version. See docs/hooks.md.
+		return "", nil
 	case types.HookPostToolUse:
 		out := PostToolUseOutput{
 			HookSpecificOutput: PostToolUseHookSpecific{HookEventName: "PostToolUse"},
@@ -178,20 +167,13 @@ func buildDenyOutput(event types.HookEventName, d types.HookDeny) (string, error
 }
 
 func askResponse(event types.HookEventName, a types.HookAsk) HookResponse {
-	if event != types.HookPreToolUse {
-		// "ask" only meaningful for preToolUse; allow otherwise.
-		return HookResponse{ExitCode: 0}
-	}
-	out := PreToolUseOutput{
-		HookSpecificOutput: PreToolUseHookSpecific{
-			HookEventName:            "PreToolUse",
-			PermissionDecision:       "ask",
-			PermissionDecisionReason: a.Reason,
-		},
-	}
-	b, err := json.Marshal(out)
-	if err != nil {
-		return HookResponse{ExitCode: 0}
-	}
-	return HookResponse{Stdout: string(b), ExitCode: 0}
+	// codex 0.121.0 rejects `permissionDecision:"ask"` with a logged
+	// warning. The supported ask path is: exit 0 with empty stdout —
+	// codex then falls through to its normal approval policy. When the
+	// caller's ApprovalPolicy is `untrusted` (or any policy that gates
+	// the action), codex emits a server-initiated approval request that
+	// the SDK's ApprovalCallback handles. Reason is silently dropped.
+	_ = event
+	_ = a
+	return HookResponse{ExitCode: 0}
 }

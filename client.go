@@ -7,8 +7,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/hishamkaram/codex-agent-sdk-go/internal/events"
 	"github.com/hishamkaram/codex-agent-sdk-go/internal/hookbridge"
@@ -44,7 +46,15 @@ type Client struct {
 
 	// Hook bridge — populated only when HookCallback is registered.
 	hookListener *hookbridge.Listener
-	hookHomeDir  string // tempdir used as CODEX_HOME override
+	// hookHooksJSONPath is the absolute path to the user's
+	// ~/.codex/hooks.json that the SDK overwrote during Connect.
+	hookHooksJSONPath string
+	// hookBackupPath, when non-empty, is the absolute path to the byte-for-byte
+	// backup of the user's pre-Connect hooks.json. Empty when no hooks.json
+	// existed before Connect (Close removes the SDK-written hooks.json instead).
+	hookBackupPath string
+	// hookHadUserConfig records whether a hooks.json existed at Connect time.
+	hookHadUserConfig bool
 
 	connected atomic.Bool
 	closed    atomic.Bool
@@ -90,18 +100,15 @@ func (c *Client) Connect(ctx context.Context) error {
 		return fmt.Errorf("codex.Client.Connect: client is closed")
 	}
 
-	// v0.2.0: hook-bridge auto-wiring is SPLIT:
-	//   - Listener: always started when WithHookCallback is set. Accepts
-	//     shim dials on a socket under ~/.cache/codex-sdk/.
-	//   - hooks.json + CODEX_HOME override: DEFERRED TO v0.3.0. Upstream
-	//     codex rejects tempdir CODEX_HOME paths and has hooks.json
-	//     schema quirks that block turn start. Users who want hooks to
-	//     actually fire today must manually add an entry to
-	//     ~/.codex/hooks.json that runs codex-sdk-hook-shim.
-	// See docs/hooks.md for the DIY recipe.
+	// v0.3.0: hook-bridge auto-wiring is end-to-end. When HookCallback is
+	// set, the SDK starts a Unix socket listener under
+	// ~/.cache/codex-sdk/, backs up the user's ~/.codex/hooks.json (if
+	// any), and writes a generated hooks.json that points codex at the
+	// shim. Close restores the user's original config byte-for-byte. See
+	// setupHookBridge for the full lifecycle.
 	extraEnv := append([]string(nil), c.opts.Env...)
 	if c.opts.HookCallback != nil {
-		if err := c.setupHookBridgeExperimental(&extraEnv); err != nil {
+		if err := c.setupHookBridge(&extraEnv); err != nil {
 			return fmt.Errorf("codex.Client.Connect: hook bridge: %w", err)
 		}
 	}
@@ -194,17 +201,39 @@ func (c *Client) Close(ctx context.Context) error {
 	if c.hookListener != nil {
 		_ = c.hookListener.Close()
 	}
-	if c.hookHomeDir != "" {
-		_ = os.RemoveAll(c.hookHomeDir)
-	}
+	// Restore the user's original ~/.codex/hooks.json (or remove the
+	// SDK-written file when no original existed). Logged but never
+	// fatal — Close must remain best-effort.
+	c.restoreUserHooksJSON()
 	return trErr
 }
 
-// setupHookBridgeExperimental is the v0.2.0 listener-only path. Starts
-// the Unix socket under ~/.cache/codex-sdk/hook-<pid>.sock and exposes
-// its path via CODEX_SDK_HOOK_SOCKET in the subprocess env. Does NOT
-// write hooks.json or override CODEX_HOME.
-func (c *Client) setupHookBridgeExperimental(extraEnv *[]string) error {
+// hookBackupSuffix identifies SDK-written backup files of the user's
+// hooks.json. The PID suffix lets stale-recovery detect crashed prior
+// runs without colliding with a live concurrent SDK instance.
+const hookBackupSuffix = ".sdk-backup"
+
+// staleBackupAge is the age threshold past which a leftover backup file
+// is treated as evidence of a crashed prior run rather than a live
+// concurrent SDK instance.
+const staleBackupAge = 60 * time.Second
+
+// hooksJSONTimeoutSeconds is the per-hook timeout written into the
+// generated hooks.json. MUST exceed c.opts.HookTimeout — the SDK's
+// listener kills the callback first; codex's own timeout is the
+// outer bound.
+const hooksJSONTimeoutSeconds = 30
+
+// setupHookBridge starts the Unix socket listener, resolves the shim
+// binary, and installs the generated hooks.json so codex actually
+// invokes the shim. Wires the listener path through
+// CODEX_SDK_HOOK_SOCKET so the shim can dial back. Calls
+// installHooksJSON which backs up the user's existing hooks.json (if
+// any). Close calls restoreUserHooksJSON to undo the changes.
+//
+// On any error after the listener starts, this method tears the listener
+// down so the caller can return cleanly.
+func (c *Client) setupHookBridge(extraEnv *[]string) error {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return fmt.Errorf("home dir: %w", err)
@@ -215,50 +244,11 @@ func (c *Client) setupHookBridgeExperimental(extraEnv *[]string) error {
 	}
 	socketPath := filepath.Join(cacheDir, fmt.Sprintf("hook-%d.sock", os.Getpid()))
 
-	ln, err := hookbridge.New(hookbridge.Config{
-		SocketPath: socketPath,
-		Handler:    c.opts.HookCallback,
-		Timeout:    c.opts.HookTimeout,
-		Logger:     c.logger,
-	})
-	if err != nil {
-		return err
-	}
-	c.hookListener = ln
-	*extraEnv = append(*extraEnv, "CODEX_SDK_HOOK_SOCKET="+socketPath)
-	c.logger.Info("hook bridge listener started (experimental; manual hooks.json required for hooks to fire)",
-		zap.String("socket", socketPath))
-	return nil
-}
-
-// setupHookBridgeFullAuto is the v0.3.0-reserved auto-wiring path that
-// writes a hooks.json into a tempdir CODEX_HOME. Disabled in v0.2.0
-// because upstream codex rejects tempdir CODEX_HOME paths and has
-// hooks.json schema quirks. Retained for future activation.
-//
-//nolint:unused // retained for v0.3.0
-func (c *Client) setupHookBridgeFullAuto(extraEnv *[]string) error {
 	shimPath, err := resolveShimPath(c.opts.ShimPath)
 	if err != nil {
 		return err
 	}
 
-	homeDir, err := os.MkdirTemp("", fmt.Sprintf("codex-sdk-home-%d-", os.Getpid()))
-	if err != nil {
-		return fmt.Errorf("tempdir: %w", err)
-	}
-	socketPath := filepath.Join(homeDir, "hook.sock")
-
-	hooksJSON, err := hookbridge.GenerateHooksJSON(shimPath, 30_000)
-	if err != nil {
-		_ = os.RemoveAll(homeDir)
-		return fmt.Errorf("generate hooks.json: %w", err)
-	}
-	if err := os.WriteFile(filepath.Join(homeDir, "hooks.json"), hooksJSON, 0o600); err != nil {
-		_ = os.RemoveAll(homeDir)
-		return fmt.Errorf("write hooks.json: %w", err)
-	}
-
 	ln, err := hookbridge.New(hookbridge.Config{
 		SocketPath: socketPath,
 		Handler:    c.opts.HookCallback,
@@ -266,22 +256,240 @@ func (c *Client) setupHookBridgeFullAuto(extraEnv *[]string) error {
 		Logger:     c.logger,
 	})
 	if err != nil {
-		_ = os.RemoveAll(homeDir)
+		return err
+	}
+	c.hookListener = ln
+
+	if err := c.installHooksJSON(home, shimPath); err != nil {
+		_ = ln.Close()
+		c.hookListener = nil
 		return err
 	}
 
-	c.hookListener = ln
-	c.hookHomeDir = homeDir
-
-	*extraEnv = append(*extraEnv,
-		"CODEX_HOME="+homeDir,
-		"CODEX_SDK_HOOK_SOCKET="+socketPath,
-	)
-	c.logger.Debug("hook bridge ready",
+	*extraEnv = append(*extraEnv, "CODEX_SDK_HOOK_SOCKET="+socketPath)
+	c.logger.Info("hook bridge ready",
 		zap.String("shim", shimPath),
-		zap.String("home", homeDir),
-		zap.String("socket", socketPath))
+		zap.String("hooks_json", c.hookHooksJSONPath),
+		zap.String("socket", socketPath),
+		zap.Bool("backed_up_user_config", c.hookHadUserConfig))
 	return nil
+}
+
+// installHooksJSON ensures ~/.codex/hooks.json points at the shim. If
+// the user already has a hooks.json, it's copied byte-for-byte to a
+// PID-suffixed backup that restoreUserHooksJSON consults on Close.
+//
+// Stale-recovery: if a backup exists from a crashed prior run
+// (>staleBackupAge old), this method restores it before installing the
+// generated config so the user's data is never lost across crashes.
+//
+// Concurrent-SDK detection: if a fresh (<staleBackupAge) backup exists
+// from a different PID, returns an error rather than silently chaining
+// backups (which would corrupt the user's original on Close). v0.3.0
+// chose refuse-with-error over last-writer-wins to avoid silent data
+// loss; merge-mode is on the v0.3.1 roadmap.
+func (c *Client) installHooksJSON(home, shimPath string) error {
+	codexDir := filepath.Join(home, ".codex")
+	if err := os.MkdirAll(codexDir, 0o700); err != nil {
+		return fmt.Errorf("ensure codex dir: %w", err)
+	}
+	hooksPath := filepath.Join(codexDir, "hooks.json")
+	backupPath := filepath.Join(codexDir, fmt.Sprintf("hooks.json%s-%d", hookBackupSuffix, os.Getpid()))
+
+	c.recoverStaleBackups(codexDir, hooksPath)
+	if err := c.detectConcurrentSDK(codexDir); err != nil {
+		return err
+	}
+
+	original, hadOriginal, err := readIfExists(hooksPath)
+	if err != nil {
+		return fmt.Errorf("read existing hooks.json: %w", err)
+	}
+	if hadOriginal {
+		if err := os.WriteFile(backupPath, original, 0o600); err != nil {
+			return fmt.Errorf("write hooks.json backup: %w", err)
+		}
+		c.hookBackupPath = backupPath
+	}
+
+	hooksJSON, err := hookbridge.GenerateHooksJSON(shimPath, hooksJSONTimeoutSeconds)
+	if err != nil {
+		// Roll back the backup we just wrote so we don't leave debris.
+		if hadOriginal {
+			_ = os.Remove(backupPath)
+			c.hookBackupPath = ""
+		}
+		return fmt.Errorf("generate hooks.json: %w", err)
+	}
+	if err := os.WriteFile(hooksPath, hooksJSON, 0o600); err != nil {
+		if hadOriginal {
+			_ = os.Remove(backupPath)
+			c.hookBackupPath = ""
+		}
+		return fmt.Errorf("write hooks.json: %w", err)
+	}
+
+	c.hookHooksJSONPath = hooksPath
+	c.hookHadUserConfig = hadOriginal
+	if hadOriginal {
+		c.logger.Warn("overwrote ~/.codex/hooks.json for SDK lifetime; original backed up and will be restored on Close",
+			zap.String("backup", backupPath))
+	}
+	return nil
+}
+
+// detectConcurrentSDK refuses to install hooks.json when a fresh
+// (<staleBackupAge) backup file from a different PID exists in
+// codexDir. Such a file means another live SDK Client is currently
+// managing this hooks.json — chaining a second install would corrupt
+// the user's original on Close because each Close restores from its own
+// backup, and the LAST Close would write back the previous SDK's
+// generated config instead of the user's true original.
+func (c *Client) detectConcurrentSDK(codexDir string) error {
+	entries, err := os.ReadDir(codexDir)
+	if err != nil {
+		return nil
+	}
+	prefix := "hooks.json" + hookBackupSuffix
+	myPIDSuffix := fmt.Sprintf("-%d", os.Getpid())
+	now := time.Now()
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasPrefix(e.Name(), prefix) {
+			continue
+		}
+		if strings.HasSuffix(e.Name(), myPIDSuffix) {
+			continue // same PID — re-Connect within one process is its own bug; let it fail downstream
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		if now.Sub(info.ModTime()) >= staleBackupAge {
+			continue // stale — recoverStaleBackups already handled
+		}
+		return fmt.Errorf(
+			"concurrent codex SDK Client detected (fresh backup at %s); "+
+				"v0.3.0 supports only one HookCallback-enabled Client per machine — "+
+				"close the other Client first or run without WithHookCallback",
+			filepath.Join(codexDir, e.Name()))
+	}
+	return nil
+}
+
+// recoverStaleBackups looks for SDK backup files older than
+// staleBackupAge in codexDir. A backup that old means a prior SDK run
+// crashed before Close could restore. Restore the oldest such backup
+// over hooks.json (so the user's original survives the crash) and then
+// remove all stale backups. Live concurrent SDK runs (whose backups are
+// fresher than staleBackupAge) are left alone.
+func (c *Client) recoverStaleBackups(codexDir, hooksPath string) {
+	entries, err := os.ReadDir(codexDir)
+	if err != nil {
+		return
+	}
+	prefix := "hooks.json" + hookBackupSuffix
+	now := time.Now()
+	type candidate struct {
+		path  string
+		mtime time.Time
+	}
+	var stale []candidate
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasPrefix(e.Name(), prefix) {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		if now.Sub(info.ModTime()) < staleBackupAge {
+			continue
+		}
+		stale = append(stale, candidate{
+			path:  filepath.Join(codexDir, e.Name()),
+			mtime: info.ModTime(),
+		})
+	}
+	if len(stale) == 0 {
+		return
+	}
+	// Restore the OLDEST stale backup — that's the one most likely to be
+	// the user's true original (newer ones may themselves be SDK-written
+	// configs that another crashed run backed up).
+	oldest := stale[0]
+	for _, s := range stale[1:] {
+		if s.mtime.Before(oldest.mtime) {
+			oldest = s
+		}
+	}
+	data, err := os.ReadFile(oldest.path)
+	if err != nil {
+		c.logger.Warn("stale hooks.json backup found but unreadable; leaving in place",
+			zap.String("path", oldest.path), zap.Error(err))
+		return
+	}
+	if err := os.WriteFile(hooksPath, data, 0o600); err != nil {
+		c.logger.Warn("stale hooks.json backup found but restore failed",
+			zap.String("path", oldest.path), zap.Error(err))
+		return
+	}
+	c.logger.Warn("recovered hooks.json from stale SDK backup (prior SDK run crashed before Close)",
+		zap.String("backup", oldest.path),
+		zap.Duration("age", now.Sub(oldest.mtime)))
+	for _, s := range stale {
+		_ = os.Remove(s.path)
+	}
+}
+
+// restoreUserHooksJSON is the Close-time inverse of installHooksJSON.
+// If a backup exists, it's renamed back over hooks.json byte-for-byte.
+// If no backup exists (user had no hooks.json before Connect), the
+// SDK-written hooks.json is removed. Best-effort — failures are logged
+// but never propagated.
+func (c *Client) restoreUserHooksJSON() {
+	if c.hookHooksJSONPath == "" {
+		return
+	}
+	if c.hookBackupPath != "" {
+		// Read backup, write back over hooks.json. We use read+write
+		// (not rename) so a same-mountpoint guarantee isn't required.
+		data, err := os.ReadFile(c.hookBackupPath)
+		if err != nil {
+			c.logger.Warn("hooks.json backup unreadable; leaving SDK-written config in place",
+				zap.String("backup", c.hookBackupPath), zap.Error(err))
+			return
+		}
+		if err := os.WriteFile(c.hookHooksJSONPath, data, 0o600); err != nil {
+			c.logger.Warn("hooks.json restore failed; backup retained",
+				zap.String("backup", c.hookBackupPath), zap.Error(err))
+			return
+		}
+		_ = os.Remove(c.hookBackupPath)
+		c.logger.Debug("restored user hooks.json from backup",
+			zap.String("hooks_json", c.hookHooksJSONPath))
+		return
+	}
+	// No prior config — remove what we wrote.
+	if err := os.Remove(c.hookHooksJSONPath); err != nil && !os.IsNotExist(err) {
+		c.logger.Warn("removing SDK-written hooks.json failed",
+			zap.String("hooks_json", c.hookHooksJSONPath), zap.Error(err))
+		return
+	}
+	c.logger.Debug("removed SDK-written hooks.json (no prior user config)",
+		zap.String("hooks_json", c.hookHooksJSONPath))
+}
+
+// readIfExists returns the file's contents if present. If the file does
+// not exist, returns (nil, false, nil). Other I/O errors are propagated.
+func readIfExists(path string) ([]byte, bool, error) {
+	data, err := os.ReadFile(path)
+	if err == nil {
+		return data, true, nil
+	}
+	if os.IsNotExist(err) {
+		return nil, false, nil
+	}
+	return nil, false, err
 }
 
 // resolveShimPath finds the codex-sdk-hook-shim binary. Order:

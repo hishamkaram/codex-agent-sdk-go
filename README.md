@@ -34,7 +34,7 @@ Codex's app-server exposes a JSON-RPC 2.0 protocol over stdio — bidirectional,
 | CLI discovery + soft version probe | ✅ |
 | Goroutine leak detection (goleak) | ✅ |
 | Hook observer events (HookStarted / HookCompleted) | ✅ v0.2.0 — via `WithHooks(true)` |
-| Programmatic Go hook callbacks (shim bridge) | 🟡 v0.2.0 experimental; requires DIY `~/.codex/hooks.json` entry. Full auto-wiring in v0.3.0 — see docs/hooks.md |
+| Programmatic Go hook callbacks (shim bridge, auto-wired) | ✅ v0.3.0 — `WithHookCallback(h)` writes hooks.json automatically and restores on Close. See `docs/hooks.md`. |
 | Slash commands | ❌ CLI-TUI only |
 | Native FFI (CGO) | ❌ deferred |
 
@@ -148,7 +148,7 @@ opts = opts.WithApprovalCallback(func(ctx context.Context, req types.ApprovalReq
 - [`docs/architecture.md`](docs/architecture.md) — the four layers, dispatcher goroutine, turn lock, concurrency contract, shutdown ladder
 - [`docs/wire-protocol.md`](docs/wire-protocol.md) — JSON-RPC method reference, wire quirks (flat vs nested IDs, per-item delta methods), known-unknown methods
 - [`docs/approvals.md`](docs/approvals.md) — approval request/decision taxonomy, sandbox × policy matrix, deadlock warning
-- [`docs/hooks.md`](docs/hooks.md) — observer mode (v0.2.0 supported) + DIY programmatic callback via `codex-sdk-hook-shim`
+- [`docs/hooks.md`](docs/hooks.md) — observer mode + auto-wired programmatic callbacks via `WithHookCallback` (v0.3.0)
 
 ## Examples
 
