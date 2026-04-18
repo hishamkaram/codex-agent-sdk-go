@@ -4,10 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 
 	"github.com/hishamkaram/codex-agent-sdk-go/internal/events"
+	"github.com/hishamkaram/codex-agent-sdk-go/internal/hookbridge"
 	"github.com/hishamkaram/codex-agent-sdk-go/internal/jsonrpc"
 	sdklog "github.com/hishamkaram/codex-agent-sdk-go/internal/log"
 	"github.com/hishamkaram/codex-agent-sdk-go/internal/transport"
@@ -37,6 +41,10 @@ type Client struct {
 	dispatcherCtx    context.Context
 	dispatcherCancel context.CancelFunc
 	dispatcherDone   chan struct{}
+
+	// Hook bridge — populated only when HookCallback is registered.
+	hookListener *hookbridge.Listener
+	hookHomeDir  string // tempdir used as CODEX_HOME override
 
 	connected atomic.Bool
 	closed    atomic.Bool
@@ -82,10 +90,19 @@ func (c *Client) Connect(ctx context.Context) error {
 		return fmt.Errorf("codex.Client.Connect: client is closed")
 	}
 
+	// Set up the hook bridge BEFORE spawning codex so the hooks.json +
+	// CODEX_HOME + socket env var are ready for the subprocess.
+	extraEnv := append([]string(nil), c.opts.Env...)
+	if c.opts.HookCallback != nil {
+		if err := c.setupHookBridge(&extraEnv); err != nil {
+			return fmt.Errorf("codex.Client.Connect: hook bridge: %w", err)
+		}
+	}
+
 	c.tr = transport.NewAppServer(transport.AppServerConfig{
 		CLIPath:        c.opts.CLIPath,
 		ExtraArgs:      c.opts.ExtraArgs,
-		Env:            c.opts.Env,
+		Env:            extraEnv,
 		Logger:         c.logger,
 		ReadBufferSize: c.opts.ReadBufferSize,
 	})
@@ -161,10 +178,110 @@ func (c *Client) Close(ctx context.Context) error {
 	c.threads = nil
 	c.mu.Unlock()
 
+	var trErr error
 	if c.tr != nil {
-		return c.tr.Close(ctx)
+		trErr = c.tr.Close(ctx)
 	}
+	// Tear down the hook bridge AFTER the transport is stopped so no
+	// in-flight hook subprocess can still dial the socket.
+	if c.hookListener != nil {
+		_ = c.hookListener.Close()
+	}
+	if c.hookHomeDir != "" {
+		_ = os.RemoveAll(c.hookHomeDir)
+	}
+	return trErr
+}
+
+// setupHookBridge creates a tempdir CODEX_HOME with a generated
+// hooks.json, starts the Unix socket listener, and adds the required env
+// vars (CODEX_HOME, CODEX_SDK_HOOK_SOCKET) to extraEnv.
+//
+// Called only when HookCallback != nil. Idempotent (returns error if
+// already set up).
+func (c *Client) setupHookBridge(extraEnv *[]string) error {
+	shimPath, err := resolveShimPath(c.opts.ShimPath)
+	if err != nil {
+		return err
+	}
+
+	homeDir, err := os.MkdirTemp("", fmt.Sprintf("codex-sdk-home-%d-", os.Getpid()))
+	if err != nil {
+		return fmt.Errorf("tempdir: %w", err)
+	}
+	socketPath := filepath.Join(homeDir, "hook.sock")
+
+	hooksJSON, err := hookbridge.GenerateHooksJSON(shimPath, 30_000)
+	if err != nil {
+		_ = os.RemoveAll(homeDir)
+		return fmt.Errorf("generate hooks.json: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(homeDir, "hooks.json"), hooksJSON, 0o600); err != nil {
+		_ = os.RemoveAll(homeDir)
+		return fmt.Errorf("write hooks.json: %w", err)
+	}
+
+	ln, err := hookbridge.New(hookbridge.Config{
+		SocketPath: socketPath,
+		Handler:    c.opts.HookCallback,
+		Timeout:    c.opts.HookTimeout,
+		Logger:     c.logger,
+	})
+	if err != nil {
+		_ = os.RemoveAll(homeDir)
+		return err
+	}
+
+	c.hookListener = ln
+	c.hookHomeDir = homeDir
+
+	*extraEnv = append(*extraEnv,
+		"CODEX_HOME="+homeDir,
+		"CODEX_SDK_HOOK_SOCKET="+socketPath,
+	)
+	c.logger.Debug("hook bridge ready",
+		zap.String("shim", shimPath),
+		zap.String("home", homeDir),
+		zap.String("socket", socketPath))
 	return nil
+}
+
+// resolveShimPath finds the codex-sdk-hook-shim binary. Order:
+//  1. explicit ShimPath option
+//  2. exec.LookPath (PATH)
+//  3. $GOPATH/bin, $HOME/go/bin, ./.bin
+func resolveShimPath(explicit string) (string, error) {
+	if explicit != "" {
+		if _, err := os.Stat(explicit); err != nil {
+			return "", fmt.Errorf("shim at %q: %w", explicit, err)
+		}
+		abs, err := filepath.Abs(explicit)
+		if err != nil {
+			return "", err
+		}
+		return abs, nil
+	}
+	if p, err := exec.LookPath("codex-sdk-hook-shim"); err == nil {
+		return p, nil
+	}
+	// Fall-back search locations.
+	var roots []string
+	if gp := os.Getenv("GOPATH"); gp != "" {
+		roots = append(roots, filepath.Join(gp, "bin"))
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		roots = append(roots, filepath.Join(home, "go", "bin"))
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		roots = append(roots, filepath.Join(cwd, ".bin"))
+	}
+	for _, root := range roots {
+		candidate := filepath.Join(root, "codex-sdk-hook-shim")
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate, nil
+		}
+	}
+	return "", fmt.Errorf("codex-sdk-hook-shim not found on PATH, $GOPATH/bin, $HOME/go/bin, or ./.bin (install: go install github.com/hishamkaram/codex-agent-sdk-go/cmd/codex-sdk-hook-shim@latest)")
 }
 
 // dispatch runs the event-routing goroutine. Reads notifications and

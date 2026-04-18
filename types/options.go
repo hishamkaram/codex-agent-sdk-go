@@ -1,6 +1,10 @@
 package types
 
-import "go.uber.org/zap"
+import (
+	"time"
+
+	"go.uber.org/zap"
+)
 
 // CodexOptions configures the Codex client. Construct with NewCodexOptions
 // and chain With* methods.
@@ -55,6 +59,27 @@ type CodexOptions struct {
 	// approval request. If nil, DefaultDenyApprovalCallback is used — all
 	// approval prompts are denied.
 	ApprovalCallback ApprovalCallback
+
+	// --- Hook bridge (v0.2.0) ---
+
+	// HookCallback is invoked by the SDK when codex fires a hook handler
+	// registered through the SDK's tempdir CODEX_HOME override. Nil means
+	// no bridge is set up — the codex_hooks feature alone only delivers
+	// HookStarted/HookCompleted observer events.
+	HookCallback HookHandler
+
+	// ShimPath overrides auto-discovery of the codex-sdk-hook-shim binary.
+	// When empty, the SDK searches PATH, $GOPATH/bin, $HOME/go/bin, and
+	// the project's .bin/ directory. Set this when the shim lives in a
+	// non-standard location.
+	ShimPath string
+
+	// HookTimeout bounds how long the SDK waits for HookCallback to
+	// return before defaulting to HookAllow{}. 0 uses the 30s default.
+	// MUST be shorter than the timeout baked into the generated
+	// hooks.json — otherwise codex kills the shim before the SDK
+	// responds.
+	HookTimeout time.Duration
 }
 
 // NewCodexOptions returns a CodexOptions populated with sensible defaults:
@@ -164,6 +189,41 @@ func (o *CodexOptions) WithHooks(enabled bool) *CodexOptions {
 	if enabled {
 		return o.WithFeatureEnabled("codex_hooks")
 	}
+	return o
+}
+
+// WithHookCallback registers a Go function that codex invokes for every
+// hook event (preToolUse, postToolUse, sessionStart, userPromptSubmit,
+// stop). The SDK manages the full bridge lifecycle: spawns a Unix socket
+// listener, generates a hooks.json pointing at the codex-sdk-hook-shim
+// binary, sets CODEX_HOME to a tempdir, and passes
+// CODEX_SDK_HOOK_SOCKET to the codex subprocess.
+//
+// This option implies WithHooks(true) — the SDK adds --enable codex_hooks
+// automatically.
+//
+// WARNING: the callback runs inside the SDK process on the bridge
+// listener's goroutine. Do NOT call Thread.Run, Thread.RunStreamed, or
+// any other SDK operation that would deadlock the dispatcher.
+func (o *CodexOptions) WithHookCallback(h HookHandler) *CodexOptions {
+	o.HookCallback = h
+	// Auto-enable the feature flag so users don't have to chain both.
+	return o.WithHooks(true)
+}
+
+// WithShimPath overrides shim-binary auto-discovery. Set this when
+// codex-sdk-hook-shim lives outside PATH / $GOPATH/bin / .bin/.
+func (o *CodexOptions) WithShimPath(path string) *CodexOptions {
+	o.ShimPath = path
+	return o
+}
+
+// WithHookTimeout sets the per-callback timeout. If the callback doesn't
+// return within this duration, the SDK defaults to HookAllow{} and logs
+// a warning. Must be shorter than the hooks.json subprocess timeout
+// (30s default).
+func (o *CodexOptions) WithHookTimeout(d time.Duration) *CodexOptions {
+	o.HookTimeout = d
 	return o
 }
 
