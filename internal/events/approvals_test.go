@@ -1,0 +1,107 @@
+package events
+
+import (
+	"encoding/json"
+	"testing"
+
+	"github.com/hishamkaram/codex-agent-sdk-go/types"
+)
+
+func TestParseApprovalRequest_CommandExecution(t *testing.T) {
+	t.Parallel()
+	r, err := ParseApprovalRequest(
+		"item/commandExecution/requestApproval",
+		json.RawMessage(`{"command":"rm -rf /","working_directory":"/tmp","reason":"destructive"}`),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := r.(*types.CommandExecutionApprovalRequest)
+	if c.Command != "rm -rf /" || c.Cwd != "/tmp" || c.Reason != "destructive" {
+		t.Fatalf("%+v", c)
+	}
+	if r.ApprovalMethod() != "item/commandExecution/requestApproval" {
+		t.Fatal("wrong method")
+	}
+}
+
+func TestParseApprovalRequest_FileChange(t *testing.T) {
+	t.Parallel()
+	r, _ := ParseApprovalRequest(
+		"item/fileChange/requestApproval",
+		json.RawMessage(`{"path":"/a.go","operation":"delete","diff":"...","reason":"cleanup"}`),
+	)
+	f := r.(*types.FileChangeApprovalRequest)
+	if f.Path != "/a.go" || f.Operation != "delete" {
+		t.Fatalf("%+v", f)
+	}
+}
+
+func TestParseApprovalRequest_Permissions(t *testing.T) {
+	t.Parallel()
+	r, _ := ParseApprovalRequest(
+		"item/permissions/requestApproval",
+		json.RawMessage(`{"permission":"network","scope":"api.example.com"}`),
+	)
+	p := r.(*types.PermissionsApprovalRequest)
+	if p.Permission != "network" || p.Scope != "api.example.com" {
+		t.Fatalf("%+v", p)
+	}
+}
+
+func TestParseApprovalRequest_Elicitation(t *testing.T) {
+	t.Parallel()
+	r, _ := ParseApprovalRequest(
+		"mcpServer/elicitation/request",
+		json.RawMessage(`{"server_name":"docs","prompt":"password?","schema":{"type":"string"}}`),
+	)
+	e := r.(*types.ElicitationRequest)
+	if e.ServerName != "docs" || e.Prompt != "password?" || len(e.Schema) == 0 {
+		t.Fatalf("%+v", e)
+	}
+}
+
+func TestParseApprovalRequest_UnknownMethodFallback(t *testing.T) {
+	t.Parallel()
+	raw := json.RawMessage(`{"custom":"field"}`)
+	r, _ := ParseApprovalRequest("some/new/approval", raw)
+	u, ok := r.(*types.UnknownApprovalRequest)
+	if !ok {
+		t.Fatalf("got %T", r)
+	}
+	if u.Method != "some/new/approval" || u.ApprovalMethod() != "some/new/approval" {
+		t.Fatal("method not preserved")
+	}
+	if string(u.Params) != string(raw) {
+		t.Fatal("params not preserved")
+	}
+}
+
+func TestEncodeApprovalDecision(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		in   types.ApprovalDecision
+		want string
+	}{
+		{"accept", types.ApprovalAccept{}, `{"decision":"accept"}`},
+		{"acceptForSession", types.ApprovalAcceptForSession{}, `{"decision":"acceptForSession"}`},
+		{"deny_no_reason", types.ApprovalDeny{}, `{"decision":"decline"}`},
+		{"deny_with_reason", types.ApprovalDeny{Reason: "unsafe"}, `{"decision":"decline","reason":"unsafe"}`},
+		{"cancel", types.ApprovalCancel{Reason: "user aborted"}, `{"decision":"cancel","reason":"user aborted"}`},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			m := EncodeApprovalDecision(tt.in)
+			b, err := json.Marshal(m)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(b) != tt.want {
+				t.Fatalf("got %q, want %q", b, tt.want)
+			}
+		})
+	}
+}
