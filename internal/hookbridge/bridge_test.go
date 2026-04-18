@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"net"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -199,16 +200,17 @@ func TestListener_CloseRemovesSocket(t *testing.T) {
 		Handler:    types.DefaultAllowHookHandler,
 	})
 
-	// Socket should exist.
-	if _, err := net.DialTimeout("unix", socket, 500*time.Millisecond); err != nil {
-		t.Fatalf("pre-close dial should succeed: %v", err)
+	// Socket file should exist pre-close. Use os.Stat (doesn't spawn a
+	// serve goroutine that would block Close for the 30s deadline).
+	if _, err := os.Stat(socket); err != nil {
+		t.Fatalf("pre-close stat: %v", err)
 	}
 	if err := ln.Close(); err != nil {
 		t.Fatal(err)
 	}
-	// File removed.
-	if _, err := net.DialTimeout("unix", socket, 100*time.Millisecond); err == nil {
-		t.Fatal("post-close dial should fail")
+	// Post-close: socket file is gone.
+	if _, err := os.Stat(socket); err == nil {
+		t.Fatal("socket file still exists after Close")
 	}
 }
 

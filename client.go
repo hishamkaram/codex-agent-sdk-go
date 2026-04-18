@@ -90,11 +90,18 @@ func (c *Client) Connect(ctx context.Context) error {
 		return fmt.Errorf("codex.Client.Connect: client is closed")
 	}
 
-	// Set up the hook bridge BEFORE spawning codex so the hooks.json +
-	// CODEX_HOME + socket env var are ready for the subprocess.
+	// v0.2.0: hook-bridge auto-wiring is SPLIT:
+	//   - Listener: always started when WithHookCallback is set. Accepts
+	//     shim dials on a socket under ~/.cache/codex-sdk/.
+	//   - hooks.json + CODEX_HOME override: DEFERRED TO v0.3.0. Upstream
+	//     codex rejects tempdir CODEX_HOME paths and has hooks.json
+	//     schema quirks that block turn start. Users who want hooks to
+	//     actually fire today must manually add an entry to
+	//     ~/.codex/hooks.json that runs codex-sdk-hook-shim.
+	// See docs/hooks.md for the DIY recipe.
 	extraEnv := append([]string(nil), c.opts.Env...)
 	if c.opts.HookCallback != nil {
-		if err := c.setupHookBridge(&extraEnv); err != nil {
+		if err := c.setupHookBridgeExperimental(&extraEnv); err != nil {
 			return fmt.Errorf("codex.Client.Connect: hook bridge: %w", err)
 		}
 	}
@@ -193,13 +200,44 @@ func (c *Client) Close(ctx context.Context) error {
 	return trErr
 }
 
-// setupHookBridge creates a tempdir CODEX_HOME with a generated
-// hooks.json, starts the Unix socket listener, and adds the required env
-// vars (CODEX_HOME, CODEX_SDK_HOOK_SOCKET) to extraEnv.
+// setupHookBridgeExperimental is the v0.2.0 listener-only path. Starts
+// the Unix socket under ~/.cache/codex-sdk/hook-<pid>.sock and exposes
+// its path via CODEX_SDK_HOOK_SOCKET in the subprocess env. Does NOT
+// write hooks.json or override CODEX_HOME.
+func (c *Client) setupHookBridgeExperimental(extraEnv *[]string) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("home dir: %w", err)
+	}
+	cacheDir := filepath.Join(home, ".cache", "codex-sdk")
+	if err := os.MkdirAll(cacheDir, 0o700); err != nil {
+		return fmt.Errorf("cache dir: %w", err)
+	}
+	socketPath := filepath.Join(cacheDir, fmt.Sprintf("hook-%d.sock", os.Getpid()))
+
+	ln, err := hookbridge.New(hookbridge.Config{
+		SocketPath: socketPath,
+		Handler:    c.opts.HookCallback,
+		Timeout:    c.opts.HookTimeout,
+		Logger:     c.logger,
+	})
+	if err != nil {
+		return err
+	}
+	c.hookListener = ln
+	*extraEnv = append(*extraEnv, "CODEX_SDK_HOOK_SOCKET="+socketPath)
+	c.logger.Info("hook bridge listener started (experimental; manual hooks.json required for hooks to fire)",
+		zap.String("socket", socketPath))
+	return nil
+}
+
+// setupHookBridgeFullAuto is the v0.3.0-reserved auto-wiring path that
+// writes a hooks.json into a tempdir CODEX_HOME. Disabled in v0.2.0
+// because upstream codex rejects tempdir CODEX_HOME paths and has
+// hooks.json schema quirks. Retained for future activation.
 //
-// Called only when HookCallback != nil. Idempotent (returns error if
-// already set up).
-func (c *Client) setupHookBridge(extraEnv *[]string) error {
+//nolint:unused // retained for v0.3.0
+func (c *Client) setupHookBridgeFullAuto(extraEnv *[]string) error {
 	shimPath, err := resolveShimPath(c.opts.ShimPath)
 	if err != nil {
 		return err
