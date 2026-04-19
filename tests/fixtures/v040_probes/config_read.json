@@ -1,0 +1,160 @@
+{
+  "config": {
+    "agents": null,
+    "allow_login_shell": null,
+    "analytics": null,
+    "approval_policy": null,
+    "approvals_reviewer": null,
+    "apps": null,
+    "audio": null,
+    "background_terminal_max_timeout": null,
+    "chatgpt_base_url": null,
+    "check_for_update_on_startup": null,
+    "cli_auth_credentials_store": null,
+    "commit_attribution": null,
+    "compact_prompt": null,
+    "default_permissions": null,
+    "developer_instructions": null,
+    "disable_paste_burst": null,
+    "experimental_compact_prompt_file": null,
+    "experimental_instructions_file": null,
+    "experimental_realtime_start_instructions": null,
+    "experimental_realtime_ws_backend_prompt": null,
+    "experimental_realtime_ws_base_url": null,
+    "experimental_realtime_ws_model": null,
+    "experimental_realtime_ws_startup_context": null,
+    "experimental_use_freeform_apply_patch": null,
+    "experimental_use_unified_exec_tool": null,
+    "features": {
+      "apps": true,
+      "plugins": true,
+      "tool_call_mcp_elicitation": true,
+      "tool_search": false,
+      "tool_suggest": true
+    },
+    "feedback": null,
+    "file_opener": null,
+    "forced_chatgpt_workspace_id": null,
+    "forced_login_method": null,
+    "ghost_snapshot": null,
+    "hide_agent_reasoning": null,
+    "history": null,
+    "include_apps_instructions": null,
+    "include_environment_context": null,
+    "include_permissions_instructions": null,
+    "instructions": null,
+    "js_repl_node_module_dirs": null,
+    "js_repl_node_path": null,
+    "log_dir": null,
+    "marketplaces": {},
+    "mcp_oauth_callback_port": null,
+    "mcp_oauth_callback_url": null,
+    "mcp_oauth_credentials_store": null,
+    "mcp_servers": {},
+    "memories": null,
+    "model": null,
+    "model_auto_compact_token_limit": "\u003cREDACTED\u003e",
+    "model_catalog_json": null,
+    "model_context_window": null,
+    "model_instructions_file": null,
+    "model_provider": null,
+    "model_providers": {},
+    "model_reasoning_effort": null,
+    "model_reasoning_summary": null,
+    "model_supports_reasoning_summaries": null,
+    "model_verbosity": null,
+    "notice": null,
+    "notify": null,
+    "openai_base_url": null,
+    "oss_provider": null,
+    "otel": null,
+    "permissions": null,
+    "personality": null,
+    "plan_mode_reasoning_effort": null,
+    "plugins": {},
+    "profile": null,
+    "profiles": {},
+    "project_doc_fallback_filenames": null,
+    "project_doc_max_bytes": null,
+    "project_root_markers": null,
+    "projects": {
+      "/home/hesham": {
+        "trust_level": "trusted"
+      },
+      "/home/hesham/Active-Projects/agentd-workspace/codex-agent-sdk-go": {
+        "trust_level": "trusted"
+      },
+      "/home/hesham/Active-Projects/push-test": {
+        "trust_level": "trusted"
+      },
+      "/tmp": {
+        "trust_level": "trusted"
+      },
+      "/tmp/codex-spike": {
+        "trust_level": "trusted"
+      }
+    },
+    "realtime": null,
+    "review_model": null,
+    "sandbox_mode": null,
+    "sandbox_workspace_write": null,
+    "service_tier": null,
+    "shell_environment_policy": {
+      "exclude": null,
+      "experimental_use_profile": null,
+      "ignore_default_excludes": null,
+      "include_only": null,
+      "inherit": null,
+      "set": null
+    },
+    "show_raw_agent_reasoning": null,
+    "skills": null,
+    "sqlite_home": null,
+    "suppress_unstable_features_warning": null,
+    "tool_output_token_limit": "\u003cREDACTED\u003e",
+    "tool_suggest": null,
+    "tools": null,
+    "tui": null,
+    "web_search": null,
+    "windows": null,
+    "windows_wsl_setup_acknowledged": null,
+    "zsh_path": null
+  },
+  "origins": {
+    "projects./home/hesham.trust_level": {
+      "name": {
+        "file": "/home/hesham/.codex/config.toml",
+        "type": "user"
+      },
+      "version": "sha256:915bc7ef2020e5d88ab2efd146f4297288367c97011f54e5272591da2dea26f1"
+    },
+    "projects./home/hesham/Active-Projects/agentd-workspace/codex-agent-sdk-go.trust_level": {
+      "name": {
+        "file": "/home/hesham/.codex/config.toml",
+        "type": "user"
+      },
+      "version": "sha256:915bc7ef2020e5d88ab2efd146f4297288367c97011f54e5272591da2dea26f1"
+    },
+    "projects./home/hesham/Active-Projects/push-test.trust_level": {
+      "name": {
+        "file": "/home/hesham/.codex/config.toml",
+        "type": "user"
+      },
+      "version": "sha256:915bc7ef2020e5d88ab2efd146f4297288367c97011f54e5272591da2dea26f1"
+    },
+    "projects./tmp.trust_level": {
+      "name": {
+        "file": "/home/hesham/.codex/config.toml",
+        "type": "user"
+      },
+      "version": "sha256:915bc7ef2020e5d88ab2efd146f4297288367c97011f54e5272591da2dea26f1"
+    },
+    "projects./tmp/codex-spike.trust_level": {
+      "name": {
+        "file": "/home/hesham/.codex/config.toml",
+        "type": "user"
+      },
+      "version": "sha256:915bc7ef2020e5d88ab2efd146f4297288367c97011f54e5272591da2dea26f1"
+    }
+  }
+}

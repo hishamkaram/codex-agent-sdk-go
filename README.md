@@ -35,7 +35,7 @@ Codex's app-server exposes a JSON-RPC 2.0 protocol over stdio — bidirectional,
 | Goroutine leak detection (goleak) | ✅ |
 | Hook observer events (HookStarted / HookCompleted) | ✅ v0.2.0 — via `WithHooks(true)` |
 | Programmatic Go hook callbacks (shim bridge, auto-wired) | ✅ v0.3.0 — `WithHookCallback(h)` writes hooks.json automatically and restores on Close. See `docs/hooks.md`. |
-| Slash commands | ❌ CLI-TUI only |
+| Slash-command equivalents (Compact, SetModel, ListMCPServers, Review, etc.) | ✅ v0.4.0 — 20 typed methods + `GitDiff` / `InitAgentsMD` helpers. See `docs/commands.md`. |
 | Native FFI (CGO) | ❌ deferred |
 
 ## Prerequisites
@@ -149,6 +149,7 @@ opts = opts.WithApprovalCallback(func(ctx context.Context, req types.ApprovalReq
 - [`docs/wire-protocol.md`](docs/wire-protocol.md) — JSON-RPC method reference, wire quirks (flat vs nested IDs, per-item delta methods), known-unknown methods
 - [`docs/approvals.md`](docs/approvals.md) — approval request/decision taxonomy, sandbox × policy matrix, deadlock warning
 - [`docs/hooks.md`](docs/hooks.md) — observer mode + auto-wired programmatic callbacks via `WithHookCallback` (v0.3.0)
+- [`docs/commands.md`](docs/commands.md) — slash-command-equivalent typed methods (Compact, SetModel, Rollback, StartReview, …) and local-helper parity (GitDiff, InitAgentsMD) (v0.4.0)
 
 ## Examples
 

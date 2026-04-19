@@ -1,0 +1,12 @@
+{
+  "data": [
+    {
+      "authStatus": "bearerToken",
+      "name": "codex_apps",
+      "resourceTemplates": [],
+      "resources": [],
+      "tools": {}
+    }
+  ],
+  "nextCursor": null
+}

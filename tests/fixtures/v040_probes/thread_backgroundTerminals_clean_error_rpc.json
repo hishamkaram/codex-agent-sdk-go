@@ -1,0 +1,4 @@
+{
+  "code": -32600,
+  "message": "thread/backgroundTerminals/clean requires experimentalApi capability"
+}

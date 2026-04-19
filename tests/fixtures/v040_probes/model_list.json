@@ -1,0 +1,276 @@
+{
+  "data": [
+    {
+      "additionalSpeedTiers": [
+        "fast"
+      ],
+      "availabilityNux": null,
+      "defaultReasoningEffort": "high",
+      "description": "Latest frontier agentic coding model.",
+      "displayName": "gpt-5.4",
+      "hidden": false,
+      "id": "gpt-5.4",
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "isDefault": true,
+      "model": "gpt-5.4",
+      "supportedReasoningEfforts": [
+        {
+          "description": "Fast responses with lighter reasoning",
+          "reasoningEffort": "low"
+        },
+        {
+          "description": "Balances speed and reasoning depth for everyday tasks",
+          "reasoningEffort": "medium"
+        },
+        {
+          "description": "Greater reasoning depth for complex problems",
+          "reasoningEffort": "high"
+        },
+        {
+          "description": "Extra high reasoning depth for complex problems",
+          "reasoningEffort": "xhigh"
+        }
+      ],
+      "supportsPersonality": true,
+      "upgrade": null,
+      "upgradeInfo": null
+    },
+    {
+      "additionalSpeedTiers": [],
+      "availabilityNux": null,
+      "defaultReasoningEffort": "medium",
+      "description": "Frontier agentic coding model.",
+      "displayName": "gpt-5.2-codex",
+      "hidden": false,
+      "id": "gpt-5.2-codex",
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "isDefault": false,
+      "model": "gpt-5.2-codex",
+      "supportedReasoningEfforts": [
+        {
+          "description": "Fast responses with lighter reasoning",
+          "reasoningEffort": "low"
+        },
+        {
+          "description": "Balances speed and reasoning depth for everyday tasks",
+          "reasoningEffort": "medium"
+        },
+        {
+          "description": "Greater reasoning depth for complex problems",
+          "reasoningEffort": "high"
+        },
+        {
+          "description": "Extra high reasoning depth for complex problems",
+          "reasoningEffort": "xhigh"
+        }
+      ],
+      "supportsPersonality": true,
+      "upgrade": "gpt-5.4",
+      "upgradeInfo": {
+        "migrationMarkdown": "Introducing GPT-5.4\n\nCodex just got an upgrade with GPT-5.4, our most capable model for professional work. It outperforms prior models while being more token efficient, with notable improvements on long-running tasks, tool calling, computer use, and frontend development.\n\nLearn more: https://openai.com/index/introducing-gpt-5-4\n\nYou can always keep using GPT-5.3-Codex if you prefer.\n",
+        "model": "gpt-5.4",
+        "modelLink": null,
+        "upgradeCopy": null
+      }
+    },
+    {
+      "additionalSpeedTiers": [],
+      "availabilityNux": null,
+      "defaultReasoningEffort": "medium",
+      "description": "Codex-optimized flagship for deep and fast reasoning.",
+      "displayName": "gpt-5.1-codex-max",
+      "hidden": false,
+      "id": "gpt-5.1-codex-max",
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "isDefault": false,
+      "model": "gpt-5.1-codex-max",
+      "supportedReasoningEfforts": [
+        {
+          "description": "Fast responses with lighter reasoning",
+          "reasoningEffort": "low"
+        },
+        {
+          "description": "Balances speed and reasoning depth for everyday tasks",
+          "reasoningEffort": "medium"
+        },
+        {
+          "description": "Greater reasoning depth for complex problems",
+          "reasoningEffort": "high"
+        },
+        {
+          "description": "Extra high reasoning depth for complex problems",
+          "reasoningEffort": "xhigh"
+        }
+      ],
+      "supportsPersonality": false,
+      "upgrade": "gpt-5.4",
+      "upgradeInfo": {
+        "migrationMarkdown": "Introducing GPT-5.4\n\nCodex just got an upgrade with GPT-5.4, our most capable model for professional work. It outperforms prior models while being more token efficient, with notable improvements on long-running tasks, tool calling, computer use, and frontend development.\n\nLearn more: https://openai.com/index/introducing-gpt-5-4\n\nYou can always keep using GPT-5.3-Codex if you prefer.\n",
+        "model": "gpt-5.4",
+        "modelLink": null,
+        "upgradeCopy": null
+      }
+    },
+    {
+      "additionalSpeedTiers": [],
+      "availabilityNux": null,
+      "defaultReasoningEffort": "medium",
+      "description": "Smaller frontier agentic coding model.",
+      "displayName": "GPT-5.4-Mini",
+      "hidden": false,
+      "id": "gpt-5.4-mini",
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "isDefault": false,
+      "model": "gpt-5.4-mini",
+      "supportedReasoningEfforts": [
+        {
+          "description": "Fast responses with lighter reasoning",
+          "reasoningEffort": "low"
+        },
+        {
+          "description": "Balances speed and reasoning depth for everyday tasks",
+          "reasoningEffort": "medium"
+        },
+        {
+          "description": "Greater reasoning depth for complex problems",
+          "reasoningEffort": "high"
+        },
+        {
+          "description": "Extra high reasoning depth for complex problems",
+          "reasoningEffort": "xhigh"
+        }
+      ],
+      "supportsPersonality": true,
+      "upgrade": null,
+      "upgradeInfo": null
+    },
+    {
+      "additionalSpeedTiers": [],
+      "availabilityNux": null,
+      "defaultReasoningEffort": "medium",
+      "description": "Frontier Codex-optimized agentic coding model.",
+      "displayName": "gpt-5.3-codex",
+      "hidden": false,
+      "id": "gpt-5.3-codex",
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "isDefault": false,
+      "model": "gpt-5.3-codex",
+      "supportedReasoningEfforts": [
+        {
+          "description": "Fast responses with lighter reasoning",
+          "reasoningEffort": "low"
+        },
+        {
+          "description": "Balances speed and reasoning depth for everyday tasks",
+          "reasoningEffort": "medium"
+        },
+        {
+          "description": "Greater reasoning depth for complex problems",
+          "reasoningEffort": "high"
+        },
+        {
+          "description": "Extra high reasoning depth for complex problems",
+          "reasoningEffort": "xhigh"
+        }
+      ],
+      "supportsPersonality": true,
+      "upgrade": "gpt-5.4",
+      "upgradeInfo": {
+        "migrationMarkdown": "Introducing GPT-5.4\n\nCodex just got an upgrade with GPT-5.4, our most capable model for professional work. It outperforms prior models while being more token efficient, with notable improvements on long-running tasks, tool calling, computer use, and frontend development.\n\nLearn more: https://openai.com/index/introducing-gpt-5-4\n\nYou can always keep using GPT-5.3-Codex if you prefer.\n",
+        "model": "gpt-5.4",
+        "modelLink": null,
+        "upgradeCopy": null
+      }
+    },
+    {
+      "additionalSpeedTiers": [],
+      "availabilityNux": null,
+      "defaultReasoningEffort": "medium",
+      "description": "Optimized for professional work and long-running agents",
+      "displayName": "gpt-5.2",
+      "hidden": false,
+      "id": "gpt-5.2",
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "isDefault": false,
+      "model": "gpt-5.2",
+      "supportedReasoningEfforts": [
+        {
+          "description": "Balances speed with some reasoning; useful for straightforward queries and short explanations",
+          "reasoningEffort": "low"
+        },
+        {
+          "description": "Provides a solid balance of reasoning depth and latency for general-purpose tasks",
+          "reasoningEffort": "medium"
+        },
+        {
+          "description": "Maximizes reasoning depth for complex or ambiguous problems",
+          "reasoningEffort": "high"
+        },
+        {
+          "description": "Extra high reasoning for complex problems",
+          "reasoningEffort": "xhigh"
+        }
+      ],
+      "supportsPersonality": false,
+      "upgrade": "gpt-5.4",
+      "upgradeInfo": {
+        "migrationMarkdown": "Introducing GPT-5.4\n\nCodex just got an upgrade with GPT-5.4, our most capable model for professional work. It outperforms prior models while being more token efficient, with notable improvements on long-running tasks, tool calling, computer use, and frontend development.\n\nLearn more: https://openai.com/index/introducing-gpt-5-4\n\nYou can always keep using GPT-5.3-Codex if you prefer.\n",
+        "model": "gpt-5.4",
+        "modelLink": null,
+        "upgradeCopy": null
+      }
+    },
+    {
+      "additionalSpeedTiers": [],
+      "availabilityNux": null,
+      "defaultReasoningEffort": "medium",
+      "description": "Optimized for codex. Cheaper, faster, but less capable.",
+      "displayName": "gpt-5.1-codex-mini",
+      "hidden": false,
+      "id": "gpt-5.1-codex-mini",
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "isDefault": false,
+      "model": "gpt-5.1-codex-mini",
+      "supportedReasoningEfforts": [
+        {
+          "description": "Dynamically adjusts reasoning based on the task",
+          "reasoningEffort": "medium"
+        },
+        {
+          "description": "Maximizes reasoning depth for complex or ambiguous problems",
+          "reasoningEffort": "high"
+        }
+      ],
+      "supportsPersonality": false,
+      "upgrade": "gpt-5.4",
+      "upgradeInfo": {
+        "migrationMarkdown": "Introducing GPT-5.4\n\nCodex just got an upgrade with GPT-5.4, our most capable model for professional work. It outperforms prior models while being more token efficient, with notable improvements on long-running tasks, tool calling, computer use, and frontend development.\n\nLearn more: https://openai.com/index/introducing-gpt-5-4\n\nYou can always keep using GPT-5.3-Codex if you prefer.\n",
+        "model": "gpt-5.4",
+        "modelLink": null,
+        "upgradeCopy": null
+      }
+    }
+  ],
+  "nextCursor": null
+}

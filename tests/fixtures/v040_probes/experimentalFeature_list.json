@@ -1,0 +1,518 @@
+{
+  "data": [
+    {
+      "announcement": null,
+      "defaultEnabled": false,
+      "description": null,
+      "displayName": null,
+      "enabled": false,
+      "name": "undo",
+      "stage": "stable"
+    },
+    {
+      "announcement": null,
+      "defaultEnabled": true,
+      "description": null,
+      "displayName": null,
+      "enabled": true,
+      "name": "shell_tool",
+      "stage": "stable"
+    },
+    {
+      "announcement": null,
+      "defaultEnabled": true,
+      "description": null,
+      "displayName": null,
+      "enabled": true,
+      "name": "unified_exec",
+      "stage": "stable"
+    },
+    {
+      "announcement": null,
+      "defaultEnabled": false,
+      "description": null,
+      "displayName": null,
+      "enabled": false,
+      "name": "shell_zsh_fork",
+      "stage": "underDevelopment"
+    },
+    {
+      "announcement": null,
+      "defaultEnabled": true,
+      "description": null,
+      "displayName": null,
+      "enabled": true,
+      "name": "shell_snapshot",
+      "stage": "stable"
+    },
+    {
+      "announcement": "NEW: JavaScript REPL is now available in /experimental. Enable it, then start a new chat or restart Codex to use it.",
+      "defaultEnabled": false,
+      "description": "Enable a persistent Node-backed JavaScript REPL for interactive website debugging and other inline JavaScript execution capabilities. Requires Node \u003e= v22.22.0 installed.",
+      "displayName": "JavaScript REPL",
+      "enabled": false,
+      "name": "js_repl",
+      "stage": "beta"
+    },
+    {
+      "announcement": null,
+      "defaultEnabled": false,
+      "description": null,
+      "displayName": null,
+      "enabled": false,
+      "name": "code_mode",
+      "stage": "underDevelopment"
+    },
+    {
+      "announcement": null,
+      "defaultEnabled": false,
+      "description": null,
+      "displayName": null,
+      "enabled": false,
+      "name": "code_mode_only",
+      "stage": "underDevelopment"
+    },
+    {
+      "announcement": null,
+      "defaultEnabled": false,
+      "description": null,
+      "displayName": null,
+      "enabled": false,
+      "name": "js_repl_tools_only",
+      "stage": "underDevelopment"
+    },
+    {
+      "announcement": null,
+      "defaultEnabled": false,
+      "description": null,
+      "displayName": null,
+      "enabled": false,
+      "name": "web_search_request",
+      "stage": "deprecated"
+    },
+    {
+      "announcement": null,
+      "defaultEnabled": false,
+      "description": null,
+      "displayName": null,
+      "enabled": false,
+      "name": "web_search_cached",
+      "stage": "deprecated"
+    },
+    {
+      "announcement": null,
+      "defaultEnabled": false,
+      "description": null,
+      "displayName": null,
+      "enabled": false,
+      "name": "search_tool",
+      "stage": "removed"
+    },
+    {
+      "announcement": null,
+      "defaultEnabled": false,
+      "description": null,
+      "displayName": null,
+      "enabled": false,
+      "name": "codex_git_commit",
+      "stage": "underDevelopment"
+    },
+    {
+      "announcement": null,
+      "defaultEnabled": false,
+      "description": null,
+      "displayName": null,
+      "enabled": false,
+      "name": "runtime_metrics",
+      "stage": "underDevelopment"
+    },
+    {
+      "announcement": null,
+      "defaultEnabled": true,
+      "description": null,
+      "displayName": null,
+      "enabled": true,
+      "name": "general_analytics",
+      "stage": "stable"
+    },
+    {
+      "announcement": null,
+      "defaultEnabled": true,
+      "description": null,
+      "displayName": null,
+      "enabled": true,
+      "name": "sqlite",
+      "stage": "removed"
+    },
+    {
+      "announcement": null,
+      "defaultEnabled": false,
+      "description": null,
+      "displayName": null,
+      "enabled": false,
+      "name": "memories",
+      "stage": "underDevelopment"
+    },
+    {
+      "announcement": null,
+      "defaultEnabled": false,
+      "description": null,
+      "displayName": null,
+      "enabled": false,
+      "name": "telepathy",
+      "stage": "underDevelopment"
+    },
+    {
+      "announcement": null,
+      "defaultEnabled": false,
+      "description": null,
+      "displayName": null,
+      "enabled": false,
+      "name": "child_agents_md",
+      "stage": "underDevelopment"
+    },
+    {
+      "announcement": null,
+      "defaultEnabled": false,
+      "description": null,
+      "displayName": null,
+      "enabled": false,
+      "name": "apply_patch_freeform",
+      "stage": "underDevelopment"
+    },
+    {
+      "announcement": null,
+      "defaultEnabled": false,
+      "description": null,
+      "displayName": null,
+      "enabled": false,
+      "name": "exec_permission_approvals",
+      "stage": "underDevelopment"
+    },
+    {
+      "announcement": null,
+      "defaultEnabled": false,
+      "description": null,
+      "displayName": null,
+      "enabled": false,
+      "name": "codex_hooks",
+      "stage": "underDevelopment"
+    },
+    {
+      "announcement": null,
+      "defaultEnabled": false,
+      "description": null,
+      "displayName": null,
+      "enabled": false,
+      "name": "request_permissions_tool",
+      "stage": "underDevelopment"
+    },
+    {
+      "announcement": null,
+      "defaultEnabled": false,
+      "description": null,
+      "displayName": null,
+      "enabled": false,
+      "name": "use_linux_sandbox_bwrap",
+      "stage": "removed"
+    },
+    {
+      "announcement": null,
+      "defaultEnabled": false,
+      "description": null,
+      "displayName": null,
+      "enabled": false,
+      "name": "use_legacy_landlock",
+      "stage": "stable"
+    },
+    {
+      "announcement": null,
+      "defaultEnabled": false,
+      "description": null,
+      "displayName": null,
+      "enabled": false,
+      "name": "request_rule",
+      "stage": "removed"
+    },
+    {
+      "announcement": null,
+      "defaultEnabled": false,
+      "description": null,
+      "displayName": null,
+      "enabled": false,
+      "name": "experimental_windows_sandbox",
+      "stage": "removed"
+    },
+    {
+      "announcement": null,
+      "defaultEnabled": false,
+      "description": null,
+      "displayName": null,
+      "enabled": false,
+      "name": "elevated_windows_sandbox",
+      "stage": "removed"
+    },
+    {
+      "announcement": null,
+      "defaultEnabled": false,
+      "description": null,
+      "displayName": null,
+      "enabled": false,
+      "name": "remote_models",
+      "stage": "removed"
+    },
+    {
+      "announcement": null,
+      "defaultEnabled": true,
+      "description": null,
+      "displayName": null,
+      "enabled": true,
+      "name": "enable_request_compression",
+      "stage": "stable"
+    },
+    {
+      "announcement": null,
+      "defaultEnabled": true,
+      "description": null,
+      "displayName": null,
+      "enabled": true,
+      "name": "multi_agent",
+      "stage": "stable"
+    },
+    {
+      "announcement": null,
+      "defaultEnabled": false,
+      "description": null,
+      "displayName": null,
+      "enabled": false,
+      "name": "multi_agent_v2",
+      "stage": "underDevelopment"
+    },
+    {
+      "announcement": null,
+      "defaultEnabled": false,
+      "description": null,
+      "displayName": null,
+      "enabled": false,
+      "name": "enable_fanout",
+      "stage": "underDevelopment"
+    },
+    {
+      "announcement": null,
+      "defaultEnabled": true,
+      "description": null,
+      "displayName": null,
+      "enabled": true,
+      "name": "apps",
+      "stage": "stable"
+    },
+    {
+      "announcement": null,
+      "defaultEnabled": false,
+      "description": null,
+      "displayName": null,
+      "enabled": false,
+      "name": "tool_search",
+      "stage": "underDevelopment"
+    },
+    {
+      "announcement": null,
+      "defaultEnabled": true,
+      "description": null,
+      "displayName": null,
+      "enabled": true,
+      "name": "tool_suggest",
+      "stage": "stable"
+    },
+    {
+      "announcement": null,
+      "defaultEnabled": true,
+      "description": null,
+      "displayName": null,
+      "enabled": true,
+      "name": "plugins",
+      "stage": "stable"
+    },
+    {
+      "announcement": null,
+      "defaultEnabled": false,
+      "description": null,
+      "displayName": null,
+      "enabled": false,
+      "name": "image_generation",
+      "stage": "underDevelopment"
+    },
+    {
+      "announcement": null,
+      "defaultEnabled": true,
+      "description": null,
+      "displayName": null,
+      "enabled": true,
+      "name": "skill_mcp_dependency_install",
+      "stage": "stable"
+    },
+    {
+      "announcement": null,
+      "defaultEnabled": false,
+      "description": null,
+      "displayName": null,
+      "enabled": false,
+      "name": "skill_env_var_dependency_prompt",
+      "stage": "underDevelopment"
+    },
+    {
+      "announcement": null,
+      "defaultEnabled": true,
+      "description": null,
+      "displayName": null,
+      "enabled": true,
+      "name": "steer",
+      "stage": "removed"
+    },
+    {
+      "announcement": null,
+      "defaultEnabled": false,
+      "description": null,
+      "displayName": null,
+      "enabled": false,
+      "name": "default_mode_request_user_input",
+      "stage": "underDevelopment"
+    },
+    {
+      "announcement": "",
+      "defaultEnabled": false,
+      "description": "When Codex needs approval for higher-risk actions (e.g. sandbox escapes or blocked network access), route eligible approval requests to a carefully-prompted security reviewer subagent rather than blocking the agent on your input. This can consume significantly more tokens because it runs a subagent on every approval request.",
+      "displayName": "Guardian Approvals",
+      "enabled": false,
+      "name": "guardian_approval",
+      "stage": "beta"
+    },
+    {
+      "announcement": null,
+      "defaultEnabled": true,
+      "description": null,
+      "displayName": null,
+      "enabled": true,
+      "name": "collaboration_modes",
+      "stage": "removed"
+    },
+    {
+      "announcement": null,
+      "defaultEnabled": true,
+      "description": null,
+      "displayName": null,
+      "enabled": true,
+      "name": "tool_call_mcp_elicitation",
+      "stage": "stable"
+    },
+    {
+      "announcement": null,
+      "defaultEnabled": true,
+      "description": null,
+      "displayName": null,
+      "enabled": true,
+      "name": "personality",
+      "stage": "stable"
+    },
+    {
+      "announcement": null,
+      "defaultEnabled": false,
+      "description": null,
+      "displayName": null,
+      "enabled": false,
+      "name": "artifact",
+      "stage": "underDevelopment"
+    },
+    {
+      "announcement": null,
+      "defaultEnabled": true,
+      "description": null,
+      "displayName": null,
+      "enabled": true,
+      "name": "fast_mode",
+      "stage": "stable"
+    },
+    {
+      "announcement": null,
+      "defaultEnabled": false,
+      "description": null,
+      "displayName": null,
+      "enabled": false,
+      "name": "realtime_conversation",
+      "stage": "underDevelopment"
+    },
+    {
+      "announcement": null,
+      "defaultEnabled": false,
+      "description": null,
+      "displayName": null,
+      "enabled": false,
+      "name": "remote_control",
+      "stage": "underDevelopment"
+    },
+    {
+      "announcement": null,
+      "defaultEnabled": false,
+      "description": null,
+      "displayName": null,
+      "enabled": false,
+      "name": "image_detail_original",
+      "stage": "removed"
+    },
+    {
+      "announcement": null,
+      "defaultEnabled": true,
+      "description": null,
+      "displayName": null,
+      "enabled": true,
+      "name": "tui_app_server",
+      "stage": "removed"
+    },
+    {
+      "announcement": "NEW: Prevent sleep while running is now available in /experimental.",
+      "defaultEnabled": false,
+      "description": "Keep your computer awake while Codex is running a thread.",
+      "displayName": "Prevent sleep while running",
+      "enabled": false,
+      "name": "prevent_idle_sleep",
+      "stage": "beta"
+    },
+    {
+      "announcement": null,
+      "defaultEnabled": false,
+      "description": null,
+      "displayName": null,
+      "enabled": false,
+      "name": "responses_websockets",
+      "stage": "removed"
+    },
+    {
+      "announcement": null,
+      "defaultEnabled": false,
+      "description": null,
+      "displayName": null,
+      "enabled": false,
+      "name": "responses_websockets_v2",
+      "stage": "removed"
+    },
+    {
+      "announcement": null,
+      "defaultEnabled": false,
+      "description": null,
+      "displayName": null,
+      "enabled": false,
+      "name": "use_agent_identity",
+      "stage": "underDevelopment"
+    },
+    {
+      "announcement": null,
+      "defaultEnabled": true,
+      "description": null,
+      "displayName": null,
+      "enabled": true,
+      "name": "workspace_dependencies",
+      "stage": "stable"
+    }
+  ],
+  "nextCursor": null
+}

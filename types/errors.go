@@ -212,3 +212,97 @@ func IsApprovalDeniedError(err error) bool {
 	var e *ApprovalDeniedError
 	return errors.As(err, &e)
 }
+
+// FeatureNotEnabledError is returned when a wire method requires a
+// capability that the SDK did not negotiate at handshake time. The most
+// common case is methods like `thread/backgroundTerminals/clean` which
+// require the experimentalApi capability — set via
+// CodexOptions.WithExperimentalAPI(true) before Connect.
+//
+// Verified live against codex 0.121.0 — error message:
+//
+//	"thread/backgroundTerminals/clean requires experimentalApi capability"
+type FeatureNotEnabledError struct {
+	Feature string // capability/feature name codex flagged
+	Method  string // RPC method that demanded it
+	Message string // verbatim message from codex
+}
+
+// Error implements the error interface.
+func (e *FeatureNotEnabledError) Error() string {
+	if e == nil {
+		return "<nil FeatureNotEnabledError>"
+	}
+	if e.Method != "" {
+		return fmt.Sprintf("%s requires %s: %s", e.Method, e.Feature, e.Message)
+	}
+	return fmt.Sprintf("feature not enabled (%s): %s", e.Feature, e.Message)
+}
+
+// NewFeatureNotEnabledError constructs a FeatureNotEnabledError.
+func NewFeatureNotEnabledError(feature, method, msg string) *FeatureNotEnabledError {
+	return &FeatureNotEnabledError{Feature: feature, Method: method, Message: msg}
+}
+
+// IsFeatureNotEnabledError reports whether err is a *FeatureNotEnabledError.
+func IsFeatureNotEnabledError(err error) bool {
+	var e *FeatureNotEnabledError
+	return errors.As(err, &e)
+}
+
+// MCPServerOAuthRequiredError is returned by inventory methods (e.g.,
+// ListMCPServerStatus) when one of the configured MCP servers needs the
+// user to complete an OAuth handshake before tools can be listed. Call
+// Client.MCPServerOAuthLogin (TODO v0.4.x) to begin the flow.
+type MCPServerOAuthRequiredError struct {
+	ServerName string
+	Message    string
+}
+
+// Error implements the error interface.
+func (e *MCPServerOAuthRequiredError) Error() string {
+	if e == nil {
+		return "<nil MCPServerOAuthRequiredError>"
+	}
+	if e.Message == "" {
+		return fmt.Sprintf("MCP server %q requires OAuth", e.ServerName)
+	}
+	return fmt.Sprintf("MCP server %q requires OAuth: %s", e.ServerName, e.Message)
+}
+
+// NewMCPServerOAuthRequiredError constructs an MCPServerOAuthRequiredError.
+func NewMCPServerOAuthRequiredError(serverName, msg string) *MCPServerOAuthRequiredError {
+	return &MCPServerOAuthRequiredError{ServerName: serverName, Message: msg}
+}
+
+// IsMCPServerOAuthRequiredError reports whether err is a *MCPServerOAuthRequiredError.
+func IsMCPServerOAuthRequiredError(err error) bool {
+	var e *MCPServerOAuthRequiredError
+	return errors.As(err, &e)
+}
+
+// AGENTSMDExistsError is returned by Client.InitAgentsMD when an
+// AGENTS.md file already exists at the target path and the caller did
+// NOT pass Overwrite=true.
+type AGENTSMDExistsError struct {
+	Path string
+}
+
+// Error implements the error interface.
+func (e *AGENTSMDExistsError) Error() string {
+	if e == nil {
+		return "<nil AGENTSMDExistsError>"
+	}
+	return fmt.Sprintf("AGENTS.md already exists at %s (pass Overwrite: true to replace)", e.Path)
+}
+
+// NewAGENTSMDExistsError constructs an AGENTSMDExistsError.
+func NewAGENTSMDExistsError(path string) *AGENTSMDExistsError {
+	return &AGENTSMDExistsError{Path: path}
+}
+
+// IsAGENTSMDExistsError reports whether err is a *AGENTSMDExistsError.
+func IsAGENTSMDExistsError(err error) bool {
+	var e *AGENTSMDExistsError
+	return errors.As(err, &e)
+}

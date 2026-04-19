@@ -133,7 +133,7 @@ func (c *Client) Connect(ctx context.Context) error {
 			"title":   c.opts.ClientTitle,
 		},
 		"capabilities": map[string]any{
-			"experimentalApi": false,
+			"experimentalApi": c.opts.ExperimentalAPI,
 		},
 	}
 	resp, err := c.demux.Send(ctx, "initialize", params)

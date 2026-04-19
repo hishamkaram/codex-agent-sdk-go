@@ -1,0 +1,98 @@
+{
+  "data": [
+    {
+      "cwd": "/home/hesham/Active-Projects/agentd-workspace/codex-agent-sdk-go",
+      "errors": [],
+      "skills": [
+        {
+          "description": "Generate or edit raster images when the task benefits from AI-created bitmap visuals such as photos, illustrations, textures, sprites, mockups, or transparent-background cutouts. Use when Codex should create a brand-new image, transform an existing image, or derive visual variants from references, and the output should be a bitmap asset rather than repo-native code or vector. Do not use when the task is better handled by editing existing SVG/vector/code-native assets, extending an established icon or logo system, or building the visual directly in HTML/CSS/canvas.",
+          "enabled": true,
+          "interface": {
+            "brandColor": null,
+            "defaultPrompt": "Generate or edit the visual assets for this task with the built-in `image_gen` tool by default. First confirm that the task actually calls for a raster image; if the project already has SVG/vector/code-native assets and the user wants to extend or match those, do not use this skill. If the task includes reference images, treat them as references unless the user clearly wants an existing image modified. For multi-asset requests, loop built-in calls rather than treating batch as a separate top-level mode. Only use the fallback CLI if the user explicitly asks for it, and keep CLI-only controls such as `generate-batch`, `quality`, `input_fidelity`, masks, and output paths on that fallback path.",
+            "displayName": "Image Gen",
+            "iconLarge": "/home/hesham/.codex/skills/.system/imagegen/assets/imagegen.png",
+            "iconSmall": "/home/hesham/.codex/skills/.system/imagegen/assets/imagegen-small.svg",
+            "shortDescription": "Generate or edit images for websites, games, and more"
+          },
+          "name": "imagegen",
+          "path": "/home/hesham/.codex/skills/.system/imagegen/SKILL.md",
+          "scope": "system"
+        },
+        {
+          "dependencies": {
+            "tools": [
+              {
+                "description": "OpenAI Developer Docs MCP server",
+                "transport": "streamable_http",
+                "type": "mcp",
+                "url": "https://developers.openai.com/mcp",
+                "value": "openaiDeveloperDocs"
+              }
+            ]
+          },
+          "description": "Use when the user asks how to build with OpenAI products or APIs and needs up-to-date official documentation with citations, help choosing the latest model for a use case, or explicit GPT-5.4 upgrade and prompt-upgrade guidance; prioritize OpenAI docs MCP tools, use bundled references only as helper context, and restrict any fallback browsing to official OpenAI domains.",
+          "enabled": true,
+          "interface": {
+            "brandColor": null,
+            "defaultPrompt": "Look up official OpenAI docs, load relevant GPT-5.4 upgrade references when applicable, and answer with concise, cited guidance.",
+            "displayName": "OpenAI Docs",
+            "iconLarge": "/home/hesham/.codex/skills/.system/openai-docs/assets/openai.png",
+            "iconSmall": "/home/hesham/.codex/skills/.system/openai-docs/assets/openai-small.svg",
+            "shortDescription": "Reference official OpenAI docs, including upgrade guidance"
+          },
+          "name": "openai-docs",
+          "path": "/home/hesham/.codex/skills/.system/openai-docs/SKILL.md",
+          "scope": "system"
+        },
+        {
+          "description": "Create and scaffold plugin directories for Codex with a required `.codex-plugin/plugin.json`, optional plugin folders/files, and baseline placeholders you can edit before publishing or testing. Use when Codex needs to create a new local plugin, add optional plugin structure, or generate or update repo-root `.agents/plugins/marketplace.json` entries for plugin ordering and availability metadata.",
+          "enabled": true,
+          "interface": {
+            "brandColor": null,
+            "defaultPrompt": "Use $plugin-creator to scaffold a plugin with placeholder plugin.json, optional structure, and a marketplace.json entry.",
+            "displayName": "Plugin Creator",
+            "iconLarge": "/home/hesham/.codex/skills/.system/plugin-creator/assets/plugin-creator.png",
+            "iconSmall": "/home/hesham/.codex/skills/.system/plugin-creator/assets/plugin-creator-small.svg",
+            "shortDescription": "Scaffold plugins and marketplace entries"
+          },
+          "name": "plugin-creator",
+          "path": "/home/hesham/.codex/skills/.system/plugin-creator/SKILL.md",
+          "scope": "system"
+        },
+        {
+          "description": "Guide for creating effective skills. This skill should be used when users want to create a new skill (or update an existing skill) that extends Codex's capabilities with specialized knowledge, workflows, or tool integrations.",
+          "enabled": true,
+          "interface": {
+            "brandColor": null,
+            "defaultPrompt": null,
+            "displayName": "Skill Creator",
+            "iconLarge": "/home/hesham/.codex/skills/.system/skill-creator/assets/skill-creator.png",
+            "iconSmall": "/home/hesham/.codex/skills/.system/skill-creator/assets/skill-creator-small.svg",
+            "shortDescription": "Create or update a skill"
+          },
+          "name": "skill-creator",
+          "path": "/home/hesham/.codex/skills/.system/skill-creator/SKILL.md",
+          "scope": "system",
+          "shortDescription": "Create or update a skill"
+        },
+        {
+          "description": "Install Codex skills into $CODEX_HOME/skills from a curated list or a GitHub repo path. Use when a user asks to list installable skills, install a curated skill, or install a skill from another repo (including private repos).",
+          "enabled": true,
+          "interface": {
+            "brandColor": null,
+            "defaultPrompt": null,
+            "displayName": "Skill Installer",
+            "iconLarge": "/home/hesham/.codex/skills/.system/skill-installer/assets/skill-installer.png",
+            "iconSmall": "/home/hesham/.codex/skills/.system/skill-installer/assets/skill-installer-small.svg",
+            "shortDescription": "Install curated skills from openai/skills or other repos"
+          },
+          "name": "skill-installer",
+          "path": "/home/hesham/.codex/skills/.system/skill-installer/SKILL.md",
+          "scope": "system",
+          "shortDescription": "Install curated skills from openai/skills or other repos"
+        }
+      ]
+    }
+  ]
+}

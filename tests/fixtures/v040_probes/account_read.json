@@ -1,0 +1,8 @@
+{
+  "account": {
+    "email": "\u003cREDACTED\u003e",
+    "planType": "plus",
+    "type": "chatgpt"
+  },
+  "requiresOpenaiAuth": true
+}

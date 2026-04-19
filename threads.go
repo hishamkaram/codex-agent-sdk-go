@@ -29,6 +29,12 @@ const ThreadInboxBuffer = 256
 type Thread struct {
 	client *Client
 	id     string
+	// cwd is the working directory the thread was started with.
+	// Populated by StartThread / ResumeThread / ForkThread from
+	// ThreadOptions.Cwd (falls back to Client.opts.DefaultCwd).
+	// Used by local-only helpers like Thread.GitDiff; empty string
+	// means "no cwd known" — helpers that need one will error.
+	cwd string
 
 	turnMu sync.Mutex
 	inbox  chan types.ThreadEvent
@@ -38,6 +44,12 @@ type Thread struct {
 	// activeTurnID holds the most recent turn/started id observed during
 	// the current Run. Used by Interrupt to fire turn/interrupt.
 	activeTurnID atomic.Value // string
+
+	// compactSub is a one-shot subscription for *types.ContextCompacted
+	// events, installed by Thread.Compact BEFORE its RPC is sent so
+	// the notification can't race the subscription. Nil when no
+	// Compact is in flight. See compact_result.go.
+	compactSub atomic.Pointer[chan *types.ContextCompacted]
 }
 
 // newThread constructs a Thread owned by c. Does not register it; caller
@@ -58,6 +70,11 @@ func (t *Thread) ID() string { return t.id }
 // deliverEvent pushes an event to the thread's inbox. Called from the
 // Client's dispatcher goroutine. Never blocks — drops events if the inbox
 // is full, which only happens if the caller stalls consuming the channel.
+//
+// Tees *types.ContextCompacted to any installed compactSub BEFORE
+// pushing to inbox, so a running RunStreamed consumer still observes
+// the event normally. The tee is non-blocking (select-default) — a
+// caller that forgot to Wait does not stall the dispatcher.
 func (t *Thread) deliverEvent(ev types.ThreadEvent) {
 	if t.closed.Load() {
 		return
@@ -65,6 +82,16 @@ func (t *Thread) deliverEvent(ev types.ThreadEvent) {
 	// Track the active turn ID for Interrupt.
 	if ts, ok := ev.(*types.TurnStarted); ok {
 		t.activeTurnID.Store(ts.TurnID)
+	}
+	// Tee to any installed compact subscription.
+	if cc, ok := ev.(*types.ContextCompacted); ok {
+		if sub := t.compactSub.Load(); sub != nil {
+			select {
+			case *sub <- cc:
+			default:
+				// Subscriber buffer full or gone — skip.
+			}
+		}
 	}
 	select {
 	case t.inbox <- ev:
@@ -78,8 +105,16 @@ func (t *Thread) deliverEvent(ev types.ThreadEvent) {
 // markClosed signals that the thread should stop accepting new events.
 // Idempotent. Does NOT close the inbox channel (dispatcher may still be
 // writing; closer coordinates with Run's filter goroutine).
+//
+// Signals any pending Compact.Wait by closing the subscription
+// channel — Wait observes the close via the zero-value receive.
 func (t *Thread) markClosed() {
-	t.closed.Store(true)
+	if !t.closed.CompareAndSwap(false, true) {
+		return // already closed
+	}
+	if sub := t.compactSub.Swap(nil); sub != nil {
+		close(*sub)
+	}
 }
 
 // Interrupt cancels the currently-running turn (if any). Sends turn/interrupt
@@ -313,6 +348,7 @@ func (c *Client) StartThread(ctx context.Context, opts *types.ThreadOptions) (*T
 		return nil, err
 	}
 	t := newThread(c, id)
+	t.cwd = resolveCwd(c, opts)
 	c.registerThread(t)
 	return t, nil
 }
@@ -327,8 +363,10 @@ func (c *Client) ResumeThread(ctx context.Context, threadID string, opts *types.
 		return nil, fmt.Errorf("codex.Client.ResumeThread: threadID must not be empty")
 	}
 	params := map[string]any{"threadId": threadID}
+	cwd := ""
 	if opts != nil && opts.Cwd != "" {
 		params["cwd"] = opts.Cwd
+		cwd = opts.Cwd
 	}
 	resp, err := c.demux.Send(ctx, "thread/resume", params)
 	if err != nil {
@@ -343,9 +381,27 @@ func (c *Client) ResumeThread(ctx context.Context, threadID string, opts *types.
 		id = threadID
 	}
 	t := newThread(c, id)
+	if cwd == "" {
+		cwd = c.opts.DefaultCwd
+	}
+	t.cwd = cwd
 	c.registerThread(t)
 	return t, nil
 }
+
+// resolveCwd picks the Thread's cwd from ThreadOptions, then the
+// Client's DefaultCwd, then "" (unknown).
+func resolveCwd(c *Client, opts *types.ThreadOptions) string {
+	if opts != nil && opts.Cwd != "" {
+		return opts.Cwd
+	}
+	return c.opts.DefaultCwd
+}
+
+// Cwd returns the working directory this thread was started with.
+// Empty string means the cwd was never set (rare — occurs only when
+// both ThreadOptions.Cwd and CodexOptions.DefaultCwd were empty).
+func (t *Thread) Cwd() string { return t.cwd }
 
 // ListThreads returns the persisted thread catalog. Best-effort parsing —
 // unknown fields are dropped silently.
@@ -405,6 +461,7 @@ func (c *Client) ForkThread(ctx context.Context, sourceThreadID string, opts *ty
 		return nil, nil, err
 	}
 	t := newThread(c, newID)
+	t.cwd = resolveCwd(c, opts)
 	c.registerThread(t)
 	return t, &types.ForkResult{SourceThreadID: sourceThreadID, NewThreadID: newID}, nil
 }

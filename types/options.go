@@ -82,6 +82,21 @@ type CodexOptions struct {
 	// hooks.json — otherwise codex kills the shim before the SDK
 	// responds.
 	HookTimeout time.Duration
+
+	// --- Capability negotiation (v0.4.0) ---
+
+	// ExperimentalAPI opts the connection into experimental codex
+	// methods that require the `experimentalApi` capability flag in
+	// the initialize handshake. Defaults to false to preserve v0.3.x
+	// behavior.
+	//
+	// Methods that require this flag (verified live against codex
+	// 0.121.0):
+	//   - thread/backgroundTerminals/clean
+	//
+	// Calling such methods without this option set returns a
+	// *types.FeatureNotEnabledError.
+	ExperimentalAPI bool
 }
 
 // NewCodexOptions returns a CodexOptions populated with sensible defaults:
@@ -226,6 +241,13 @@ func (o *CodexOptions) WithShimPath(path string) *CodexOptions {
 // (30s default).
 func (o *CodexOptions) WithHookTimeout(d time.Duration) *CodexOptions {
 	o.HookTimeout = d
+	return o
+}
+
+// WithExperimentalAPI opts the connection into experimental codex
+// methods. See CodexOptions.ExperimentalAPI for the current list.
+func (o *CodexOptions) WithExperimentalAPI(enabled bool) *CodexOptions {
+	o.ExperimentalAPI = enabled
 	return o
 }
 
