@@ -36,8 +36,9 @@ type Client struct {
 	// InitializeResult from the handshake. Populated during Connect.
 	initResult InitializeResult
 
-	mu      sync.Mutex
-	threads map[string]*Thread
+	mu             sync.Mutex
+	threads        map[string]*Thread
+	latestThreadID string
 
 	// Dispatcher lifecycle.
 	dispatcherCtx    context.Context
@@ -171,6 +172,34 @@ func (c *Client) Connect(ctx context.Context) error {
 // Only meaningful after Connect returns nil.
 func (c *Client) InitializeResult() InitializeResult { return c.initResult }
 
+// ProcessID returns the OS pid of the codex app-server subprocess, or 0
+// when Connect has not yet succeeded or the subprocess has exited.
+// Higher layers use this for lifecycle management — e.g., killing the
+// subprocess directly on worktree switch so Close's graceful-exit ladder
+// doesn't have to wait.
+func (c *Client) ProcessID() int {
+	if c.tr == nil {
+		return 0
+	}
+	return c.tr.Pid()
+}
+
+// SessionID returns the ID of the most recently started or resumed
+// thread, or "" when no thread has been registered yet (or the latest
+// was unregistered). The Codex SDK supports multiple concurrent threads
+// per client; callers that need a specific thread's ID should use
+// Thread.ID() on the handle they obtained from StartThread/ResumeThread.
+//
+// This accessor exists for single-thread callers that want a stable
+// correlation ID without tracking the Thread handle themselves — e.g.,
+// a daemon session that maps 1:1 onto a codex thread and needs to
+// persist the thread ID for crash-recovery resume.
+func (c *Client) SessionID() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.latestThreadID
+}
+
 // Close shuts down the dispatcher, closes every Thread's inbox, and
 // terminates the subprocess with the 3-stage graceful-shutdown ladder.
 // Safe to call multiple times.
@@ -190,6 +219,7 @@ func (c *Client) Close(ctx context.Context) error {
 		t.markClosed()
 	}
 	c.threads = nil
+	c.latestThreadID = ""
 	c.mu.Unlock()
 
 	var trErr error
@@ -609,21 +639,28 @@ func (c *Client) handleServerRequest(sreq jsonrpc.ServerRequest) {
 
 // registerThread stores a Thread in the client's routing table. The caller
 // must own the thread's ID (i.e., thread/start or thread/resume succeeded).
+// Also records the thread ID as the latest for SessionID().
 func (c *Client) registerThread(t *Thread) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.threads != nil {
 		c.threads[t.id] = t
+		c.latestThreadID = t.id
 	}
 }
 
 // unregisterThread removes a Thread from routing. Called when the thread
-// is archived or the caller drops it.
+// is archived or the caller drops it. Clears latestThreadID when the
+// removed thread was the most recent so SessionID() reverts to "" for
+// single-thread callers.
 func (c *Client) unregisterThread(threadID string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.threads != nil {
 		delete(c.threads, threadID)
+	}
+	if c.latestThreadID == threadID {
+		c.latestThreadID = ""
 	}
 }
 
