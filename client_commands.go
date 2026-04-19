@@ -251,7 +251,7 @@ func (c *Client) sendRaw(ctx context.Context, callerName, method string, params 
 // when the message matches a known pattern. Verified live against
 // codex 0.121.0:
 //
-//   "thread/backgroundTerminals/clean requires experimentalApi capability"
+//	"thread/backgroundTerminals/clean requires experimentalApi capability"
 //
 // Future patterns can be added here without changing call sites.
 func classifyRPCError(method string, e *jsonrpcRPCError) error {

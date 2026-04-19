@@ -125,4 +125,3 @@ func (w *cappedWriter) Write(p []byte) (int, error) {
 	}
 	return w.buf.Write(p)
 }
-

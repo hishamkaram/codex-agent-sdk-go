@@ -18,11 +18,12 @@
 //     _v040_probe_<unix> prefix and are archived on Cleanup.
 //
 // Test-naming convention: TestIntCmd_<Method>_<Variant>. Variants:
-//   _Happy            — success path on a vanilla client
-//   _ClosedClient     — call after Close → expect specific error
-//   _UnconnectedClient — call before Connect → expect specific error
-//   _ConcurrentDuringTurn — call while a turn is in flight (race detector)
-//   _<SpecificError>  — exercise a known error path (e.g., MCP OAuth)
+//
+//	_Happy            — success path on a vanilla client
+//	_ClosedClient     — call after Close → expect specific error
+//	_UnconnectedClient — call before Connect → expect specific error
+//	_ConcurrentDuringTurn — call while a turn is in flight (race detector)
+//	_<SpecificError>  — exercise a known error path (e.g., MCP OAuth)
 package tests
 
 import (
