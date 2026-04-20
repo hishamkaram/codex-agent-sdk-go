@@ -59,7 +59,7 @@ type CommandExecution struct {
 	Command          string          `json:"command"`
 	Cwd              string          `json:"cwd,omitempty"`
 	Source           string          `json:"source,omitempty"` // "agent" | "user"
-	ProcessID        *int            `json:"processId,omitempty"`
+	ProcessID        string          `json:"processId,omitempty"`
 	Status           string          `json:"status,omitempty"` // "inProgress" | "success" | "failed" | "denied"
 	ExitCode         *int            `json:"exitCode,omitempty"`
 	AggregatedOutput string          `json:"aggregatedOutput,omitempty"`
@@ -70,15 +70,21 @@ type CommandExecution struct {
 func (*CommandExecution) isThreadItem()    {}
 func (*CommandExecution) ItemType() string { return "commandExecution" }
 
-// FileChange describes a single-file edit performed by the agent. Wire
-// discriminator: "fileChange". Field shapes not yet captured from a real
-// transcript — fields may expand in future versions.
+// FileChange describes file edits performed by the agent. Wire discriminator:
+// "fileChange". Schema (v2 codex 0.121.0) declares a Changes slice of parts —
+// one per file touched. Prior to feature 187 this struct used a flat
+// Path/Operation/Diff shape that was wrong against the real wire format.
 type FileChange struct {
-	ID        string `json:"id,omitempty"`
+	ID      string           `json:"id,omitempty"`
+	Status  string           `json:"status,omitempty"`
+	Changes []FileChangePart `json:"changes,omitempty"`
+}
+
+// FileChangePart is one file's change within a FileChange item.
+type FileChangePart struct {
 	Path      string `json:"path"`
-	Operation string `json:"operation,omitempty"` // "create" | "modify" | "delete"
+	Operation string `json:"operation"` // "create" | "modify" | "delete"
 	Diff      string `json:"diff,omitempty"`
-	Status    string `json:"status,omitempty"`
 }
 
 func (*FileChange) isThreadItem()    {}
@@ -88,31 +94,33 @@ func (*FileChange) ItemType() string { return "fileChange" }
 // tool. Wire discriminator: "mcpToolCall". Shape inferred — not yet seen
 // in a captured transcript.
 type MCPToolCall struct {
-	ID         string          `json:"id,omitempty"`
-	ServerName string          `json:"serverName,omitempty"`
-	ToolName   string          `json:"toolName,omitempty"`
-	Input      json.RawMessage `json:"input,omitempty"`
-	Result     json.RawMessage `json:"result,omitempty"`
-	Status     string          `json:"status,omitempty"`
-	ErrorText  string          `json:"error,omitempty"`
+	ID         string                `json:"id,omitempty"`
+	ServerName string                `json:"server,omitempty"`
+	ToolName   string                `json:"tool,omitempty"`
+	Input      json.RawMessage       `json:"arguments,omitempty"`
+	Result     json.RawMessage       `json:"result,omitempty"`
+	Status     string                `json:"status,omitempty"`
+	Error      MCPToolCallErrorField `json:"error,omitempty"`
+	DurationMs *int64                `json:"durationMs,omitempty"`
 }
 
 func (*MCPToolCall) isThreadItem()    {}
 func (*MCPToolCall) ItemType() string { return "mcpToolCall" }
 
-// WebSearch records a search the agent performed. Wire discriminator:
-// "webSearch". Shape inferred.
-type WebSearch struct {
-	ID      string            `json:"id,omitempty"`
-	Query   string            `json:"query"`
-	Results []WebSearchResult `json:"results,omitempty"`
-}
+// ErrorText returns the MCP tool-call error message, or the empty string when
+// the call did not fail. Preserves the pre-187 string-accessor contract while
+// the underlying field now absorbs codex 0.121.0's object shape via
+// MCPToolCallErrorField.UnmarshalJSON.
+func (m *MCPToolCall) ErrorText() string { return m.Error.Message }
 
-// WebSearchResult is a single result row in a WebSearch.
-type WebSearchResult struct {
-	Title   string `json:"title,omitempty"`
-	URL     string `json:"url,omitempty"`
-	Snippet string `json:"snippet,omitempty"`
+// WebSearch records a search the agent performed. Wire discriminator:
+// "webSearch". Schema (v2) declares an `action` raw-JSON field; there is no
+// `results` field in the real wire format. Prior to feature 187 this struct
+// fabricated a Results []WebSearchResult field.
+type WebSearch struct {
+	ID     string          `json:"id,omitempty"`
+	Query  string          `json:"query"`
+	Action json.RawMessage `json:"action,omitempty"`
 }
 
 func (*WebSearch) isThreadItem()    {}
@@ -140,9 +148,9 @@ func (*MemoryWrite) ItemType() string { return "memoryWrite" }
 
 // Plan is a structured plan the agent produced. Shape inferred.
 type Plan struct {
-	ID      string `json:"id,omitempty"`
-	Content string `json:"content"`
-	Status  string `json:"status,omitempty"`
+	ID     string `json:"id,omitempty"`
+	Text   string `json:"text"`
+	Status string `json:"status,omitempty"`
 }
 
 func (*Plan) isThreadItem()    {}
@@ -174,6 +182,119 @@ type SystemError struct {
 
 func (*SystemError) isThreadItem()    {}
 func (*SystemError) ItemType() string { return "systemError" }
+
+// HookPrompt is a hook-generated prompt fragment set. Wire discriminator:
+// "hookPrompt". Fragments carries raw JSON entries the hook emitted — their
+// shape varies per hook and is therefore preserved as RawMessage.
+type HookPrompt struct {
+	ID        string            `json:"id,omitempty"`
+	Fragments []json.RawMessage `json:"fragments,omitempty"`
+}
+
+func (*HookPrompt) isThreadItem()    {}
+func (*HookPrompt) ItemType() string { return "hookPrompt" }
+
+// DynamicToolCall is a codex 0.121.0 parallel-call tool invocation opt-in.
+// Wire discriminator: "dynamicToolCall". Used for non-MCP, non-builtin tool
+// invocations where the tool name is resolved dynamically.
+type DynamicToolCall struct {
+	ID           string          `json:"id,omitempty"`
+	Tool         string          `json:"tool,omitempty"`
+	Arguments    json.RawMessage `json:"arguments,omitempty"`
+	Status       string          `json:"status,omitempty"`
+	Success      *bool           `json:"success,omitempty"`
+	ContentItems json.RawMessage `json:"contentItems,omitempty"`
+	DurationMs   *int64          `json:"durationMs,omitempty"`
+}
+
+func (*DynamicToolCall) isThreadItem()    {}
+func (*DynamicToolCall) ItemType() string { return "dynamicToolCall" }
+
+// CollabAgentToolCall is a multi-agent delegation item. Wire discriminator:
+// "collabAgentToolCall". US4's translator emits one MsgTask per AgentsStates
+// entry so the PWA agent panel gets one row per delegated sub-agent.
+type CollabAgentToolCall struct {
+	ID                string       `json:"id,omitempty"`
+	Tool              string       `json:"tool,omitempty"`
+	Status            string       `json:"status,omitempty"`
+	AgentsStates      []AgentState `json:"agentsStates,omitempty"`
+	Model             string       `json:"model,omitempty"`
+	Prompt            string       `json:"prompt,omitempty"`
+	ReasoningEffort   string       `json:"reasoningEffort,omitempty"`
+	SenderThreadID    string       `json:"senderThreadId,omitempty"`
+	ReceiverThreadIDs []string     `json:"receiverThreadIds,omitempty"`
+}
+
+func (*CollabAgentToolCall) isThreadItem()    {}
+func (*CollabAgentToolCall) ItemType() string { return "collabAgentToolCall" }
+
+// AgentState is one sub-agent's state inside a CollabAgentToolCall.AgentsStates
+// slice. Shape not yet firmed in the v2 schema — store as raw JSON until codex
+// stabilizes the fields.
+type AgentState struct {
+	Raw json.RawMessage `json:"-"`
+}
+
+// UnmarshalJSON captures the raw JSON payload verbatim so downstream callers
+// can inspect it as the schema evolves.
+func (a *AgentState) UnmarshalJSON(data []byte) error {
+	cp := make(json.RawMessage, len(data))
+	copy(cp, data)
+	a.Raw = cp
+	return nil
+}
+
+// ImageView describes an inline image the agent displayed. Wire discriminator:
+// "imageView".
+type ImageView struct {
+	ID   string `json:"id,omitempty"`
+	Path string `json:"path"`
+}
+
+func (*ImageView) isThreadItem()    {}
+func (*ImageView) ItemType() string { return "imageView" }
+
+// ImageGeneration describes an image the agent generated (DALL-E style). Wire
+// discriminator: "imageGeneration".
+type ImageGeneration struct {
+	ID            string          `json:"id,omitempty"`
+	Status        string          `json:"status,omitempty"`
+	SavedPath     string          `json:"savedPath,omitempty"`
+	RevisedPrompt string          `json:"revisedPrompt,omitempty"`
+	Result        json.RawMessage `json:"result,omitempty"`
+}
+
+func (*ImageGeneration) isThreadItem()    {}
+func (*ImageGeneration) ItemType() string { return "imageGeneration" }
+
+// EnteredReviewMode signals the agent entered a review flow. Wire discriminator:
+// "enteredReviewMode". Review carries arbitrary JSON (schema is loose).
+type EnteredReviewMode struct {
+	ID     string          `json:"id,omitempty"`
+	Review json.RawMessage `json:"review,omitempty"`
+}
+
+func (*EnteredReviewMode) isThreadItem()    {}
+func (*EnteredReviewMode) ItemType() string { return "enteredReviewMode" }
+
+// ExitedReviewMode signals the agent exited a review flow. Wire discriminator:
+// "exitedReviewMode".
+type ExitedReviewMode struct {
+	ID     string          `json:"id,omitempty"`
+	Review json.RawMessage `json:"review,omitempty"`
+}
+
+func (*ExitedReviewMode) isThreadItem()    {}
+func (*ExitedReviewMode) ItemType() string { return "exitedReviewMode" }
+
+// ContextCompaction signals codex compacted the conversation context. Wire
+// discriminator: "contextCompaction". US4's translator maps it to MsgCompact.
+type ContextCompaction struct {
+	ID string `json:"id,omitempty"`
+}
+
+func (*ContextCompaction) isThreadItem()    {}
+func (*ContextCompaction) ItemType() string { return "contextCompaction" }
 
 // UnknownItem is emitted when the parser encounters an item.type it does
 // not recognize. The Type field carries the wire discriminator and Raw
