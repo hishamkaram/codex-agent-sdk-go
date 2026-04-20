@@ -7,11 +7,15 @@ import (
 	"github.com/hishamkaram/codex-agent-sdk-go/types"
 )
 
+// Feature 187 US2: CommandExecutionApprovalRequest.Cwd tag corrected from
+// `working_directory` to `cwd` per v2 schema. Fixture-compensation per
+// .claude/rules/fixture-compensation.md (test-only, minimum edit to keep
+// FR-016 satisfied under new invariant).
 func TestParseApprovalRequest_CommandExecution(t *testing.T) {
 	t.Parallel()
 	r, err := ParseApprovalRequest(
 		"item/commandExecution/requestApproval",
-		json.RawMessage(`{"command":"rm -rf /","working_directory":"/tmp","reason":"destructive"}`),
+		json.RawMessage(`{"command":"rm -rf /","cwd":"/tmp","reason":"destructive"}`),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -74,6 +78,36 @@ func TestParseApprovalRequest_UnknownMethodFallback(t *testing.T) {
 	}
 	if string(u.Params) != string(raw) {
 		t.Fatal("params not preserved")
+	}
+}
+
+// TestParseApprovalRequest_CommandExecution_CwdTag pins US2-AC4 behavior:
+// the v2 schema tags the working-directory field as `cwd` (not
+// `working_directory` — the legacy tag). A real codex app-server that emits
+// `cwd` would silently drop the field into an empty Go string under the old
+// tag. This test asserts the new tag binds correctly.
+func TestParseApprovalRequest_CommandExecution_CwdTag(t *testing.T) {
+	t.Parallel()
+
+	r, err := ParseApprovalRequest(
+		"item/commandExecution/requestApproval",
+		json.RawMessage(`{"command":"rm -rf foo","cwd":"/home/h","reason":"danger"}`),
+	)
+	if err != nil {
+		t.Fatalf("ParseApprovalRequest returned error: %v", err)
+	}
+	c, ok := r.(*types.CommandExecutionApprovalRequest)
+	if !ok {
+		t.Fatalf("ParseApprovalRequest returned %T, want *types.CommandExecutionApprovalRequest", r)
+	}
+	if c.Command != "rm -rf foo" {
+		t.Errorf("Command = %q, want %q", c.Command, "rm -rf foo")
+	}
+	if c.Cwd != "/home/h" {
+		t.Errorf("Cwd = %q, want %q", c.Cwd, "/home/h")
+	}
+	if c.Reason != "danger" {
+		t.Errorf("Reason = %q, want %q", c.Reason, "danger")
 	}
 }
 

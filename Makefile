@@ -1,7 +1,7 @@
 LEFTHOOK_MODULE  ?= github.com/evilmartians/lefthook/v2
 LEFTHOOK_VERSION ?= v2.1.5
 
-.PHONY: help build test test-all test-integration bench fmt lint clean coverage govulncheck hooks examples regen-schema shim install-shim
+.PHONY: help build test test-all test-integration test-codex-livecli bench fmt lint clean coverage govulncheck hooks examples regen-schema shim install-shim
 
 help:
 	@echo "Codex Agent SDK for Go - Development Tasks"
@@ -39,6 +39,11 @@ test-all:
 test-integration:
 	@echo "Running integration tests..."
 	go test -v -tags=integration ./tests/...
+
+test-codex-livecli:
+	@echo "Running live-CLI schema integration test 5 consecutive times (feature 187)..."
+	@test -n "$${OPENAI_API_KEY}" || { echo "OPENAI_API_KEY required"; exit 1; }
+	go test -tags=integration -race -count=5 -run TestIntegrationSchema ./tests/...
 
 bench:
 	@echo "Running benchmarks..."
