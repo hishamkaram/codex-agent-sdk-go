@@ -97,6 +97,54 @@ func ParseItem(raw json.RawMessage) (types.ThreadItem, error) {
 			return nil, wrapParseErr("systemError", raw, err)
 		}
 		return &it, nil
+	case "hookPrompt":
+		var it types.HookPrompt
+		if err := json.Unmarshal(raw, &it); err != nil {
+			return nil, wrapParseErr("hookPrompt", raw, err)
+		}
+		return &it, nil
+	case "dynamicToolCall":
+		var it types.DynamicToolCall
+		if err := json.Unmarshal(raw, &it); err != nil {
+			return nil, wrapParseErr("dynamicToolCall", raw, err)
+		}
+		return &it, nil
+	case "collabAgentToolCall":
+		var it types.CollabAgentToolCall
+		if err := json.Unmarshal(raw, &it); err != nil {
+			return nil, wrapParseErr("collabAgentToolCall", raw, err)
+		}
+		return &it, nil
+	case "imageView":
+		var it types.ImageView
+		if err := json.Unmarshal(raw, &it); err != nil {
+			return nil, wrapParseErr("imageView", raw, err)
+		}
+		return &it, nil
+	case "imageGeneration":
+		var it types.ImageGeneration
+		if err := json.Unmarshal(raw, &it); err != nil {
+			return nil, wrapParseErr("imageGeneration", raw, err)
+		}
+		return &it, nil
+	case "enteredReviewMode":
+		var it types.EnteredReviewMode
+		if err := json.Unmarshal(raw, &it); err != nil {
+			return nil, wrapParseErr("enteredReviewMode", raw, err)
+		}
+		return &it, nil
+	case "exitedReviewMode":
+		var it types.ExitedReviewMode
+		if err := json.Unmarshal(raw, &it); err != nil {
+			return nil, wrapParseErr("exitedReviewMode", raw, err)
+		}
+		return &it, nil
+	case "contextCompaction":
+		var it types.ContextCompaction
+		if err := json.Unmarshal(raw, &it); err != nil {
+			return nil, wrapParseErr("contextCompaction", raw, err)
+		}
+		return &it, nil
 	default:
 		// Forward-compat: return an UnknownItem with the raw payload.
 		cp := make(json.RawMessage, len(raw))

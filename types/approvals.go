@@ -24,7 +24,7 @@ type ApprovalRequest interface {
 // Wire method: "item/commandExecution/requestApproval".
 type CommandExecutionApprovalRequest struct {
 	Command string `json:"command"`
-	Cwd     string `json:"working_directory,omitempty"`
+	Cwd     string `json:"cwd,omitempty"`
 	Reason  string `json:"reason,omitempty"`
 }
 

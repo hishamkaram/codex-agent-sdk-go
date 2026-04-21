@@ -29,3 +29,7 @@ go.work.sum
 
 # Scratch / experiments
 scratch/
+
+# Codex CLI working state created by integration tests
+.codex
+.codex/
