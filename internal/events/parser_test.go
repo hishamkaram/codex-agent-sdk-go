@@ -182,6 +182,9 @@ func TestParseEvent_TokenUsageUpdated_RealShape(t *testing.T) {
 		tu.Usage.ReasoningOutputTokens != 10 {
 		t.Fatalf("%+v", tu.Usage)
 	}
+	if tu.ModelContextWindow != 258400 {
+		t.Fatalf("ModelContextWindow = %d, want 258400", tu.ModelContextWindow)
+	}
 }
 
 func TestParseEvent_TokenUsageUpdated_FlatFallback(t *testing.T) {
@@ -195,6 +198,9 @@ func TestParseEvent_TokenUsageUpdated_FlatFallback(t *testing.T) {
 	tu := ev.(*types.TokenUsageUpdated)
 	if tu.Usage.InputTokens != 5 || tu.Usage.OutputTokens != 2 {
 		t.Fatalf("%+v", tu.Usage)
+	}
+	if tu.ModelContextWindow != 0 {
+		t.Fatalf("ModelContextWindow = %d, want 0", tu.ModelContextWindow)
 	}
 }
 

@@ -157,8 +157,14 @@ shape:
 ```
 
 The SDK surfaces `total` (running thread total) on
-`TokenUsageUpdated.Usage`. `Thread.Run` tracks the latest snapshot and
-assigns it to `Turn.Usage` when the turn terminates.
+`TokenUsageUpdated.Usage` and `modelContextWindow` on
+`TokenUsageUpdated.ModelContextWindow`. `Thread.Run` tracks the latest
+snapshot and assigns it to `Turn.Usage` when the turn terminates.
+
+Important: `total` is a cumulative per-thread counter, not a
+current-context occupancy metric. It is safe for lifetime cost/token
+accounting, but callers MUST NOT derive context-window percentage from
+`total / modelContextWindow`.
 
 ### `item/agentMessage/delta` is a per-item-type delta method
 

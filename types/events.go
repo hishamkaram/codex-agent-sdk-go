@@ -103,8 +103,9 @@ func (*ItemCompleted) EventMethod() string { return "item/completed" }
 // snapshot. This is NOT the same as TurnCompleted.Usage (which is the
 // turn's final accounting) — this one reports the thread-cumulative total.
 type TokenUsageUpdated struct {
-	ThreadID string     `json:"thread_id"`
-	Usage    TokenUsage `json:"usage"`
+	ThreadID           string     `json:"thread_id"`
+	Usage              TokenUsage `json:"usage"`
+	ModelContextWindow int64      `json:"model_context_window,omitempty"`
 }
 
 func (*TokenUsageUpdated) isThreadEvent()      {}

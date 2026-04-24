@@ -423,8 +423,9 @@ func parseTokenUsageUpdated(raw json.RawMessage) (types.ThreadEvent, error) {
 	var env struct {
 		ThreadID   string `json:"threadId"`
 		TokenUsage *struct {
-			Total *types.TokenUsage `json:"total,omitempty"`
-			Last  *types.TokenUsage `json:"last,omitempty"`
+			Total              *types.TokenUsage `json:"total,omitempty"`
+			Last               *types.TokenUsage `json:"last,omitempty"`
+			ModelContextWindow int64             `json:"modelContextWindow,omitempty"`
 		} `json:"tokenUsage,omitempty"`
 		Usage *types.TokenUsage `json:"usage,omitempty"`
 	}
@@ -440,7 +441,15 @@ func parseTokenUsageUpdated(raw json.RawMessage) (types.ThreadEvent, error) {
 	case env.Usage != nil:
 		usage = *env.Usage
 	}
-	return &types.TokenUsageUpdated{ThreadID: env.ThreadID, Usage: usage}, nil
+	var modelContextWindow int64
+	if env.TokenUsage != nil {
+		modelContextWindow = env.TokenUsage.ModelContextWindow
+	}
+	return &types.TokenUsageUpdated{
+		ThreadID:           env.ThreadID,
+		Usage:              usage,
+		ModelContextWindow: modelContextWindow,
+	}, nil
 }
 
 // unmarshalTo is a local helper mirroring unmarshalEnvelope but for
