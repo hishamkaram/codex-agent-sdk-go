@@ -2,6 +2,7 @@ package transport
 
 import (
 	"bytes"
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -120,5 +121,21 @@ func TestRingBuffer_AsWriter(t *testing.T) {
 	}
 	if rb.String() != "hello world" {
 		t.Fatalf("got %q", rb.String())
+	}
+}
+
+func TestAppServerClassifyExitShutdownRequestedSuppressesExitError(t *testing.T) {
+	t.Parallel()
+	err := exec.Command("sh", "-c", "exit 7").Run()
+	if err == nil {
+		t.Fatal("expected command to fail")
+	}
+
+	app := &AppServer{}
+	if got := app.classifyExit(err, true); got != nil {
+		t.Fatalf("classifyExit(shutdownRequested=true) = %v, want nil", got)
+	}
+	if got := app.classifyExit(err, false); got == nil || !strings.Contains(got.Error(), "exit=7") {
+		t.Fatalf("classifyExit(shutdownRequested=false) = %v, want process error with exit=7", got)
 	}
 }

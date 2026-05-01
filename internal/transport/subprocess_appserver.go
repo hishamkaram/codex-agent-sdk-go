@@ -235,7 +235,7 @@ func (t *AppServer) doClose(ctx context.Context) error {
 	exited, err := waitWithTimeout(ctx, waitDone, ShutdownGrace)
 	if exited {
 		t.drainStderr(stderrDone)
-		return t.classifyExit(err)
+		return t.classifyExit(err, true)
 	}
 
 	// Stage 2: SIGTERM.
@@ -245,7 +245,7 @@ func (t *AppServer) doClose(ctx context.Context) error {
 	exited, err = waitWithTimeout(ctx, waitDone, TerminateGrace)
 	if exited {
 		t.drainStderr(stderrDone)
-		return t.classifyExit(err)
+		return t.classifyExit(err, true)
 	}
 
 	// Stage 3: SIGKILL.
@@ -254,7 +254,7 @@ func (t *AppServer) doClose(ctx context.Context) error {
 	}
 	err = <-waitDone
 	t.drainStderr(stderrDone)
-	return t.classifyExit(err)
+	return t.classifyExit(err, true)
 }
 
 // drainStderr waits briefly for the stderr goroutine to finish so t.stderr
@@ -269,10 +269,15 @@ func (t *AppServer) drainStderr(done chan struct{}) {
 	}
 }
 
-// classifyExit maps an *exec.Cmd Wait() error into either nil (clean exit)
-// or a *types.ProcessError carrying exit code + stderr tail.
-func (t *AppServer) classifyExit(err error) error {
+// classifyExit maps an *exec.Cmd Wait() error into either nil or a
+// *types.ProcessError carrying exit code + stderr tail. Once Close has
+// requested shutdown by closing stdin, a non-zero app-server exit is not
+// actionable; turn/runtime failures are surfaced through RPC events.
+func (t *AppServer) classifyExit(err error, shutdownRequested bool) error {
 	if err == nil {
+		return nil
+	}
+	if shutdownRequested {
 		return nil
 	}
 	var exitErr *exec.ExitError

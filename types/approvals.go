@@ -81,6 +81,40 @@ func (*ElicitationRequest) ApprovalMethod() string {
 	return "mcpServer/elicitation/request"
 }
 
+// ToolRequestUserInputRequest asks the user to answer one or more structured
+// questions from Codex's request_user_input tool.
+//
+// Wire method: "item/tool/requestUserInput".
+type ToolRequestUserInputRequest struct {
+	ItemID    string                         `json:"itemId"`
+	Questions []ToolRequestUserInputQuestion `json:"questions"`
+	ThreadID  string                         `json:"threadId"`
+	TurnID    string                         `json:"turnId"`
+}
+
+func (*ToolRequestUserInputRequest) isApprovalRequest() {}
+func (*ToolRequestUserInputRequest) ApprovalMethod() string {
+	return "item/tool/requestUserInput"
+}
+
+// ToolRequestUserInputQuestion is one question in a Codex request_user_input
+// prompt. Options is nil when Codex expects free-form text.
+type ToolRequestUserInputQuestion struct {
+	Header   string                       `json:"header"`
+	ID       string                       `json:"id"`
+	IsOther  bool                         `json:"isOther,omitempty"`
+	IsSecret bool                         `json:"isSecret,omitempty"`
+	Options  []ToolRequestUserInputOption `json:"options,omitempty"`
+	Question string                       `json:"question"`
+}
+
+// ToolRequestUserInputOption is a selectable answer for a request_user_input
+// question.
+type ToolRequestUserInputOption struct {
+	Description string `json:"description"`
+	Label       string `json:"label"`
+}
+
 // UnknownApprovalRequest is the forward-compat hatch for approval methods
 // the SDK doesn't recognize. The Method and Params fields carry the raw
 // request. Callers should default-deny or default-decline unknown methods.
@@ -129,6 +163,20 @@ type ApprovalCancel struct {
 
 func (ApprovalCancel) isApprovalDecision() {}
 
+// ToolRequestUserInputResponse answers a Codex request_user_input prompt.
+// The map keys are the original question ids from ToolRequestUserInputRequest.
+type ToolRequestUserInputResponse struct {
+	Answers map[string]ToolRequestUserInputAnswer `json:"answers"`
+}
+
+func (ToolRequestUserInputResponse) isApprovalDecision() {}
+
+// ToolRequestUserInputAnswer carries one or more answer strings for a single
+// request_user_input question.
+type ToolRequestUserInputAnswer struct {
+	Answers []string `json:"answers"`
+}
+
 // ApprovalCallback is the signature for the user-supplied approval handler.
 // The callback MUST return promptly (a blocking approval stalls the turn)
 // and MUST NOT panic. The ctx is the turn's context — if it fires Done,
@@ -140,6 +188,12 @@ type ApprovalCallback func(ctx context.Context, req ApprovalRequest) ApprovalDec
 // that only want auto-approved actions.
 func DefaultDenyApprovalCallback(ctx context.Context, req ApprovalRequest) ApprovalDecision {
 	_ = ctx
-	_ = req
+	if r, ok := req.(*ToolRequestUserInputRequest); ok {
+		answers := make(map[string]ToolRequestUserInputAnswer, len(r.Questions))
+		for _, q := range r.Questions {
+			answers[q.ID] = ToolRequestUserInputAnswer{Answers: []string{}}
+		}
+		return ToolRequestUserInputResponse{Answers: answers}
+	}
 	return ApprovalDeny{Reason: "no approval callback configured"}
 }

@@ -40,7 +40,7 @@ field names preferred in this order: flat > nested.
 | `thread/list` | `{}` | `{threads:[…]}` | `Client.ListThreads` |
 | `thread/fork` | `{sourceThreadId,…}` | `{thread:{id,…}}` | `Client.ForkThread` |
 | `thread/archive` | `{threadId}` | `{}` | `Client.ArchiveThread` |
-| `turn/start` | `{threadId,input:[{type:"text"|"localImage",…}],outputSchema?}` | `{turn:{id,…}}` | `Thread.RunStreamed` |
+| `turn/start` | `{threadId,input:[{type:"text"|"localImage",…}],outputSchema?,collaborationMode?}` | `{turn:{id,…}}` | `Thread.RunStreamed` |
 | `turn/interrupt` | `{threadId,turnId}` | `{}` | `Thread.Interrupt` |
 
 ## Server-initiated notifications (→ ThreadEvent)
@@ -86,8 +86,10 @@ decision back.
 | `item/fileChange/requestApproval` | `*types.FileChangeApprovalRequest` |
 | `item/permissions/requestApproval` | `*types.PermissionsApprovalRequest` |
 | `mcpServer/elicitation/request` | `*types.ElicitationRequest` |
+| `item/tool/requestUserInput` | `*types.ToolRequestUserInputRequest` |
 
 Decision wire shape: `{decision: "accept"|"acceptForSession"|"decline"|"cancel", reason?}`.
+`item/tool/requestUserInput` uses `{answers:{[questionId]:{answers:[...]}}}` instead.
 
 ## Wire quirks (derived from real transcripts)
 

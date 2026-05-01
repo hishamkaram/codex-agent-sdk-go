@@ -35,6 +35,12 @@ func ParseApprovalRequest(method string, params json.RawMessage) (types.Approval
 			return nil, wrapParseErr(method, params, err)
 		}
 		return &r, nil
+	case "item/tool/requestUserInput":
+		var r types.ToolRequestUserInputRequest
+		if err := json.Unmarshal(params, &r); err != nil {
+			return nil, wrapParseErr(method, params, err)
+		}
+		return &r, nil
 	default:
 		cp := make(json.RawMessage, len(params))
 		copy(cp, params)
@@ -65,8 +71,29 @@ func EncodeApprovalDecision(d types.ApprovalDecision) map[string]any {
 			m["reason"] = dec.Reason
 		}
 		return m
+	case types.ToolRequestUserInputResponse:
+		return map[string]any{"answers": normalizeUserInputAnswers(dec.Answers)}
+	case *types.ToolRequestUserInputResponse:
+		if dec == nil {
+			return map[string]any{"answers": map[string]types.ToolRequestUserInputAnswer{}}
+		}
+		return map[string]any{"answers": normalizeUserInputAnswers(dec.Answers)}
 	default:
 		// Treat any unknown decision as decline — safer than accept.
 		return map[string]any{"decision": "decline", "reason": "unknown decision type"}
 	}
+}
+
+func normalizeUserInputAnswers(in map[string]types.ToolRequestUserInputAnswer) map[string]types.ToolRequestUserInputAnswer {
+	if in == nil {
+		return map[string]types.ToolRequestUserInputAnswer{}
+	}
+	out := make(map[string]types.ToolRequestUserInputAnswer, len(in))
+	for id, answer := range in {
+		if answer.Answers == nil {
+			answer.Answers = []string{}
+		}
+		out[id] = answer
+	}
+	return out
 }

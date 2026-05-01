@@ -274,6 +274,10 @@ type RunOptions struct {
 	// Schema. Nil means unconstrained text output.
 	OutputSchema *OutputSchema
 
+	// CollaborationMode asks Codex app-server to run the turn in an
+	// explicit collaboration mode, such as plan mode.
+	CollaborationMode *CollaborationMode
+
 	// Skills are explicitly invoked Codex skills to attach to the turn.
 	// Codex app-server expects both the prompt text and the structured
 	// skill item so it can load the skill immediately instead of relying on
@@ -283,6 +287,32 @@ type RunOptions struct {
 	// Images are absolute paths to local image files to attach to the turn.
 	// Codex streams them to the model as localImage input variants.
 	Images []string
+}
+
+// CollaborationModeKind is the Codex app-server collaboration mode name.
+type CollaborationModeKind string
+
+const (
+	// CollaborationModeDefault is Codex's normal execution mode.
+	CollaborationModeDefault CollaborationModeKind = "default"
+	// CollaborationModePlan asks Codex to ask clarifying questions and stop
+	// for plan approval before implementation.
+	CollaborationModePlan CollaborationModeKind = "plan"
+)
+
+// CollaborationMode is serialized into turn/start params as
+// collaborationMode.
+type CollaborationMode struct {
+	Mode     CollaborationModeKind     `json:"mode"`
+	Settings CollaborationModeSettings `json:"settings"`
+}
+
+// CollaborationModeSettings mirrors Codex app-server's current
+// collaboration-mode settings payload.
+type CollaborationModeSettings struct {
+	Model                 string  `json:"model"`
+	DeveloperInstructions *string `json:"developer_instructions,omitempty"`
+	ReasoningEffort       *string `json:"reasoning_effort,omitempty"`
 }
 
 // SkillInput identifies one discovered skill to attach to a turn.

@@ -2,6 +2,7 @@ package types
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 )
 
@@ -78,5 +79,23 @@ func TestCodexOptions_WithMCPServers(t *testing.T) {
 	}
 	if o.DefaultMCPServers["http"].Kind() != "http" {
 		t.Fatal("kind(http)")
+	}
+}
+
+func TestCollaborationMode_JSONShape(t *testing.T) {
+	t.Parallel()
+	mode := CollaborationMode{
+		Mode: CollaborationModePlan,
+		Settings: CollaborationModeSettings{
+			Model: "gpt-5.4",
+		},
+	}
+	got, err := json.Marshal(mode)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"mode":"plan","settings":{"model":"gpt-5.4"}}`
+	if string(got) != want {
+		t.Fatalf("got %s, want %s", got, want)
 	}
 }

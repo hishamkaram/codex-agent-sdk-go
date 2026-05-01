@@ -164,13 +164,7 @@ func (t *Thread) RunStreamed(ctx context.Context, prompt string, opts *types.Run
 	if err != nil {
 		return nil, err
 	}
-	params := map[string]any{
-		"threadId": t.id,
-		"input":    input,
-	}
-	if opts != nil && opts.OutputSchema != nil {
-		params["outputSchema"] = opts.OutputSchema
-	}
+	params := buildTurnStartParams(t.id, input, opts)
 
 	resp, err := t.client.demux.Send(ctx, "turn/start", params)
 	if err != nil {
@@ -306,6 +300,23 @@ func (t *Thread) Run(ctx context.Context, prompt string, opts *types.RunOptions)
 		return turn, fmt.Errorf("codex.Thread.Run: %w", ctx.Err())
 	}
 	return turn, nil
+}
+
+func buildTurnStartParams(threadID string, input []map[string]any, opts *types.RunOptions) map[string]any {
+	params := map[string]any{
+		"threadId": threadID,
+		"input":    input,
+	}
+	if opts == nil {
+		return params
+	}
+	if opts.OutputSchema != nil {
+		params["outputSchema"] = opts.OutputSchema
+	}
+	if opts.CollaborationMode != nil {
+		params["collaborationMode"] = opts.CollaborationMode
+	}
+	return params
 }
 
 // buildTurnInput constructs the "input" array for turn/start. Spike

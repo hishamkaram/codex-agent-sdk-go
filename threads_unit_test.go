@@ -98,6 +98,34 @@ func TestBuildTurnInput_EmptyImagePathIsError(t *testing.T) {
 	}
 }
 
+func TestBuildTurnStartParams_WithCollaborationMode(t *testing.T) {
+	t.Parallel()
+	input := []map[string]any{{"type": "text", "text": "make a plan"}}
+	opts := &types.RunOptions{
+		CollaborationMode: &types.CollaborationMode{
+			Mode: types.CollaborationModePlan,
+			Settings: types.CollaborationModeSettings{
+				Model: "gpt-5.4",
+			},
+		},
+	}
+
+	got := buildTurnStartParams("thread-1", input, opts)
+	if got["threadId"] != "thread-1" {
+		t.Fatalf("threadId = %v", got["threadId"])
+	}
+	if got["input"] == nil {
+		t.Fatalf("input missing: %+v", got)
+	}
+	cm, ok := got["collaborationMode"].(*types.CollaborationMode)
+	if !ok {
+		t.Fatalf("collaborationMode = %T", got["collaborationMode"])
+	}
+	if cm.Mode != types.CollaborationModePlan || cm.Settings.Model != "gpt-5.4" {
+		t.Fatalf("collaborationMode = %+v", cm)
+	}
+}
+
 func TestBuildThreadStartParams_DefaultsAndOverrides(t *testing.T) {
 	t.Parallel()
 	clientOpts := types.NewCodexOptions().

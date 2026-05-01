@@ -37,6 +37,8 @@ case *types.PermissionsApprovalRequest:
     // r.Permission, r.Scope, r.Reason  (e.g., network egress)
 case *types.ElicitationRequest:
     // r.ServerName, r.Prompt, r.Schema  (MCP server asking for user input)
+case *types.ToolRequestUserInputRequest:
+    // r.ItemID, r.ThreadID, r.TurnID, r.Questions  (Codex request_user_input)
 case *types.UnknownApprovalRequest:
     // r.Method, r.Params  (server introduced a method the SDK doesn't yet type)
 }
@@ -51,6 +53,11 @@ types.ApprovalAccept{}               // proceed with the action
 types.ApprovalAcceptForSession{}     // proceed + remember for this session
 types.ApprovalDeny{Reason: "..."}    // refuse this action; turn continues
 types.ApprovalCancel{Reason: "..."}  // abort the entire turn
+types.ToolRequestUserInputResponse{  // answer Codex request_user_input
+    Answers: map[string]types.ToolRequestUserInputAnswer{
+        "question_id": {Answers: []string{"Proceed"}},
+    },
+}
 ```
 
 Unknown decision types are treated as `Deny` by the encoder — safer

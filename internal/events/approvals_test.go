@@ -65,6 +65,37 @@ func TestParseApprovalRequest_Elicitation(t *testing.T) {
 	}
 }
 
+func TestParseApprovalRequest_ToolRequestUserInput(t *testing.T) {
+	t.Parallel()
+	r, err := ParseApprovalRequest(
+		"item/tool/requestUserInput",
+		json.RawMessage(`{"itemId":"item-1","threadId":"thread-1","turnId":"turn-1","questions":[{"header":"Plan","id":"approve","question":"Proceed?","isOther":true,"options":[{"label":"Proceed","description":"Start implementation"}]}]}`),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	qr, ok := r.(*types.ToolRequestUserInputRequest)
+	if !ok {
+		t.Fatalf("got %T", r)
+	}
+	if qr.ItemID != "item-1" || qr.ThreadID != "thread-1" || qr.TurnID != "turn-1" {
+		t.Fatalf("%+v", qr)
+	}
+	if len(qr.Questions) != 1 {
+		t.Fatalf("len(Questions) = %d", len(qr.Questions))
+	}
+	q := qr.Questions[0]
+	if q.ID != "approve" || q.Header != "Plan" || q.Question != "Proceed?" || !q.IsOther {
+		t.Fatalf("%+v", q)
+	}
+	if len(q.Options) != 1 || q.Options[0].Label != "Proceed" || q.Options[0].Description != "Start implementation" {
+		t.Fatalf("%+v", q.Options)
+	}
+	if r.ApprovalMethod() != "item/tool/requestUserInput" {
+		t.Fatal("wrong method")
+	}
+}
+
 func TestParseApprovalRequest_UnknownMethodFallback(t *testing.T) {
 	t.Parallel()
 	raw := json.RawMessage(`{"custom":"field"}`)
@@ -123,6 +154,24 @@ func TestEncodeApprovalDecision(t *testing.T) {
 		{"deny_no_reason", types.ApprovalDeny{}, `{"decision":"decline"}`},
 		{"deny_with_reason", types.ApprovalDeny{Reason: "unsafe"}, `{"decision":"decline","reason":"unsafe"}`},
 		{"cancel", types.ApprovalCancel{Reason: "user aborted"}, `{"decision":"cancel","reason":"user aborted"}`},
+		{
+			"user_input",
+			types.ToolRequestUserInputResponse{
+				Answers: map[string]types.ToolRequestUserInputAnswer{
+					"approve": {Answers: []string{"Proceed"}},
+				},
+			},
+			`{"answers":{"approve":{"answers":["Proceed"]}}}`,
+		},
+		{
+			"user_input_empty",
+			types.ToolRequestUserInputResponse{
+				Answers: map[string]types.ToolRequestUserInputAnswer{
+					"approve": {},
+				},
+			},
+			`{"answers":{"approve":{"answers":[]}}}`,
+		},
 	}
 	for _, tt := range tests {
 		tt := tt
