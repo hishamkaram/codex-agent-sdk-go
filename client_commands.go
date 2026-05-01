@@ -152,7 +152,7 @@ func (c *Client) ListApps(ctx context.Context) ([]types.AppInfo, error) {
 //
 // Read-only. Maps to data source for slash command /plugins.
 func (c *Client) ListSkills(ctx context.Context) ([]types.SkillsCwdGroup, error) {
-	resp, err := c.sendRaw(ctx, "ListSkills", "skills/list", map[string]any{})
+	resp, err := c.sendRaw(ctx, "ListSkills", "skills/list", buildSkillsListParams(c.opts))
 	if err != nil {
 		return nil, err
 	}
@@ -161,6 +161,14 @@ func (c *Client) ListSkills(ctx context.Context) ([]types.SkillsCwdGroup, error)
 		return nil, fmt.Errorf("codex.Client.ListSkills: decode response: %w", err)
 	}
 	return result.Data, nil
+}
+
+func buildSkillsListParams(opts *types.CodexOptions) map[string]any {
+	params := map[string]any{}
+	if opts != nil && opts.DefaultCwd != "" {
+		params["cwds"] = []string{opts.DefaultCwd}
+	}
+	return params
 }
 
 // ReadAccount returns the authenticated principal's identity (auth

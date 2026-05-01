@@ -2,6 +2,7 @@ package codex
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -12,6 +13,38 @@ import (
 // tests/integration_commands_test.go (real codex required). Unit tests
 // here cover the connection-state guard rails: not-connected, closed,
 // concurrent dispatch.
+
+func TestBuildSkillsListParams_UsesDefaultCwd(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		opts *types.CodexOptions
+		want map[string]any
+	}{
+		{
+			name: "empty options",
+			opts: types.NewCodexOptions(),
+			want: map[string]any{},
+		},
+		{
+			name: "default cwd",
+			opts: types.NewCodexOptions().WithCwd("/repo/subdir"),
+			want: map[string]any{"cwds": []string{"/repo/subdir"}},
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := buildSkillsListParams(tt.opts)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("buildSkillsListParams() = %#v, want %#v", got, tt.want)
+			}
+		})
+	}
+}
 
 func TestClientCommands_NotConnected(t *testing.T) {
 	t.Parallel()
