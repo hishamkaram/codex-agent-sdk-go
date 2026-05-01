@@ -39,6 +39,57 @@ func TestBuildTurnInput_WithImages(t *testing.T) {
 	}
 }
 
+func TestBuildTurnInput_WithSkill(t *testing.T) {
+	t.Parallel()
+	opts := &types.RunOptions{Skills: []types.SkillInput{
+		{Name: "openai-docs", Path: "/abs/openai-docs/SKILL.md"},
+	}}
+	got, err := buildTurnInput("$openai-docs explain responses", opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("len = %d", len(got))
+	}
+	if got[0]["type"] != "text" || got[0]["text"] != "$openai-docs explain responses" {
+		t.Fatalf("text: %+v", got[0])
+	}
+	if got[1]["type"] != "skill" || got[1]["name"] != "openai-docs" || got[1]["path"] != "/abs/openai-docs/SKILL.md" {
+		t.Fatalf("skill: %+v", got[1])
+	}
+}
+
+func TestBuildTurnInput_WithSkillAndImage(t *testing.T) {
+	t.Parallel()
+	opts := &types.RunOptions{
+		Skills: []types.SkillInput{{Name: "imagegen", Path: "/abs/imagegen/SKILL.md"}},
+		Images: []string{"/abs/a.png"},
+	}
+	got, err := buildTurnInput("$imagegen use this", opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("len = %d", len(got))
+	}
+	if got[1]["type"] != "skill" || got[1]["name"] != "imagegen" {
+		t.Fatalf("skill: %+v", got[1])
+	}
+	if got[2]["type"] != "localImage" || got[2]["path"] != "/abs/a.png" {
+		t.Fatalf("image: %+v", got[2])
+	}
+}
+
+func TestBuildTurnInput_EmptySkillFieldsAreErrors(t *testing.T) {
+	t.Parallel()
+	if _, err := buildTurnInput("x", &types.RunOptions{Skills: []types.SkillInput{{Path: "/abs/SKILL.md"}}}); err == nil {
+		t.Fatal("expected error for empty skill name")
+	}
+	if _, err := buildTurnInput("x", &types.RunOptions{Skills: []types.SkillInput{{Name: "x"}}}); err == nil {
+		t.Fatal("expected error for empty skill path")
+	}
+}
+
 func TestBuildTurnInput_EmptyImagePathIsError(t *testing.T) {
 	t.Parallel()
 	_, err := buildTurnInput("x", &types.RunOptions{Images: []string{""}})

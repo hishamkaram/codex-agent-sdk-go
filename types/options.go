@@ -274,9 +274,23 @@ type RunOptions struct {
 	// Schema. Nil means unconstrained text output.
 	OutputSchema *OutputSchema
 
+	// Skills are explicitly invoked Codex skills to attach to the turn.
+	// Codex app-server expects both the prompt text and the structured
+	// skill item so it can load the skill immediately instead of relying on
+	// trigger inference from the raw text alone.
+	Skills []SkillInput
+
 	// Images are absolute paths to local image files to attach to the turn.
 	// Codex streams them to the model as localImage input variants.
 	Images []string
+}
+
+// SkillInput identifies one discovered skill to attach to a turn.
+// Name is the skill identifier and Path is the absolute SKILL.md/SKILL.json
+// path returned by Client.ListSkills.
+type SkillInput struct {
+	Name string
+	Path string
 }
 
 // ThreadInfo is the metadata record returned by Codex.ListThreads.

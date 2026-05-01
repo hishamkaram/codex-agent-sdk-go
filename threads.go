@@ -312,10 +312,24 @@ func (t *Thread) Run(ctx context.Context, prompt string, opts *types.RunOptions)
 // transcript shape:
 //
 //	[{"type":"text","text":"..."},
+//	 {"type":"skill","name":"skill-name","path":"/abs/SKILL.md"},
 //	 {"type":"localImage","path":"/abs/path.png"}]
 func buildTurnInput(prompt string, opts *types.RunOptions) ([]map[string]any, error) {
 	out := []map[string]any{{"type": "text", "text": prompt}}
 	if opts != nil {
+		for _, skill := range opts.Skills {
+			if skill.Name == "" {
+				return nil, fmt.Errorf("codex.buildTurnInput: skill name is empty")
+			}
+			if skill.Path == "" {
+				return nil, fmt.Errorf("codex.buildTurnInput: skill path is empty")
+			}
+			out = append(out, map[string]any{
+				"type": "skill",
+				"name": skill.Name,
+				"path": skill.Path,
+			})
+		}
 		for _, path := range opts.Images {
 			if path == "" {
 				return nil, fmt.Errorf("codex.buildTurnInput: image path is empty")
