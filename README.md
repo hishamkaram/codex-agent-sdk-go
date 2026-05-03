@@ -5,7 +5,7 @@
 
 Go SDK for the OpenAI Codex CLI **app-server** transport — spawns `codex app-server` as a child process, speaks JSON-RPC 2.0 over stdio, and exposes a typed Go API for threads, turns, streaming events, approvals, and MCP configuration.
 
-> **Status**: v0.1.0 preview. API may change before v1.0.0. Feedback welcome.
+> **Status**: preview (`v0.x`). API may change before `v1.0.0`. Feedback welcome.
 
 Sibling SDK: [`claude-agent-sdk-go`](https://github.com/hishamkaram/claude-agent-sdk-go) does the same thing for the Claude Code CLI.
 
@@ -15,7 +15,7 @@ Codex's app-server exposes a JSON-RPC 2.0 protocol over stdio — bidirectional,
 
 ## Feature matrix
 
-| Feature | Status (v0.1.0) |
+| Feature | Status on current mainline |
 |---|---|
 | `codex app-server` transport | ✅ |
 | `codex exec --json` one-shot | ❌ deferred to v2 |
@@ -134,7 +134,7 @@ opts = opts.WithApprovalCallback(func(ctx context.Context, req types.ApprovalReq
 - Handles CLI discovery (PATH, `~/.codex/bin`, brew, npm install paths) and soft version probe
 - Emits structured logs via zap
 
-## What it does NOT do (v0.1.0)
+## What it does NOT do (current preview)
 
 - `codex exec --json` (fire-and-forget) transport — the `app-server` path is the only one implemented
 - Lifecycle hooks (Codex upstream doesn't expose SDK-side pre/post-tool hook registration yet)
