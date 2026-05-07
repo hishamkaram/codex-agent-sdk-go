@@ -1,6 +1,11 @@
 package types
 
-import "encoding/json"
+import (
+	"bytes"
+	"encoding/json"
+	"sort"
+	"strconv"
+)
 
 // ThreadItem is the interface implemented by every concrete item type
 // returned in ItemStarted / ItemCompleted events. Items are the granular
@@ -214,33 +219,117 @@ func (*DynamicToolCall) ItemType() string { return "dynamicToolCall" }
 // "collabAgentToolCall". US4's translator emits one MsgTask per AgentsStates
 // entry so the PWA agent panel gets one row per delegated sub-agent.
 type CollabAgentToolCall struct {
-	ID                string       `json:"id,omitempty"`
-	Tool              string       `json:"tool,omitempty"`
-	Status            string       `json:"status,omitempty"`
-	AgentsStates      []AgentState `json:"agentsStates,omitempty"`
-	Model             string       `json:"model,omitempty"`
-	Prompt            string       `json:"prompt,omitempty"`
-	ReasoningEffort   string       `json:"reasoningEffort,omitempty"`
-	SenderThreadID    string       `json:"senderThreadId,omitempty"`
-	ReceiverThreadIDs []string     `json:"receiverThreadIds,omitempty"`
+	ID                string      `json:"id,omitempty"`
+	Tool              string      `json:"tool,omitempty"`
+	Status            string      `json:"status,omitempty"`
+	AgentsStates      AgentStates `json:"agentsStates,omitempty"`
+	Model             string      `json:"model,omitempty"`
+	Prompt            string      `json:"prompt,omitempty"`
+	ReasoningEffort   string      `json:"reasoningEffort,omitempty"`
+	SenderThreadID    string      `json:"senderThreadId,omitempty"`
+	ReceiverThreadIDs []string    `json:"receiverThreadIds,omitempty"`
 }
 
 func (*CollabAgentToolCall) isThreadItem()    {}
 func (*CollabAgentToolCall) ItemType() string { return "collabAgentToolCall" }
 
-// AgentState is one sub-agent's state inside a CollabAgentToolCall.AgentsStates
-// slice. Shape not yet firmed in the v2 schema — store as raw JSON until codex
-// stabilizes the fields.
-type AgentState struct {
-	Raw json.RawMessage `json:"-"`
+// AgentStates is the current codex app-server agentsStates wire field. Codex
+// app-server 0.128.0 declares an object keyed by agent/thread ID. Older
+// fixtures used an array, so UnmarshalJSON accepts both and normalizes arrays to
+// numeric string keys for compatibility.
+type AgentStates map[string]AgentState
+
+// AgentStateEntry is one stable key/value pair from AgentStates.
+type AgentStateEntry struct {
+	Key   string
+	State AgentState
 }
 
-// UnmarshalJSON captures the raw JSON payload verbatim so downstream callers
-// can inspect it as the schema evolves.
+// Entries returns AgentStates in deterministic key order. Numeric keys sort by
+// numeric value so legacy array keys remain in original order.
+func (s AgentStates) Entries() []AgentStateEntry {
+	if len(s) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(s))
+	for key := range s {
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		left, leftErr := strconv.Atoi(keys[i])
+		right, rightErr := strconv.Atoi(keys[j])
+		if leftErr == nil && rightErr == nil {
+			return left < right
+		}
+		return keys[i] < keys[j]
+	})
+	entries := make([]AgentStateEntry, 0, len(keys))
+	for _, key := range keys {
+		entries = append(entries, AgentStateEntry{Key: key, State: s[key]})
+	}
+	return entries
+}
+
+// UnmarshalJSON accepts both current object-shaped agentsStates and legacy
+// array-shaped agentsStates.
+func (s *AgentStates) UnmarshalJSON(data []byte) error {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		*s = nil
+		return nil
+	}
+	switch trimmed[0] {
+	case '{':
+		var states map[string]AgentState
+		if err := json.Unmarshal(trimmed, &states); err != nil {
+			return err
+		}
+		*s = AgentStates(states)
+		return nil
+	case '[':
+		var states []AgentState
+		if err := json.Unmarshal(trimmed, &states); err != nil {
+			return err
+		}
+		normalized := make(AgentStates, len(states))
+		for i, state := range states {
+			normalized[strconv.Itoa(i)] = state
+		}
+		*s = normalized
+		return nil
+	default:
+		var states map[string]AgentState
+		if err := json.Unmarshal(trimmed, &states); err != nil {
+			return err
+		}
+		*s = AgentStates(states)
+		return nil
+	}
+}
+
+// AgentState is one sub-agent's state inside a CollabAgentToolCall.AgentsStates
+// map. Raw preserves the original object for forward-compatible callers while
+// Status/Message expose the fields present in the current app-server schema.
+type AgentState struct {
+	Status  string          `json:"status,omitempty"`
+	Message *string         `json:"message,omitempty"`
+	Raw     json.RawMessage `json:"-"`
+}
+
+// UnmarshalJSON captures the raw JSON payload verbatim and decodes the current
+// status/message fields.
 func (a *AgentState) UnmarshalJSON(data []byte) error {
 	cp := make(json.RawMessage, len(data))
 	copy(cp, data)
 	a.Raw = cp
+
+	type alias AgentState
+	var decoded alias
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	a.Status = decoded.Status
+	a.Message = decoded.Message
 	return nil
 }
 
