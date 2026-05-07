@@ -543,17 +543,17 @@ func TestParseItem_DynamicToolCall(t *testing.T) {
 	}
 }
 
-// TestParseItem_CollabAgentToolCall (T032-T) pins US3-AC1: codex 0.121.0 emits
+// TestParseItem_CollabAgentToolCall (T032-T) pins US3-AC1: codex emits
 // collabAgentToolCall items for delegated sub-agents. This is what populates
-// the PWA agent panel. After US3, the parser MUST dispatch to a concrete
-// *types.CollabAgentToolCall with AgentsStates, SenderThreadID,
-// ReceiverThreadIDs, Model, Prompt, and ReasoningEffort populated.
+// the PWA agent panel. Current codex app-server 0.128.0 schema emits
+// agentsStates as an object keyed by agent/thread ID.
 func TestParseItem_CollabAgentToolCall(t *testing.T) {
 	t.Parallel()
 
 	raw := json.RawMessage(
 		`{"type":"collabAgentToolCall","id":"ct1","tool":"Task","status":"inProgress",` +
-			`"agentsStates":[{"state":"running"},{"state":"idle"}],` +
+			`"agentsStates":{"agent-b":{"status":"running","message":"writing"},` +
+			`"agent-a":{"status":"pendingInit","message":"booting"}},` +
 			`"senderThreadId":"s1","receiverThreadIds":["r1","r2"],` +
 			`"model":"gpt-5","prompt":"research X","reasoningEffort":"high"}`)
 
@@ -583,8 +583,47 @@ func TestParseItem_CollabAgentToolCall(t *testing.T) {
 	if len(ct.AgentsStates) != 2 {
 		t.Errorf("len(AgentsStates) = %d, want 2", len(ct.AgentsStates))
 	}
+	if got := ct.AgentsStates["agent-a"].Status; got != "pendingInit" {
+		t.Errorf("AgentsStates[agent-a].Status = %q, want %q", got, "pendingInit")
+	}
+	if msg := ct.AgentsStates["agent-b"].Message; msg == nil || *msg != "writing" {
+		t.Errorf("AgentsStates[agent-b].Message = %v, want %q", msg, "writing")
+	}
+	entries := ct.AgentsStates.Entries()
+	if len(entries) != 2 || entries[0].Key != "agent-a" || entries[1].Key != "agent-b" {
+		t.Errorf("AgentsStates.Entries() = %+v, want keys [agent-a agent-b]", entries)
+	}
 	if len(ct.ReceiverThreadIDs) != 2 {
 		t.Errorf("len(ReceiverThreadIDs) = %d, want 2", len(ct.ReceiverThreadIDs))
+	}
+}
+
+func TestParseItem_CollabAgentToolCall_LegacyArrayAgentsStates(t *testing.T) {
+	t.Parallel()
+
+	raw := json.RawMessage(
+		`{"type":"collabAgentToolCall","id":"ct-legacy","tool":"Task","status":"inProgress",` +
+			`"agentsStates":[{"status":"running","message":"one"},{"status":"completed","message":"two"}],` +
+			`"senderThreadId":"s1","receiverThreadIds":["r1","r2"]}`)
+
+	it, err := ParseItem(raw)
+	if err != nil {
+		t.Fatalf("ParseItem returned error: %v", err)
+	}
+	ct, ok := it.(*types.CollabAgentToolCall)
+	if !ok {
+		t.Fatalf("ParseItem returned %T, want *types.CollabAgentToolCall", it)
+	}
+	entries := ct.AgentsStates.Entries()
+	if len(entries) != 2 {
+		t.Fatalf("len(AgentsStates.Entries()) = %d, want 2", len(entries))
+	}
+	if entries[0].Key != "0" || entries[1].Key != "1" {
+		t.Fatalf("Entries keys = [%q %q], want [0 1]", entries[0].Key, entries[1].Key)
+	}
+	if entries[0].State.Status != "running" || entries[1].State.Status != "completed" {
+		t.Fatalf("Entries statuses = [%q %q], want [running completed]",
+			entries[0].State.Status, entries[1].State.Status)
 	}
 }
 
