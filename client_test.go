@@ -56,6 +56,29 @@ func TestClient_StartThreadBeforeConnectIsError(t *testing.T) {
 	}
 }
 
+func TestBuildInitializeParams_IncludesNotificationOptOut(t *testing.T) {
+	t.Parallel()
+	opts := types.NewCodexOptions().
+		WithExperimentalAPI(true).
+		WithOptOutNotificationMethods("process/outputDelta", "warning")
+
+	params := buildInitializeParams(opts)
+	capabilities, ok := params["capabilities"].(map[string]any)
+	if !ok {
+		t.Fatalf("capabilities = %T", params["capabilities"])
+	}
+	if capabilities["experimentalApi"] != true {
+		t.Fatalf("experimentalApi = %#v", capabilities["experimentalApi"])
+	}
+	got, ok := capabilities["optOutNotificationMethods"].([]string)
+	if !ok {
+		t.Fatalf("optOutNotificationMethods = %T", capabilities["optOutNotificationMethods"])
+	}
+	if len(got) != 2 || got[0] != "process/outputDelta" || got[1] != "warning" {
+		t.Fatalf("optOutNotificationMethods = %#v", got)
+	}
+}
+
 func TestClient_ResumeThreadEmptyIDIsError(t *testing.T) {
 	t.Parallel()
 	c, _ := NewClient(context.Background(), types.NewCodexOptions())

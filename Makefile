@@ -1,7 +1,7 @@
 LEFTHOOK_MODULE  ?= github.com/evilmartians/lefthook/v2
 LEFTHOOK_VERSION ?= v2.1.5
 
-.PHONY: help build test test-all test-integration test-codex-livecli bench fmt lint clean coverage govulncheck hooks examples regen-schema shim install-shim
+.PHONY: help build test test-all test-integration test-codex-livecli bench fmt lint clean coverage govulncheck hooks examples regen-schema check-schema-drift shim install-shim
 
 help:
 	@echo "Codex Agent SDK for Go - Development Tasks"
@@ -19,6 +19,7 @@ help:
 	@echo "  make examples        - Build all examples"
 	@echo "  make govulncheck     - Scan for known vulnerabilities"
 	@echo "  make hooks           - Install lefthook pre-commit hooks"
+	@echo "  make check-schema-drift - Compare installed codex schema with vendored parser coverage"
 	@echo ""
 
 build:
@@ -110,5 +111,13 @@ regen-schema:
 	    --out internal/events/testdata/schema/
 	@echo "Schema regenerated. Review git diff + update parser.go if new methods appeared."
 	@echo "Then run: make test"
+
+check-schema-drift:
+	@echo "Checking installed codex schema against vendored SDK schema..."
+	@command -v codex > /dev/null || { echo "codex CLI not found on PATH — install @openai/codex"; exit 1; }
+	@tmp="$$(mktemp -d)"; \
+	trap 'rm -rf "$$tmp"' EXIT; \
+	codex --enable codex_hooks app-server generate-json-schema --out "$$tmp"; \
+	CODEX_SCHEMA_DRIFT_DIR="$$tmp" go test ./internal/events -run TestGeneratedSchemaMatchesVendored -count=1
 
 .DEFAULT_GOAL := help

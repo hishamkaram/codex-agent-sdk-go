@@ -41,6 +41,12 @@ func ParseEvent(n jsonrpc.Notification) (types.ThreadEvent, error) {
 		return parseContextCompacted(n.Params)
 	case "thread/tokenUsage/updated":
 		return parseTokenUsageUpdated(n.Params)
+	case "thread/goal/updated":
+		return parseThreadGoalUpdated(n.Params)
+	case "thread/goal/cleared":
+		return parseSimpleThreadEvent(n.Params, func(id string) types.ThreadEvent {
+			return &types.ThreadGoalCleared{ThreadID: id}
+		})
 
 	// --- Turn ---
 	case "turn/started":
@@ -75,6 +81,8 @@ func ParseEvent(n jsonrpc.Notification) (types.ThreadEvent, error) {
 		return parseFlatDelta(n.Params, "delta", func(s string) types.ItemDelta {
 			return &types.FileChangeOutputDelta{DiffChunk: s}
 		})
+	case "item/fileChange/patchUpdated":
+		return parseFileChangePatchUpdated(n.Params)
 	case "item/plan/delta":
 		return parseFlatDelta(n.Params, "delta", func(s string) types.ItemDelta {
 			return &types.PlanDelta{Chunk: s}
@@ -145,10 +153,26 @@ func ParseEvent(n jsonrpc.Notification) (types.ThreadEvent, error) {
 		return parseAccountUpdated(n.Params)
 	case "model/rerouted":
 		return parseModelRerouted(n.Params)
+	case "model/verification":
+		return parseModelVerification(n.Params)
 
 	// --- System / filesystem / apps ---
+	case "command/exec/outputDelta":
+		return parseCommandExecOutputDelta(n.Params)
+	case "process/outputDelta":
+		return parseProcessOutputDelta(n.Params)
+	case "process/exited":
+		return parseProcessExited(n.Params)
+	case "remoteControl/status/changed":
+		return parseRemoteControlStatusChanged(n.Params)
+	case "externalAgentConfig/import/completed":
+		return &types.ExternalAgentConfigImportCompleted{Params: cloneRaw(n.Params)}, nil
 	case "configWarning":
 		return parseConfigWarning(n.Params)
+	case "warning":
+		return parseWarning(n.Params)
+	case "guardianWarning":
+		return parseGuardianWarning(n.Params)
 	case "deprecationNotice":
 		return parseDeprecationNotice(n.Params)
 	case "fs/changed":
@@ -183,7 +207,14 @@ func ParseEvent(n jsonrpc.Notification) (types.ThreadEvent, error) {
 		return parseErrorEvent(n.Params)
 
 	default:
-		return &types.UnknownEvent{Method: n.Method, Params: cloneRaw(n.Params)}, nil
+		threadID, turnID, itemID := extractUnknownEventIDs(n.Params)
+		return &types.UnknownEvent{
+			Method:   n.Method,
+			Params:   cloneRaw(n.Params),
+			ThreadID: threadID,
+			TurnID:   turnID,
+			ItemID:   itemID,
+		}, nil
 	}
 }
 
@@ -196,6 +227,14 @@ func cloneRaw(raw json.RawMessage) json.RawMessage {
 	cp := make(json.RawMessage, len(raw))
 	copy(cp, raw)
 	return cp
+}
+
+func extractUnknownEventIDs(raw json.RawMessage) (threadID, turnID, itemID string) {
+	var env identifiersEnvelope
+	if err := unmarshalEnvelope(raw, &env); err != nil {
+		return "", "", ""
+	}
+	return env.resolveIDs()
 }
 
 // identifiersEnvelope extracts thread/turn/item IDs from the common event
@@ -839,6 +878,22 @@ func parseModelRerouted(raw json.RawMessage) (types.ThreadEvent, error) {
 	}, nil
 }
 
+func parseModelVerification(raw json.RawMessage) (types.ThreadEvent, error) {
+	var env struct {
+		ThreadID      string          `json:"threadId"`
+		TurnID        string          `json:"turnId"`
+		Verifications json.RawMessage `json:"verifications"`
+	}
+	if err := unmarshalTo(raw, &env); err != nil {
+		return nil, err
+	}
+	return &types.ModelVerification{
+		ThreadID:      env.ThreadID,
+		TurnID:        env.TurnID,
+		Verifications: cloneRaw(env.Verifications),
+	}, nil
+}
+
 func parseConfigWarning(raw json.RawMessage) (types.ThreadEvent, error) {
 	var env struct {
 		Summary string          `json:"summary"`
@@ -850,6 +905,28 @@ func parseConfigWarning(raw json.RawMessage) (types.ThreadEvent, error) {
 		return nil, err
 	}
 	return &types.ConfigWarning{Summary: env.Summary, Details: env.Details, Path: env.Path, Range: cloneRaw(env.Range)}, nil
+}
+
+func parseWarning(raw json.RawMessage) (types.ThreadEvent, error) {
+	var env struct {
+		ThreadID *string `json:"threadId"`
+		Message  string  `json:"message"`
+	}
+	if err := unmarshalTo(raw, &env); err != nil {
+		return nil, err
+	}
+	return &types.Warning{ThreadID: env.ThreadID, Message: env.Message}, nil
+}
+
+func parseGuardianWarning(raw json.RawMessage) (types.ThreadEvent, error) {
+	var env struct {
+		ThreadID string `json:"threadId"`
+		Message  string `json:"message"`
+	}
+	if err := unmarshalTo(raw, &env); err != nil {
+		return nil, err
+	}
+	return &types.GuardianWarning{ThreadID: env.ThreadID, Message: env.Message}, nil
 }
 
 func parseDeprecationNotice(raw json.RawMessage) (types.ThreadEvent, error) {
@@ -893,6 +970,112 @@ func parseServerRequestResolved(raw json.RawMessage) (types.ThreadEvent, error) 
 		return nil, err
 	}
 	return &types.ServerRequestResolved{ThreadID: env.ThreadID, RequestID: cloneRaw(env.RequestID)}, nil
+}
+
+func parseProcessOutputDelta(raw json.RawMessage) (types.ThreadEvent, error) {
+	var env struct {
+		ProcessHandle string `json:"processHandle"`
+		Stream        string `json:"stream"`
+		DeltaBase64   string `json:"deltaBase64"`
+		CapReached    bool   `json:"capReached"`
+	}
+	if err := unmarshalTo(raw, &env); err != nil {
+		return nil, err
+	}
+	return &types.ProcessOutputDelta{
+		ProcessHandle: env.ProcessHandle,
+		Stream:        env.Stream,
+		DeltaBase64:   env.DeltaBase64,
+		CapReached:    env.CapReached,
+	}, nil
+}
+
+func parseProcessExited(raw json.RawMessage) (types.ThreadEvent, error) {
+	var env struct {
+		ProcessHandle    string `json:"processHandle"`
+		ExitCode         int    `json:"exitCode"`
+		Stdout           string `json:"stdout"`
+		Stderr           string `json:"stderr"`
+		StdoutCapReached bool   `json:"stdoutCapReached"`
+		StderrCapReached bool   `json:"stderrCapReached"`
+	}
+	if err := unmarshalTo(raw, &env); err != nil {
+		return nil, err
+	}
+	return &types.ProcessExited{
+		ProcessHandle:    env.ProcessHandle,
+		ExitCode:         env.ExitCode,
+		Stdout:           env.Stdout,
+		Stderr:           env.Stderr,
+		StdoutCapReached: env.StdoutCapReached,
+		StderrCapReached: env.StderrCapReached,
+	}, nil
+}
+
+func parseCommandExecOutputDelta(raw json.RawMessage) (types.ThreadEvent, error) {
+	var env struct {
+		ProcessID   string `json:"processId"`
+		Stream      string `json:"stream"`
+		DeltaBase64 string `json:"deltaBase64"`
+		CapReached  bool   `json:"capReached"`
+	}
+	if err := unmarshalTo(raw, &env); err != nil {
+		return nil, err
+	}
+	return &types.CommandExecOutputDelta{
+		ProcessID:   env.ProcessID,
+		Stream:      env.Stream,
+		DeltaBase64: env.DeltaBase64,
+		CapReached:  env.CapReached,
+	}, nil
+}
+
+func parseFileChangePatchUpdated(raw json.RawMessage) (types.ThreadEvent, error) {
+	var env struct {
+		ThreadID string          `json:"threadId"`
+		TurnID   string          `json:"turnId"`
+		ItemID   string          `json:"itemId"`
+		Changes  json.RawMessage `json:"changes"`
+	}
+	if err := unmarshalTo(raw, &env); err != nil {
+		return nil, err
+	}
+	return &types.FileChangePatchUpdated{
+		ThreadID: env.ThreadID,
+		TurnID:   env.TurnID,
+		ItemID:   env.ItemID,
+		Changes:  cloneRaw(env.Changes),
+	}, nil
+}
+
+func parseThreadGoalUpdated(raw json.RawMessage) (types.ThreadEvent, error) {
+	var env struct {
+		ThreadID string          `json:"threadId"`
+		TurnID   *string         `json:"turnId"`
+		Goal     json.RawMessage `json:"goal"`
+	}
+	if err := unmarshalTo(raw, &env); err != nil {
+		return nil, err
+	}
+	return &types.ThreadGoalUpdated{
+		ThreadID: env.ThreadID,
+		TurnID:   env.TurnID,
+		Goal:     cloneRaw(env.Goal),
+	}, nil
+}
+
+func parseRemoteControlStatusChanged(raw json.RawMessage) (types.ThreadEvent, error) {
+	var env struct {
+		EnvironmentID *string `json:"environmentId"`
+		Status        string  `json:"status"`
+	}
+	if err := unmarshalTo(raw, &env); err != nil {
+		return nil, err
+	}
+	return &types.RemoteControlStatusChanged{
+		EnvironmentID: env.EnvironmentID,
+		Status:        env.Status,
+	}, nil
 }
 
 func parseWindowsWorldWritableWarning(raw json.RawMessage) (types.ThreadEvent, error) {

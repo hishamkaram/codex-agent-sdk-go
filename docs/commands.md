@@ -7,8 +7,10 @@ ARE exposed as individual app-server methods though. v0.4.0 maps
 every wireable slash command to a typed Go method so callers never
 need to construct raw JSON-RPC frames.
 
-This doc is the map. Every row is tested live against codex 0.121.0
-— see `tests/coverage_matrix.md` for the one-row-per-test breakdown.
+This doc is the map. The v0.4.0 command matrix was last fully stress-
+verified live against codex 0.121.0; the current SDK parser and vendored
+schema target Codex 0.130.0. See `tests/coverage_matrix.md` for the
+one-row-per-test breakdown.
 
 ## Mid-session controls
 
@@ -215,13 +217,25 @@ wrapped `fmt.Errorf` chain.
 
 ## Version & testing
 
-Verified against codex **0.121.0** on **2026-04-19**. Coverage
-matrix at [`tests/coverage_matrix.md`](../tests/coverage_matrix.md)
-— every typed method × every option variant × every documented
-error path has a live-CLI integration test OR a `TEST-DEFERRED-vX.Y`
-annotation with rationale.
+The full v0.4.0 command matrix was verified against codex **0.121.0**
+on **2026-04-19**. The current schema/parser target is codex **0.130.0**
+(verified 2026-05-13 with `make check-schema-drift` and
+`TestIntegrationSchema`). Coverage matrix at
+[`tests/coverage_matrix.md`](../tests/coverage_matrix.md) — every typed
+method × every option variant × every documented error path has a
+live-CLI integration test OR a `TEST-DEFERRED-vX.Y` annotation with
+rationale.
 
-To re-verify against a newer codex release, run the schema probe:
+To re-verify schema/parser compatibility against a newer codex release,
+run:
+
+```bash
+make check-schema-drift
+CODEX_SDK_RUN_TURNS=1 go test -tags=integration -count=1 -p 1 \
+  ./tests/... -run TestIntegrationSchema -timeout=300s -v
+```
+
+To re-capture the v0.4.0 command fixtures, run the opt-in probe:
 
 ```bash
 CODEX_SDK_PROBE=1 go test -tags=integration -count=1 -p 1 \

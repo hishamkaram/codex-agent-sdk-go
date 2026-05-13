@@ -8,7 +8,7 @@
     "version"
   ],
   "properties": {
-    "sessionId": {
+    "realtimeSessionId": {
       "type": [
         "string",
         "null"

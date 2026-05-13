@@ -55,7 +55,8 @@ func TestIntegrationSchema(t *testing.T) {
 	}
 	requireCodex(t)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	const schemaTurnTimeout = 180 * time.Second
+	ctx, cancel := context.WithTimeout(context.Background(), schemaTurnTimeout)
 	defer cancel()
 
 	cwd := t.TempDir()
@@ -129,6 +130,9 @@ func TestIntegrationSchema(t *testing.T) {
 	}
 
 	if !sawTurnCompleted {
+		if ctx.Err() != nil {
+			t.Fatalf("tool-heavy live turn timed out after %s before TurnCompleted; counts so far: %+v", schemaTurnTimeout, counts)
+		}
 		t.Fatalf("event channel closed without TurnCompleted; counts so far: %+v", counts)
 	}
 

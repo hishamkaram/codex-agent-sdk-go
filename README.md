@@ -11,7 +11,7 @@ Sibling SDK: [`claude-agent-sdk-go`](https://github.com/hishamkaram/claude-agent
 
 ## Why this SDK?
 
-Codex's app-server exposes a JSON-RPC 2.0 protocol over stdio — bidirectional, stateful, with server-initiated approval requests. Consuming it directly means handling line-framing with a 2 MiB minimum buffer, demultiplexing three request shapes (responses, notifications, server-initiated requests), serializing concurrent turns to preserve event boundaries, and mapping ~15 notification types to typed Go events. This SDK handles all of that and exposes a clean, typed API.
+Codex's app-server exposes a JSON-RPC 2.0 protocol over stdio — bidirectional, stateful, with server-initiated approval requests. Consuming it directly means handling line-framing with a 2 MiB minimum buffer, demultiplexing three request shapes (responses, notifications, server-initiated requests), serializing concurrent turns to preserve event boundaries, and mapping schema-covered notification methods to typed Go events. This SDK handles all of that and exposes a clean, typed API.
 
 ## Feature matrix
 
@@ -21,7 +21,7 @@ Codex's app-server exposes a JSON-RPC 2.0 protocol over stdio — bidirectional,
 | `codex exec --json` one-shot | ❌ deferred to v2 |
 | Thread start / resume / fork / archive / list | ✅ |
 | `thread.Run()` (buffered) + `thread.RunStreamed()` (channel) | ✅ |
-| Streaming events: turn/started, turn/completed, item/started, item/updated, item/completed, error, tokenUsage, compaction | ✅ |
+| Streaming events: turn/item lifecycle, token usage, thread lifecycle/goals, process output, model/account/warning events, hooks, realtime, and unknown-event fallback | ✅ |
 | ThreadItem variants: agentMessage, userMessage, commandExecution, fileChange, mcpToolCall, webSearch, memoryRead/Write, plan, reasoning, systemError | ✅ |
 | Input variants: text, localImage | ✅ |
 | Sandbox modes: read-only, workspace-write, danger-full-access | ✅ |
@@ -42,6 +42,7 @@ Codex's app-server exposes a JSON-RPC 2.0 protocol over stdio — bidirectional,
 
 - Go 1.25+
 - Codex CLI installed: `npm install -g @openai/codex` (or your distro's equivalent)
+  - Recommended/tested CLI: `0.130.0` (verified 2026-05-13); older versions run with a soft warning.
 - Auth (one of):
   - `OPENAI_API_KEY` environment variable (pay-per-token)
   - `~/.codex/auth.json` (ChatGPT Plus/Pro subscription; run `codex login` once outside the daemon)
@@ -83,7 +84,7 @@ func main() {
 		switch e := event.(type) {
 		case *types.ItemCompleted:
 			if msg, ok := e.Item.(*types.AgentMessage); ok {
-				fmt.Println(msg.Content)
+				fmt.Println(msg.Text)
 			}
 		case *types.TurnCompleted:
 			fmt.Printf("Tokens: in=%d out=%d\n", e.Usage.InputTokens, e.Usage.OutputTokens)
@@ -130,7 +131,7 @@ opts = opts.WithApprovalCallback(func(ctx context.Context, req types.ApprovalReq
 - Serializes all stdin writes via single `stdinMu` to prevent frame interleave
 - Serializes per-thread `Run()` calls via `turnMu` to preserve turn boundaries
 - Maintains a 2 MiB read buffer for large notification payloads
-- Translates raw JSON-RPC notifications into typed Go events
+- Translates raw JSON-RPC notifications into typed Go events with schema drift checks for Codex upgrades
 - Handles CLI discovery (PATH, `~/.codex/bin`, brew, npm install paths) and soft version probe
 - Emits structured logs via zap
 

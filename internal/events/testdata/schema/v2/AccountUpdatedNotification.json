@@ -48,6 +48,13 @@
           "enum": [
             "chatgptAuthTokens"
           ]
+        },
+        {
+          "description": "Programmatic Codex auth backed by a registered Agent Identity.",
+          "type": "string",
+          "enum": [
+            "agentIdentity"
+          ]
         }
       ]
     },

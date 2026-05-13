@@ -126,8 +126,11 @@ func (*ErrorEvent) EventMethod() string { return "error" }
 // doesn't recognize. Callers that care MUST type-switch on UnknownEvent
 // to inspect the raw payload.
 type UnknownEvent struct {
-	Method string          `json:"method"`
-	Params json.RawMessage `json:"params,omitempty"`
+	Method   string          `json:"method"`
+	Params   json.RawMessage `json:"params,omitempty"`
+	ThreadID string          `json:"thread_id,omitempty"`
+	TurnID   string          `json:"turn_id,omitempty"`
+	ItemID   string          `json:"item_id,omitempty"`
 }
 
 func (*UnknownEvent) isThreadEvent()        {}
@@ -428,6 +431,19 @@ type ModelRerouted struct {
 func (*ModelRerouted) isThreadEvent()      {}
 func (*ModelRerouted) EventMethod() string { return "model/rerouted" }
 
+// ModelVerification is emitted when the model reports verification state for a
+// turn. Verifications is raw because the upstream enum/payload is intentionally
+// loose and may grow.
+// Wire method: "model/verification".
+type ModelVerification struct {
+	ThreadID      string          `json:"thread_id"`
+	TurnID        string          `json:"turn_id"`
+	Verifications json.RawMessage `json:"verifications"`
+}
+
+func (*ModelVerification) isThreadEvent()      {}
+func (*ModelVerification) EventMethod() string { return "model/verification" }
+
 // --- v0.2.0 expansion: system / filesystem events ---
 
 // ConfigWarning is emitted when codex detects a suspect config value.
@@ -451,6 +467,27 @@ type DeprecationNotice struct {
 
 func (*DeprecationNotice) isThreadEvent()      {}
 func (*DeprecationNotice) EventMethod() string { return "deprecationNotice" }
+
+// Warning carries a server warning. ThreadID is optional on the wire; when
+// present, the SDK routes it to that thread.
+// Wire method: "warning".
+type Warning struct {
+	ThreadID *string `json:"thread_id,omitempty"`
+	Message  string  `json:"message"`
+}
+
+func (*Warning) isThreadEvent()      {}
+func (*Warning) EventMethod() string { return "warning" }
+
+// GuardianWarning carries a thread-scoped safety warning from the guardian.
+// Wire method: "guardianWarning".
+type GuardianWarning struct {
+	ThreadID string `json:"thread_id"`
+	Message  string `json:"message"`
+}
+
+func (*GuardianWarning) isThreadEvent()      {}
+func (*GuardianWarning) EventMethod() string { return "guardianWarning" }
 
 // FsChanged is emitted when codex's filesystem watcher detects changes.
 // Wire method: "fs/changed".
@@ -489,6 +526,104 @@ type ServerRequestResolved struct {
 
 func (*ServerRequestResolved) isThreadEvent()      {}
 func (*ServerRequestResolved) EventMethod() string { return "serverRequest/resolved" }
+
+// ProcessOutputDelta streams base64-encoded output for a process/spawn handle.
+// Wire method: "process/outputDelta".
+type ProcessOutputDelta struct {
+	ProcessHandle string `json:"process_handle"`
+	Stream        string `json:"stream"`
+	DeltaBase64   string `json:"delta_base64"`
+	CapReached    bool   `json:"cap_reached"`
+}
+
+func (*ProcessOutputDelta) isThreadEvent()      {}
+func (*ProcessOutputDelta) EventMethod() string { return "process/outputDelta" }
+
+// ProcessExited is the terminal process/spawn notification.
+// Wire method: "process/exited".
+type ProcessExited struct {
+	ProcessHandle    string `json:"process_handle"`
+	ExitCode         int    `json:"exit_code"`
+	Stdout           string `json:"stdout"`
+	Stderr           string `json:"stderr"`
+	StdoutCapReached bool   `json:"stdout_cap_reached"`
+	StderrCapReached bool   `json:"stderr_cap_reached"`
+}
+
+func (*ProcessExited) isThreadEvent()      {}
+func (*ProcessExited) EventMethod() string { return "process/exited" }
+
+// CommandExecOutputDelta streams base64-encoded output for a command/exec
+// handle. Wire method: "command/exec/outputDelta".
+type CommandExecOutputDelta struct {
+	ProcessID   string `json:"process_id"`
+	Stream      string `json:"stream"`
+	DeltaBase64 string `json:"delta_base64"`
+	CapReached  bool   `json:"cap_reached"`
+}
+
+func (*CommandExecOutputDelta) isThreadEvent()      {}
+func (*CommandExecOutputDelta) EventMethod() string { return "command/exec/outputDelta" }
+
+// FileChangePatchUpdated carries the latest patch changes for a fileChange
+// item. Changes is raw to preserve the upstream PatchChangeKind union.
+// Wire method: "item/fileChange/patchUpdated".
+type FileChangePatchUpdated struct {
+	ThreadID string          `json:"thread_id"`
+	TurnID   string          `json:"turn_id"`
+	ItemID   string          `json:"item_id"`
+	Changes  json.RawMessage `json:"changes"`
+}
+
+func (*FileChangePatchUpdated) isThreadEvent() {}
+func (*FileChangePatchUpdated) EventMethod() string {
+	return "item/fileChange/patchUpdated"
+}
+
+// ThreadGoalUpdated carries the current goal state for a thread.
+// Wire method: "thread/goal/updated".
+type ThreadGoalUpdated struct {
+	ThreadID string          `json:"thread_id"`
+	TurnID   *string         `json:"turn_id,omitempty"`
+	Goal     json.RawMessage `json:"goal"`
+}
+
+func (*ThreadGoalUpdated) isThreadEvent()      {}
+func (*ThreadGoalUpdated) EventMethod() string { return "thread/goal/updated" }
+
+// ThreadGoalCleared is emitted when a thread goal is cleared.
+// Wire method: "thread/goal/cleared".
+type ThreadGoalCleared struct {
+	ThreadID string `json:"thread_id"`
+}
+
+func (*ThreadGoalCleared) isThreadEvent()      {}
+func (*ThreadGoalCleared) EventMethod() string { return "thread/goal/cleared" }
+
+// RemoteControlStatusChanged reports app-server remote-control connectivity.
+// Wire method: "remoteControl/status/changed".
+type RemoteControlStatusChanged struct {
+	EnvironmentID *string `json:"environment_id,omitempty"`
+	Status        string  `json:"status"`
+}
+
+func (*RemoteControlStatusChanged) isThreadEvent() {}
+func (*RemoteControlStatusChanged) EventMethod() string {
+	return "remoteControl/status/changed"
+}
+
+// ExternalAgentConfigImportCompleted reports completion of an external agent
+// config import. Params is preserved raw because 0.130.0 declares an empty
+// object and future versions may add fields.
+// Wire method: "externalAgentConfig/import/completed".
+type ExternalAgentConfigImportCompleted struct {
+	Params json.RawMessage `json:"params,omitempty"`
+}
+
+func (*ExternalAgentConfigImportCompleted) isThreadEvent() {}
+func (*ExternalAgentConfigImportCompleted) EventMethod() string {
+	return "externalAgentConfig/import/completed"
+}
 
 // --- v0.2.0 expansion: Windows platform events ---
 

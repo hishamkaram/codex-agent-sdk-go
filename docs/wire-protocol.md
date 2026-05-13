@@ -33,7 +33,7 @@ field names preferred in this order: flat > nested.
 
 | Method | Params | Response carries | SDK caller |
 |---|---|---|---|
-| `initialize` | `{clientInfo:{name,version,title?},capabilities:{experimentalApi}}` | `{userAgent,codexHome,platformFamily,platformOs}` | `Client.Connect` |
+| `initialize` | `{clientInfo:{name,version,title?},capabilities:{experimentalApi,optOutNotificationMethods?}}` | `{userAgent,codexHome,platformFamily,platformOs}` | `Client.Connect` |
 | `initialized` (notification) | none | — | `Client.Connect` |
 | `thread/start` | `{cwd?,model?,sandbox?,approvalPolicy?}` | `{thread:{id,…}}` | `Client.StartThread` |
 | `thread/resume` | `{threadId,cwd?}` | `{thread:{id,…}}` | `Client.ResumeThread` |
@@ -46,33 +46,81 @@ field names preferred in this order: flat > nested.
 ## Server-initiated notifications (→ ThreadEvent)
 
 The SDK recognizes these method names. Unrecognized methods return
-`*types.UnknownEvent` — the raw params are preserved.
+`*types.UnknownEvent` with raw params preserved and best-effort
+`thread_id`/`turn_id`/`item_id` extraction so thread-scoped unknowns can
+still be routed instead of silently dropped.
 
 | Method | Go type |
 |---|---|
 | `thread/started` | `*types.ThreadStarted` |
+| `thread/archived` | `*types.ThreadArchived` |
+| `thread/unarchived` | `*types.ThreadUnarchived` |
+| `thread/closed` | `*types.ThreadClosed` |
+| `thread/name/updated` | `*types.ThreadNameUpdated` |
+| `thread/status/changed` | `*types.ThreadStatusChanged` |
+| `thread/compacted`, `compaction_event` | `*types.ContextCompacted` |
+| `thread/tokenUsage/updated` | `*types.TokenUsageUpdated` |
+| `thread/goal/updated` | `*types.ThreadGoalUpdated` |
+| `thread/goal/cleared` | `*types.ThreadGoalCleared` |
 | `turn/started` | `*types.TurnStarted` |
 | `turn/completed` | `*types.TurnCompleted` |
 | `turn/failed` | `*types.TurnFailed` |
+| `turn/diff/updated` | `*types.TurnDiffUpdated` |
+| `turn/plan/updated` | `*types.TurnPlanUpdated` |
 | `item/started` | `*types.ItemStarted` |
 | `item/updated` | `*types.ItemUpdated` |
 | `item/agentMessage/delta` | `*types.ItemUpdated` (normalized, wrapping `AgentMessageDelta`) |
+| `item/commandExecution/outputDelta` | `*types.ItemUpdated` (normalized, wrapping `CommandOutputDelta`) |
+| `item/fileChange/outputDelta` | `*types.ItemUpdated` (normalized, wrapping `FileChangeOutputDelta`) |
+| `item/fileChange/patchUpdated` | `*types.FileChangePatchUpdated` |
+| `item/plan/delta` | `*types.ItemUpdated` (normalized, wrapping `PlanDelta`) |
+| `item/reasoning/textDelta` | `*types.ItemUpdated` (normalized, wrapping `ReasoningTextDelta`) |
+| `item/reasoning/summaryTextDelta` | `*types.ItemUpdated` (normalized, wrapping `ReasoningSummaryTextDelta`) |
+| `item/reasoning/summaryPartAdded` | `*types.ItemUpdated` (normalized, wrapping `ReasoningSummaryPartAdded`) |
+| `item/mcpToolCall/progress` | `*types.ItemUpdated` (normalized, wrapping `MCPToolCallProgress`) |
+| `item/commandExecution/terminalInteraction` | `*types.ItemUpdated` (normalized, wrapping `TerminalInteraction`) |
+| `item/autoApprovalReview/started` | `*types.ItemGuardianApprovalReviewStarted` |
+| `item/autoApprovalReview/completed` | `*types.ItemGuardianApprovalReviewCompleted` |
 | `item/completed` | `*types.ItemCompleted` |
-| `thread/tokenUsage/updated` | `*types.TokenUsageUpdated` |
-| `compaction_event` | `*types.CompactionEvent` |
+| `thread/realtime/started` | `*types.ThreadRealtimeStarted` |
+| `thread/realtime/closed` | `*types.ThreadRealtimeClosed` |
+| `thread/realtime/error` | `*types.ThreadRealtimeError` |
+| `thread/realtime/itemAdded` | `*types.ThreadRealtimeItemAdded` |
+| `thread/realtime/outputAudio/delta` | `*types.ThreadRealtimeOutputAudioDelta` |
+| `thread/realtime/sdp` | `*types.ThreadRealtimeSdp` |
+| `thread/realtime/transcript/delta` | `*types.ThreadRealtimeTranscriptDelta` |
+| `thread/realtime/transcript/done` | `*types.ThreadRealtimeTranscriptDone` |
+| `mcpServer/startupStatus/updated` | `*types.MCPServerStartupStatusUpdated` |
+| `mcpServer/oauthLogin/completed` | `*types.MCPServerOAuthLoginCompleted` |
+| `account/login/completed` | `*types.AccountLoginCompleted` |
+| `account/rateLimits/updated` | `*types.AccountRateLimitsUpdated` |
+| `account/updated` | `*types.AccountUpdated` |
+| `model/rerouted` | `*types.ModelRerouted` |
+| `model/verification` | `*types.ModelVerification` |
+| `command/exec/outputDelta` | `*types.CommandExecOutputDelta` |
+| `process/outputDelta` | `*types.ProcessOutputDelta` |
+| `process/exited` | `*types.ProcessExited` |
+| `remoteControl/status/changed` | `*types.RemoteControlStatusChanged` |
+| `externalAgentConfig/import/completed` | `*types.ExternalAgentConfigImportCompleted` |
+| `configWarning` | `*types.ConfigWarning` |
+| `warning` | `*types.Warning` |
+| `guardianWarning` | `*types.GuardianWarning` |
+| `deprecationNotice` | `*types.DeprecationNotice` |
+| `fs/changed` | `*types.FsChanged` |
+| `skills/changed` | `*types.SkillsChanged` |
+| `app/list/updated` | `*types.AppListUpdated` |
+| `serverRequest/resolved` | `*types.ServerRequestResolved` |
+| `windows/worldWritableWarning` | `*types.WindowsWorldWritableWarning` |
+| `windowsSandbox/setupCompleted` | `*types.WindowsSandboxSetupCompleted` |
+| `fuzzyFileSearch/sessionUpdated` | `*types.FuzzyFileSearchSessionUpdated` |
+| `fuzzyFileSearch/sessionCompleted` | `*types.FuzzyFileSearchSessionCompleted` |
+| `hook/started` | `*types.HookStarted` |
+| `hook/completed` | `*types.HookCompleted` |
 | `error` | `*types.ErrorEvent` |
 
-### Observed-but-not-typed (UnknownEvent fallback in v0.1.0)
-
-Seen in the captured spike transcript; routed to `UnknownEvent`. Add
-typed handling in a future version if needed:
-
-- `mcpServer/startupStatus/updated`
-- `thread/status/changed`
-- `account/rateLimits/updated`
-- `configWarning`
-- `thread/archived`
-- `serverRequest/resolved`
+Parser coverage is guarded by the vendored schema drift tests. After a
+Codex upgrade, run `make check-schema-drift`; new thread-scoped methods
+must either gain typed parser support or an intentional route/drop policy.
 
 ## Server-initiated requests (approvals)
 
@@ -182,9 +230,10 @@ wire uses a dedicated method with a FLAT string delta:
 The parser normalizes this into `*types.ItemUpdated{Delta: *AgentMessageDelta{TextChunk: "OK"}}`
 so callers see a single event shape.
 
-Analogous per-item-type delta methods for `reasoning` and
-`commandExecution` output likely exist but are NOT in the captured
-spike transcript; they route to `UnknownEvent` pending ground truth.
+Analogous per-item-type delta methods for command output, file-change
+output, plans, reasoning text, reasoning summary text, reasoning summary
+parts, MCP progress, and terminal interaction are normalized into the
+same `*types.ItemUpdated` event shape.
 
 ### `reasoning.summary` / `reasoning.content` are arrays
 
@@ -203,6 +252,9 @@ race.
 
 - Captured transcript: `internal/events/testdata/spike-transcript.jsonl`
   (523 lines, real `codex app-server` v0.121.0)
+- Vendored schema: `internal/events/testdata/schema/codex_app_server_protocol.v2.schemas.json`
+  (regenerated from `codex app-server generate-json-schema` with Codex
+  0.130.0 on 2026-05-13)
 - `internal/jsonrpc/types.go` — envelope types
 - `internal/events/parser.go` — method → event dispatch
 - `internal/events/items.go` — item.type → ThreadItem dispatch

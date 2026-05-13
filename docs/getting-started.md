@@ -8,8 +8,8 @@ go get github.com/hishamkaram/codex-agent-sdk-go
 
 Requires:
 - Go 1.25+
-- Codex CLI 0.121.0+ (lower versions work but trigger a soft warning —
-  see `docs/wire-protocol.md`).
+- Codex CLI 0.130.0 (verified 2026-05-13; lower versions work but
+  trigger a soft warning — see `docs/wire-protocol.md`).
   - `npm install -g @openai/codex` — or Homebrew, per your OS.
 - Authentication: one of
   - `OPENAI_API_KEY=sk-…` in the environment (pay-per-token), or
@@ -41,7 +41,7 @@ func main() {
     for ev := range events {
         if c, ok := ev.(*types.ItemCompleted); ok {
             if msg, ok := c.Item.(*types.AgentMessage); ok {
-                fmt.Println(msg.Content)
+                fmt.Println(msg.Text)
             }
         }
     }

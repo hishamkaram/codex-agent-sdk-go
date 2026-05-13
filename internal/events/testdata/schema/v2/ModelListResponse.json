@@ -54,6 +54,7 @@
       ],
       "properties": {
         "additionalSpeedTiers": {
+          "description": "Deprecated: use `serviceTiers` instead.",
           "default": [],
           "type": "array",
           "items": {
@@ -101,6 +102,13 @@
         "model": {
           "type": "string"
         },
+        "serviceTiers": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ModelServiceTier"
+          }
+        },
         "supportedReasoningEfforts": {
           "type": "array",
           "items": {
@@ -136,6 +144,25 @@
       ],
       "properties": {
         "message": {
+          "type": "string"
+        }
+      }
+    },
+    "ModelServiceTier": {
+      "type": "object",
+      "required": [
+        "description",
+        "id",
+        "name"
+      ],
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "name": {
           "type": "string"
         }
       }

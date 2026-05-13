@@ -29,7 +29,10 @@
       "type": "string",
       "enum": [
         "preToolUse",
+        "permissionRequest",
         "postToolUse",
+        "preCompact",
+        "postCompact",
         "sessionStart",
         "userPromptSubmit",
         "stop"
@@ -139,6 +142,14 @@
         "scope": {
           "$ref": "#/definitions/HookScope"
         },
+        "source": {
+          "default": "unknown",
+          "allOf": [
+            {
+              "$ref": "#/definitions/HookSource"
+            }
+          ]
+        },
         "sourcePath": {
           "$ref": "#/definitions/AbsolutePathBuf"
         },
@@ -162,6 +173,21 @@
       "enum": [
         "thread",
         "turn"
+      ]
+    },
+    "HookSource": {
+      "type": "string",
+      "enum": [
+        "system",
+        "user",
+        "project",
+        "mdm",
+        "sessionFlags",
+        "plugin",
+        "cloudRequirements",
+        "legacyManagedConfigFile",
+        "legacyManagedConfigMdm",
+        "unknown"
       ]
     }
   }

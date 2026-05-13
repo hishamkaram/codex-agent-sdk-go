@@ -51,6 +51,10 @@
       "format": "uint",
       "minimum": 0.0
     },
+    "tty": {
+      "description": "Enable PTY mode.\n\nThis implies `streamStdin` and `streamStdoutStderr`.",
+      "type": "boolean"
+    },
     "processId": {
       "description": "Optional client-supplied, connection-scoped process id.\n\nRequired for `tty`, `streamStdin`, `streamStdoutStderr`, and follow-up `command/exec/write`, `command/exec/resize`, and `command/exec/terminate` calls. When omitted, buffered execution gets an internal id that is not exposed to the client.",
       "type": [
@@ -59,7 +63,7 @@
       ]
     },
     "sandboxPolicy": {
-      "description": "Optional sandbox policy for this command.\n\nUses the same shape as thread/turn execution sandbox configuration and defaults to the user's configured policy when omitted.",
+      "description": "Optional sandbox policy for this command.\n\nUses the same shape as thread/turn execution sandbox configuration and defaults to the user's configured policy when omitted. Cannot be combined with `permissionProfile`.",
       "anyOf": [
         {
           "$ref": "#/definitions/SandboxPolicy"
@@ -95,10 +99,6 @@
         "null"
       ],
       "format": "int64"
-    },
-    "tty": {
-      "description": "Enable PTY mode.\n\nThis implies `streamStdin` and `streamStdoutStderr`.",
-      "type": "boolean"
     }
   },
   "definitions": {
@@ -128,6 +128,202 @@
         }
       }
     },
+    "FileSystemAccessMode": {
+      "type": "string",
+      "enum": [
+        "read",
+        "write",
+        "none"
+      ]
+    },
+    "FileSystemPath": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "path",
+            "type"
+          ],
+          "properties": {
+            "path": {
+              "$ref": "#/definitions/AbsolutePathBuf"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "path"
+              ],
+              "title": "PathFileSystemPathType"
+            }
+          },
+          "title": "PathFileSystemPath"
+        },
+        {
+          "type": "object",
+          "required": [
+            "pattern",
+            "type"
+          ],
+          "properties": {
+            "pattern": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "glob_pattern"
+              ],
+              "title": "GlobPatternFileSystemPathType"
+            }
+          },
+          "title": "GlobPatternFileSystemPath"
+        },
+        {
+          "type": "object",
+          "required": [
+            "type",
+            "value"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "special"
+              ],
+              "title": "SpecialFileSystemPathType"
+            },
+            "value": {
+              "$ref": "#/definitions/FileSystemSpecialPath"
+            }
+          },
+          "title": "SpecialFileSystemPath"
+        }
+      ]
+    },
+    "FileSystemSandboxEntry": {
+      "type": "object",
+      "required": [
+        "access",
+        "path"
+      ],
+      "properties": {
+        "access": {
+          "$ref": "#/definitions/FileSystemAccessMode"
+        },
+        "path": {
+          "$ref": "#/definitions/FileSystemPath"
+        }
+      }
+    },
+    "FileSystemSpecialPath": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "root"
+              ]
+            }
+          },
+          "title": "RootFileSystemSpecialPath"
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "minimal"
+              ]
+            }
+          },
+          "title": "MinimalFileSystemSpecialPath"
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "project_roots"
+              ]
+            },
+            "subpath": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "title": "KindFileSystemSpecialPath"
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "tmpdir"
+              ]
+            }
+          },
+          "title": "TmpdirFileSystemSpecialPath"
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "slash_tmp"
+              ]
+            }
+          },
+          "title": "SlashTmpFileSystemSpecialPath"
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "path"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "unknown"
+              ]
+            },
+            "path": {
+              "type": "string"
+            },
+            "subpath": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        }
+      ]
+    },
     "NetworkAccess": {
       "type": "string",
       "enum": [
@@ -135,34 +331,105 @@
         "enabled"
       ]
     },
-    "ReadOnlyAccess": {
+    "PermissionProfile": {
       "oneOf": [
         {
+          "description": "Codex owns sandbox construction for this profile.",
+          "type": "object",
+          "required": [
+            "fileSystem",
+            "network",
+            "type"
+          ],
+          "properties": {
+            "fileSystem": {
+              "$ref": "#/definitions/PermissionProfileFileSystemPermissions"
+            },
+            "network": {
+              "$ref": "#/definitions/PermissionProfileNetworkPermissions"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "managed"
+              ],
+              "title": "ManagedPermissionProfileType"
+            }
+          },
+          "title": "ManagedPermissionProfile"
+        },
+        {
+          "description": "Do not apply an outer sandbox.",
           "type": "object",
           "required": [
             "type"
           ],
           "properties": {
-            "includePlatformDefaults": {
-              "default": true,
-              "type": "boolean"
+            "type": {
+              "type": "string",
+              "enum": [
+                "disabled"
+              ],
+              "title": "DisabledPermissionProfileType"
+            }
+          },
+          "title": "DisabledPermissionProfile"
+        },
+        {
+          "description": "Filesystem isolation is enforced by an external caller.",
+          "type": "object",
+          "required": [
+            "network",
+            "type"
+          ],
+          "properties": {
+            "network": {
+              "$ref": "#/definitions/PermissionProfileNetworkPermissions"
             },
-            "readableRoots": {
-              "default": [],
+            "type": {
+              "type": "string",
+              "enum": [
+                "external"
+              ],
+              "title": "ExternalPermissionProfileType"
+            }
+          },
+          "title": "ExternalPermissionProfile"
+        }
+      ]
+    },
+    "PermissionProfileFileSystemPermissions": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "entries",
+            "type"
+          ],
+          "properties": {
+            "entries": {
               "type": "array",
               "items": {
-                "$ref": "#/definitions/AbsolutePathBuf"
+                "$ref": "#/definitions/FileSystemSandboxEntry"
               }
+            },
+            "globScanMaxDepth": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint",
+              "minimum": 1.0
             },
             "type": {
               "type": "string",
               "enum": [
                 "restricted"
               ],
-              "title": "RestrictedReadOnlyAccessType"
+              "title": "RestrictedPermissionProfileFileSystemPermissionsType"
             }
           },
-          "title": "RestrictedReadOnlyAccess"
+          "title": "RestrictedPermissionProfileFileSystemPermissions"
         },
         {
           "type": "object",
@@ -173,14 +440,25 @@
             "type": {
               "type": "string",
               "enum": [
-                "fullAccess"
+                "unrestricted"
               ],
-              "title": "FullAccessReadOnlyAccessType"
+              "title": "UnrestrictedPermissionProfileFileSystemPermissionsType"
             }
           },
-          "title": "FullAccessReadOnlyAccess"
+          "title": "UnrestrictedPermissionProfileFileSystemPermissions"
         }
       ]
+    },
+    "PermissionProfileNetworkPermissions": {
+      "type": "object",
+      "required": [
+        "enabled"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        }
+      }
     },
     "SandboxPolicy": {
       "oneOf": [
@@ -206,16 +484,6 @@
             "type"
           ],
           "properties": {
-            "access": {
-              "default": {
-                "type": "fullAccess"
-              },
-              "allOf": [
-                {
-                  "$ref": "#/definitions/ReadOnlyAccess"
-                }
-              ]
-            },
             "networkAccess": {
               "default": false,
               "type": "boolean"
@@ -271,16 +539,6 @@
             "networkAccess": {
               "default": false,
               "type": "boolean"
-            },
-            "readOnlyAccess": {
-              "default": {
-                "type": "fullAccess"
-              },
-              "allOf": [
-                {
-                  "$ref": "#/definitions/ReadOnlyAccess"
-                }
-              ]
             },
             "type": {
               "type": "string",
