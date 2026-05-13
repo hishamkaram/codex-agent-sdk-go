@@ -50,8 +50,8 @@ When `Client.Connect` succeeds, a single goroutine starts:
       select {
       case note := <-demux.Notifications():
           ev := events.ParseEvent(note)
-          threadID := extractThreadID(ev)
-          client.threads[threadID].deliverEvent(ev)   // drop if unknown
+          threadID := extractThreadID(ev)             // includes UnknownEvent best-effort IDs
+          client.threads[threadID].deliverEvent(ev)   // drop only when no thread route exists
 
       case sreq := <-demux.ServerRequests():
           req := events.ParseApprovalRequest(sreq.Method, sreq.Params)
@@ -118,4 +118,11 @@ Every type hierarchy has an `Unknown*` fallback:
 
 When codex introduces a new event/item/delta subtype in a future CLI
 version, the SDK keeps working — users can type-switch on the Unknown
-variant to get the raw payload.
+variant to get the raw payload. Unknown notifications also carry
+best-effort thread/turn/item IDs when those fields are present, so
+thread-scoped future events are still routed to the owning Thread.
+
+The vendored app-server schema is part of CI coverage. `make
+check-schema-drift` regenerates schema from the installed `codex` binary
+and fails when a new notification method lacks typed support or an
+intentional route/drop policy.
