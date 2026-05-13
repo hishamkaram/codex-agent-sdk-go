@@ -41,7 +41,7 @@ func main() {
     for ev := range events {
         if c, ok := ev.(*types.ItemCompleted); ok {
             if msg, ok := c.Item.(*types.AgentMessage); ok {
-                fmt.Println(msg.Content)
+                fmt.Println(msg.Text)
             }
         }
     }

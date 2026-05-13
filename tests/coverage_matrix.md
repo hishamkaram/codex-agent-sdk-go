@@ -5,7 +5,10 @@ One row per (method × variant/error-path) per
 v0.4.0 surface has a live-CLI integration test or an explicit
 `TEST-DEFERRED-vX.Y` annotation with rationale.
 
-Verified against **codex 0.121.0** on **2026-04-19**.
+The full command matrix was verified against **codex 0.121.0** on
+**2026-04-19**. Schema/parser compatibility for the current SDK target is
+verified against **codex 0.130.0** on **2026-05-13** via
+`make check-schema-drift` and `TestIntegrationSchema`.
 
 ## Legend
 
