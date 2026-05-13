@@ -56,6 +56,12 @@
     "threadId": {
       "type": "string"
     },
+    "serviceTier": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "model": {
       "description": "Configuration overrides for the resumed thread, if any.",
       "type": [
@@ -79,23 +85,6 @@
         }
       ]
     },
-    "serviceTier": {
-      "anyOf": [
-        {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/ServiceTier"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        {
-          "type": "null"
-        }
-      ]
-    },
     "personality": {
       "anyOf": [
         {
@@ -108,11 +97,16 @@
     }
   },
   "definitions": {
+    "AbsolutePathBuf": {
+      "description": "A path that is guaranteed to be absolute and normalized (though it is not guaranteed to be canonicalized or exist on the filesystem).\n\nIMPORTANT: When deserializing an `AbsolutePathBuf`, a base path must be set using [AbsolutePathBufGuard::new]. If no base path is set, the deserialization will fail unless the path being deserialized is already absolute.",
+      "type": "string"
+    },
     "ApprovalsReviewer": {
-      "description": "Configures who approval requests are routed to for review. Examples include sandbox escapes, blocked network access, MCP approval prompts, and ARC escalations. Defaults to `user`. `guardian_subagent` uses a carefully prompted subagent to gather relevant context and apply a risk-based decision framework before approving or denying the request.",
+      "description": "Configures who approval requests are routed to for review. Examples include sandbox escapes, blocked network access, MCP approval prompts, and ARC escalations. Defaults to `user`. `auto_review` uses a carefully prompted subagent to gather relevant context and apply a risk-based decision framework before approving or denying the request. The legacy value `guardian_subagent` is accepted for compatibility.",
       "type": "string",
       "enum": [
         "user",
+        "auto_review",
         "guardian_subagent"
       ]
     },
@@ -195,6 +189,16 @@
             "type"
           ],
           "properties": {
+            "detail": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ImageDetail"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "image_url": {
               "type": "string"
             },
@@ -298,38 +302,6 @@
         }
       ]
     },
-    "GhostCommit": {
-      "description": "Details of a ghost commit created from a repository state.",
-      "type": "object",
-      "required": [
-        "id",
-        "preexisting_untracked_dirs",
-        "preexisting_untracked_files"
-      ],
-      "properties": {
-        "id": {
-          "type": "string"
-        },
-        "parent": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "preexisting_untracked_dirs": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "preexisting_untracked_files": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        }
-      }
-    },
     "ImageDetail": {
       "type": "string",
       "enum": [
@@ -419,6 +391,65 @@
           "enum": [
             "final_answer"
           ]
+        }
+      ]
+    },
+    "PermissionProfileModificationParams": {
+      "oneOf": [
+        {
+          "description": "Additional concrete directory that should be writable.",
+          "type": "object",
+          "required": [
+            "path",
+            "type"
+          ],
+          "properties": {
+            "path": {
+              "$ref": "#/definitions/AbsolutePathBuf"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "additionalWritableRoot"
+              ],
+              "title": "AdditionalWritableRootPermissionProfileModificationParamsType"
+            }
+          },
+          "title": "AdditionalWritableRootPermissionProfileModificationParams"
+        }
+      ]
+    },
+    "PermissionProfileSelectionParams": {
+      "oneOf": [
+        {
+          "description": "Select a named built-in or user-defined profile and optionally apply bounded modifications that Codex knows how to validate.",
+          "type": "object",
+          "required": [
+            "id",
+            "type"
+          ],
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "modifications": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "$ref": "#/definitions/PermissionProfileModificationParams"
+              }
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "profile"
+              ],
+              "title": "ProfilePermissionProfileSelectionParamsType"
+            }
+          },
+          "title": "ProfilePermissionProfileSelectionParams"
         }
       ]
     },
@@ -513,12 +544,6 @@
               "items": {
                 "$ref": "#/definitions/ContentItem"
               }
-            },
-            "end_turn": {
-              "type": [
-                "boolean",
-                "null"
-              ]
             },
             "id": {
               "writeOnly": true,
@@ -916,26 +941,6 @@
         {
           "type": "object",
           "required": [
-            "ghost_commit",
-            "type"
-          ],
-          "properties": {
-            "ghost_commit": {
-              "$ref": "#/definitions/GhostCommit"
-            },
-            "type": {
-              "type": "string",
-              "enum": [
-                "ghost_snapshot"
-              ],
-              "title": "GhostSnapshotResponseItemType"
-            }
-          },
-          "title": "GhostSnapshotResponseItem"
-        },
-        {
-          "type": "object",
-          "required": [
             "encrypted_content",
             "type"
           ],
@@ -952,6 +957,28 @@
             }
           },
           "title": "CompactionResponseItem"
+        },
+        {
+          "type": "object",
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "encrypted_content": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "context_compaction"
+              ],
+              "title": "ContextCompactionResponseItemType"
+            }
+          },
+          "title": "ContextCompactionResponseItem"
         },
         {
           "type": "object",
@@ -1078,13 +1105,6 @@
         "read-only",
         "workspace-write",
         "danger-full-access"
-      ]
-    },
-    "ServiceTier": {
-      "type": "string",
-      "enum": [
-        "fast",
-        "flex"
       ]
     }
   }

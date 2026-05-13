@@ -18,10 +18,14 @@
       ]
     },
     "cwd": {
-      "description": "Optional cwd filter; when set, only threads whose session cwd exactly matches this path are returned.",
-      "type": [
-        "string",
-        "null"
+      "description": "Optional cwd filter or filters; when set, only threads whose session cwd exactly matches one of these paths are returned.",
+      "anyOf": [
+        {
+          "$ref": "#/definitions/ThreadListCwdFilter"
+        },
+        {
+          "type": "null"
+        }
       ]
     },
     "limit": {
@@ -50,6 +54,17 @@
         "null"
       ]
     },
+    "sortDirection": {
+      "description": "Optional sort direction; defaults to descending (newest first).",
+      "anyOf": [
+        {
+          "$ref": "#/definitions/SortDirection"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "sortKey": {
       "description": "Optional sort key; defaults to created_at.",
       "anyOf": [
@@ -70,9 +85,33 @@
       "items": {
         "$ref": "#/definitions/ThreadSourceKind"
       }
+    },
+    "useStateDbOnly": {
+      "description": "If true, return from the state DB without scanning JSONL rollouts to repair thread metadata. Omitted or false preserves scan-and-repair behavior.",
+      "type": "boolean"
     }
   },
   "definitions": {
+    "SortDirection": {
+      "type": "string",
+      "enum": [
+        "asc",
+        "desc"
+      ]
+    },
+    "ThreadListCwdFilter": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      ]
+    },
     "ThreadSortKey": {
       "type": "string",
       "enum": [

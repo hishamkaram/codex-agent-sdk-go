@@ -28,6 +28,9 @@
         "type"
       ],
       "properties": {
+        "codexStreamlinedLogin": {
+          "type": "boolean"
+        },
         "type": {
           "type": "string",
           "enum": [

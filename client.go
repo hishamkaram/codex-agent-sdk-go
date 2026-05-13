@@ -127,16 +127,7 @@ func (c *Client) Connect(ctx context.Context) error {
 	c.demux = c.tr.Demux()
 
 	// Send initialize.
-	params := map[string]any{
-		"clientInfo": map[string]any{
-			"name":    c.opts.ClientName,
-			"version": c.opts.ClientVersion,
-			"title":   c.opts.ClientTitle,
-		},
-		"capabilities": map[string]any{
-			"experimentalApi": c.opts.ExperimentalAPI,
-		},
-	}
+	params := buildInitializeParams(c.opts)
 	resp, err := c.demux.Send(ctx, "initialize", params)
 	if err != nil {
 		_ = c.tr.Close(context.Background())
@@ -166,6 +157,23 @@ func (c *Client) Connect(ctx context.Context) error {
 		zap.String("user_agent", c.initResult.UserAgent),
 		zap.String("codex_home", c.initResult.CodexHome))
 	return nil
+}
+
+func buildInitializeParams(opts *types.CodexOptions) map[string]any {
+	capabilities := map[string]any{
+		"experimentalApi": opts.ExperimentalAPI,
+	}
+	if len(opts.OptOutNotificationMethods) > 0 {
+		capabilities["optOutNotificationMethods"] = append([]string(nil), opts.OptOutNotificationMethods...)
+	}
+	return map[string]any{
+		"clientInfo": map[string]any{
+			"name":    opts.ClientName,
+			"version": opts.ClientVersion,
+			"title":   opts.ClientTitle,
+		},
+		"capabilities": capabilities,
+	}
 }
 
 // InitializeResult returns the response payload received during Connect.
@@ -665,8 +673,8 @@ func (c *Client) unregisterThread(threadID string) {
 }
 
 // extractThreadIDFromEvent returns the ThreadID field of every event type
-// that carries one. Returns "" for events that don't (e.g., raw
-// ErrorEvent, UnknownEvent).
+// that carries one. Returns "" for events that don't, including global
+// warnings and UnknownEvent values whose payload did not expose a thread ID.
 func extractThreadIDFromEvent(ev types.ThreadEvent) string {
 	switch e := ev.(type) {
 	case *types.ThreadStarted:
@@ -705,11 +713,26 @@ func extractThreadIDFromEvent(ev types.ThreadEvent) string {
 		return e.ThreadID
 	case *types.TurnPlanUpdated:
 		return e.ThreadID
+	case *types.FileChangePatchUpdated:
+		return e.ThreadID
+	case *types.ThreadGoalUpdated:
+		return e.ThreadID
+	case *types.ThreadGoalCleared:
+		return e.ThreadID
 	case *types.ItemGuardianApprovalReviewStarted:
 		return e.ThreadID
 	case *types.ItemGuardianApprovalReviewCompleted:
 		return e.ThreadID
 	case *types.ModelRerouted:
+		return e.ThreadID
+	case *types.ModelVerification:
+		return e.ThreadID
+	case *types.Warning:
+		if e.ThreadID != nil {
+			return *e.ThreadID
+		}
+		return ""
+	case *types.GuardianWarning:
 		return e.ThreadID
 	case *types.ServerRequestResolved:
 		return e.ThreadID
@@ -728,6 +751,8 @@ func extractThreadIDFromEvent(ev types.ThreadEvent) string {
 	case *types.ThreadRealtimeTranscriptDelta:
 		return e.ThreadID
 	case *types.ThreadRealtimeTranscriptDone:
+		return e.ThreadID
+	case *types.UnknownEvent:
 		return e.ThreadID
 	}
 	return ""

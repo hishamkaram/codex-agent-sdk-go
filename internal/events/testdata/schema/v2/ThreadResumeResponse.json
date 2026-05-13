@@ -12,6 +12,12 @@
     "thread"
   ],
   "properties": {
+    "serviceTier": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "approvalPolicy": {
       "$ref": "#/definitions/AskForApproval"
     },
@@ -40,6 +46,9 @@
     "modelProvider": {
       "type": "string"
     },
+    "thread": {
+      "$ref": "#/definitions/Thread"
+    },
     "reasoningEffort": {
       "anyOf": [
         {
@@ -51,20 +60,12 @@
       ]
     },
     "sandbox": {
-      "$ref": "#/definitions/SandboxPolicy"
-    },
-    "serviceTier": {
-      "anyOf": [
+      "description": "Legacy sandbox policy retained for compatibility. Experimental clients should prefer `permissionProfile` when they need exact runtime permissions.",
+      "allOf": [
         {
-          "$ref": "#/definitions/ServiceTier"
-        },
-        {
-          "type": "null"
+          "$ref": "#/definitions/SandboxPolicy"
         }
       ]
-    },
-    "thread": {
-      "$ref": "#/definitions/Thread"
     }
   },
   "definitions": {
@@ -72,14 +73,68 @@
       "description": "A path that is guaranteed to be absolute and normalized (though it is not guaranteed to be canonicalized or exist on the filesystem).\n\nIMPORTANT: When deserializing an `AbsolutePathBuf`, a base path must be set using [AbsolutePathBufGuard::new]. If no base path is set, the deserialization will fail unless the path being deserialized is already absolute.",
       "type": "string"
     },
+    "ActivePermissionProfile": {
+      "type": "object",
+      "required": [
+        "id"
+      ],
+      "properties": {
+        "extends": {
+          "description": "Parent profile identifier once permissions profiles support inheritance. This is currently always `null`.",
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "description": "Identifier from `default_permissions` or the implicit built-in default, such as `:workspace` or a user-defined `[permissions.<id>]` profile.",
+          "type": "string"
+        },
+        "modifications": {
+          "description": "Bounded user-requested modifications applied on top of the named profile, if any.",
+          "default": [],
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ActivePermissionProfileModification"
+          }
+        }
+      }
+    },
+    "ActivePermissionProfileModification": {
+      "oneOf": [
+        {
+          "description": "Additional concrete directory that should be writable.",
+          "type": "object",
+          "required": [
+            "path",
+            "type"
+          ],
+          "properties": {
+            "path": {
+              "$ref": "#/definitions/AbsolutePathBuf"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "additionalWritableRoot"
+              ],
+              "title": "AdditionalWritableRootActivePermissionProfileModificationType"
+            }
+          },
+          "title": "AdditionalWritableRootActivePermissionProfileModification"
+        }
+      ]
+    },
     "AgentPath": {
       "type": "string"
     },
     "ApprovalsReviewer": {
-      "description": "Configures who approval requests are routed to for review. Examples include sandbox escapes, blocked network access, MCP approval prompts, and ARC escalations. Defaults to `user`. `guardian_subagent` uses a carefully prompted subagent to gather relevant context and apply a risk-based decision framework before approving or denying the request.",
+      "description": "Configures who approval requests are routed to for review. Examples include sandbox escapes, blocked network access, MCP approval prompts, and ARC escalations. Defaults to `user`. `auto_review` uses a carefully prompted subagent to gather relevant context and apply a risk-based decision framework before approving or denying the request. The legacy value `guardian_subagent` is accepted for compatibility.",
       "type": "string",
       "enum": [
         "user",
+        "auto_review",
         "guardian_subagent"
       ]
     },
@@ -161,6 +216,7 @@
             "contextWindowExceeded",
             "usageLimitExceeded",
             "serverOverloaded",
+            "cyberPolicy",
             "internalServerError",
             "unauthorized",
             "badRequest",
@@ -515,6 +571,202 @@
         "failed"
       ]
     },
+    "FileSystemAccessMode": {
+      "type": "string",
+      "enum": [
+        "read",
+        "write",
+        "none"
+      ]
+    },
+    "FileSystemPath": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "path",
+            "type"
+          ],
+          "properties": {
+            "path": {
+              "$ref": "#/definitions/AbsolutePathBuf"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "path"
+              ],
+              "title": "PathFileSystemPathType"
+            }
+          },
+          "title": "PathFileSystemPath"
+        },
+        {
+          "type": "object",
+          "required": [
+            "pattern",
+            "type"
+          ],
+          "properties": {
+            "pattern": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "glob_pattern"
+              ],
+              "title": "GlobPatternFileSystemPathType"
+            }
+          },
+          "title": "GlobPatternFileSystemPath"
+        },
+        {
+          "type": "object",
+          "required": [
+            "type",
+            "value"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "special"
+              ],
+              "title": "SpecialFileSystemPathType"
+            },
+            "value": {
+              "$ref": "#/definitions/FileSystemSpecialPath"
+            }
+          },
+          "title": "SpecialFileSystemPath"
+        }
+      ]
+    },
+    "FileSystemSandboxEntry": {
+      "type": "object",
+      "required": [
+        "access",
+        "path"
+      ],
+      "properties": {
+        "access": {
+          "$ref": "#/definitions/FileSystemAccessMode"
+        },
+        "path": {
+          "$ref": "#/definitions/FileSystemPath"
+        }
+      }
+    },
+    "FileSystemSpecialPath": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "root"
+              ]
+            }
+          },
+          "title": "RootFileSystemSpecialPath"
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "minimal"
+              ]
+            }
+          },
+          "title": "MinimalFileSystemSpecialPath"
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "project_roots"
+              ]
+            },
+            "subpath": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "title": "KindFileSystemSpecialPath"
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "tmpdir"
+              ]
+            }
+          },
+          "title": "TmpdirFileSystemSpecialPath"
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "slash_tmp"
+              ]
+            }
+          },
+          "title": "SlashTmpFileSystemSpecialPath"
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "path"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "unknown"
+              ]
+            },
+            "path": {
+              "type": "string"
+            },
+            "subpath": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        }
+      ]
+    },
     "FileUpdateChange": {
       "type": "object",
       "required": [
@@ -753,34 +1005,105 @@
         }
       ]
     },
-    "ReadOnlyAccess": {
+    "PermissionProfile": {
       "oneOf": [
         {
+          "description": "Codex owns sandbox construction for this profile.",
+          "type": "object",
+          "required": [
+            "fileSystem",
+            "network",
+            "type"
+          ],
+          "properties": {
+            "fileSystem": {
+              "$ref": "#/definitions/PermissionProfileFileSystemPermissions"
+            },
+            "network": {
+              "$ref": "#/definitions/PermissionProfileNetworkPermissions"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "managed"
+              ],
+              "title": "ManagedPermissionProfileType"
+            }
+          },
+          "title": "ManagedPermissionProfile"
+        },
+        {
+          "description": "Do not apply an outer sandbox.",
           "type": "object",
           "required": [
             "type"
           ],
           "properties": {
-            "includePlatformDefaults": {
-              "default": true,
-              "type": "boolean"
+            "type": {
+              "type": "string",
+              "enum": [
+                "disabled"
+              ],
+              "title": "DisabledPermissionProfileType"
+            }
+          },
+          "title": "DisabledPermissionProfile"
+        },
+        {
+          "description": "Filesystem isolation is enforced by an external caller.",
+          "type": "object",
+          "required": [
+            "network",
+            "type"
+          ],
+          "properties": {
+            "network": {
+              "$ref": "#/definitions/PermissionProfileNetworkPermissions"
             },
-            "readableRoots": {
-              "default": [],
+            "type": {
+              "type": "string",
+              "enum": [
+                "external"
+              ],
+              "title": "ExternalPermissionProfileType"
+            }
+          },
+          "title": "ExternalPermissionProfile"
+        }
+      ]
+    },
+    "PermissionProfileFileSystemPermissions": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "entries",
+            "type"
+          ],
+          "properties": {
+            "entries": {
               "type": "array",
               "items": {
-                "$ref": "#/definitions/AbsolutePathBuf"
+                "$ref": "#/definitions/FileSystemSandboxEntry"
               }
+            },
+            "globScanMaxDepth": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint",
+              "minimum": 1.0
             },
             "type": {
               "type": "string",
               "enum": [
                 "restricted"
               ],
-              "title": "RestrictedReadOnlyAccessType"
+              "title": "RestrictedPermissionProfileFileSystemPermissionsType"
             }
           },
-          "title": "RestrictedReadOnlyAccess"
+          "title": "RestrictedPermissionProfileFileSystemPermissions"
         },
         {
           "type": "object",
@@ -791,14 +1114,25 @@
             "type": {
               "type": "string",
               "enum": [
-                "fullAccess"
+                "unrestricted"
               ],
-              "title": "FullAccessReadOnlyAccessType"
+              "title": "UnrestrictedPermissionProfileFileSystemPermissionsType"
             }
           },
-          "title": "FullAccessReadOnlyAccess"
+          "title": "UnrestrictedPermissionProfileFileSystemPermissions"
         }
       ]
+    },
+    "PermissionProfileNetworkPermissions": {
+      "type": "object",
+      "required": [
+        "enabled"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        }
+      }
     },
     "ReasoningEffort": {
       "description": "See https://platform.openai.com/docs/guides/reasoning?api-mode=responses#get-started-with-reasoning",
@@ -836,16 +1170,6 @@
             "type"
           ],
           "properties": {
-            "access": {
-              "default": {
-                "type": "fullAccess"
-              },
-              "allOf": [
-                {
-                  "$ref": "#/definitions/ReadOnlyAccess"
-                }
-              ]
-            },
             "networkAccess": {
               "default": false,
               "type": "boolean"
@@ -902,16 +1226,6 @@
               "default": false,
               "type": "boolean"
             },
-            "readOnlyAccess": {
-              "default": {
-                "type": "fullAccess"
-              },
-              "allOf": [
-                {
-                  "$ref": "#/definitions/ReadOnlyAccess"
-                }
-              ]
-            },
             "type": {
               "type": "string",
               "enum": [
@@ -929,13 +1243,6 @@
           },
           "title": "WorkspaceWriteSandboxPolicy"
         }
-      ]
-    },
-    "ServiceTier": {
-      "type": "string",
-      "enum": [
-        "fast",
-        "flex"
       ]
     },
     "SessionSource": {
@@ -1087,6 +1394,7 @@
         "id",
         "modelProvider",
         "preview",
+        "sessionId",
         "source",
         "status",
         "turns",
@@ -1171,6 +1479,10 @@
           "description": "Usually the first user message in the thread, if available.",
           "type": "string"
         },
+        "sessionId": {
+          "description": "Session id shared by threads that belong to the same session tree.",
+          "type": "string"
+        },
         "source": {
           "description": "Origin of the thread (CLI, VSCode, codex exec, codex app-server, etc.).",
           "allOf": [
@@ -1184,6 +1496,17 @@
           "allOf": [
             {
               "$ref": "#/definitions/ThreadStatus"
+            }
+          ]
+        },
+        "threadSource": {
+          "description": "Optional analytics source classification for this thread.",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ThreadSource"
+            },
+            {
+              "type": "null"
             }
           ]
         },
@@ -1520,6 +1843,12 @@
             "id": {
               "type": "string"
             },
+            "mcpAppResourceUri": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "result": {
               "anyOf": [
                 {
@@ -1579,6 +1908,12 @@
             },
             "id": {
               "type": "string"
+            },
+            "namespace": {
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "status": {
               "$ref": "#/definitions/DynamicToolCallStatus"
@@ -1859,6 +2194,14 @@
         }
       ]
     },
+    "ThreadSource": {
+      "type": "string",
+      "enum": [
+        "user",
+        "subagent",
+        "memory_consolidation"
+      ]
+    },
     "ThreadStatus": {
       "oneOf": [
         {
@@ -1973,11 +2316,20 @@
           "type": "string"
         },
         "items": {
-          "description": "Only populated on a `thread/resume` or `thread/fork` response. For all other responses and notifications returning a Turn, the items field will be an empty list.",
+          "description": "Thread items currently included in this turn payload.",
           "type": "array",
           "items": {
             "$ref": "#/definitions/ThreadItem"
           }
+        },
+        "itemsView": {
+          "description": "Describes how much of `items` has been loaded for this turn.",
+          "default": "full",
+          "allOf": [
+            {
+              "$ref": "#/definitions/TurnItemsView"
+            }
+          ]
         },
         "startedAt": {
           "description": "Unix timestamp (in seconds) when the turn started.",
@@ -2019,6 +2371,31 @@
           "type": "string"
         }
       }
+    },
+    "TurnItemsView": {
+      "oneOf": [
+        {
+          "description": "`items` was not loaded for this turn. The field is intentionally empty.",
+          "type": "string",
+          "enum": [
+            "notLoaded"
+          ]
+        },
+        {
+          "description": "`items` contains only a display summary for this turn.",
+          "type": "string",
+          "enum": [
+            "summary"
+          ]
+        },
+        {
+          "description": "`items` contains every ThreadItem available from persisted app-server history for this turn.",
+          "type": "string",
+          "enum": [
+            "full"
+          ]
+        }
+      ]
     },
     "TurnStatus": {
       "type": "string",

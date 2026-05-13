@@ -36,7 +36,8 @@ func TestCodexOptions_ChainableWithMethods(t *testing.T) {
 		WithCwd("/work").
 		WithSandbox(SandboxWorkspaceWrite).
 		WithApprovalPolicy(ApprovalUntrusted).
-		WithApprovalCallback(approvals)
+		WithApprovalCallback(approvals).
+		WithOptOutNotificationMethods("process/outputDelta", "warning")
 
 	if o.CLIPath != "/bin/codex" {
 		t.Fatal(o.CLIPath)
@@ -61,6 +62,9 @@ func TestCodexOptions_ChainableWithMethods(t *testing.T) {
 	}
 	if o.ApprovalCallback == nil {
 		t.Fatal("approval callback not set")
+	}
+	if got := o.OptOutNotificationMethods; len(got) != 2 || got[0] != "process/outputDelta" || got[1] != "warning" {
+		t.Fatalf("opt-out methods = %#v", got)
 	}
 }
 

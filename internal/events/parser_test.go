@@ -249,7 +249,7 @@ func TestParseEvent_UnknownMethodFallback(t *testing.T) {
 	t.Parallel()
 	n := jsonrpc.Notification{
 		Method: "some/future/event",
-		Params: json.RawMessage(`{"foo":"bar"}`),
+		Params: json.RawMessage(`{"threadId":"T-future","turnId":"U-future","itemId":"I-future","foo":"bar"}`),
 	}
 	ev, err := ParseEvent(n)
 	if err != nil {
@@ -262,8 +262,104 @@ func TestParseEvent_UnknownMethodFallback(t *testing.T) {
 	if u.Method != "some/future/event" || u.EventMethod() != "some/future/event" {
 		t.Fatalf("Method = %q", u.Method)
 	}
-	if string(u.Params) != `{"foo":"bar"}` {
+	if string(u.Params) != `{"threadId":"T-future","turnId":"U-future","itemId":"I-future","foo":"bar"}` {
 		t.Fatalf("Params not preserved: %q", u.Params)
+	}
+	if u.ThreadID != "T-future" || u.TurnID != "U-future" || u.ItemID != "I-future" {
+		t.Fatalf("ids not extracted: %+v", u)
+	}
+}
+
+func TestParseEvent_Codex0130Notifications(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name   string
+		method string
+		params string
+		assert func(t *testing.T, ev types.ThreadEvent)
+	}{
+		{
+			name:   "process output delta",
+			method: "process/outputDelta",
+			params: `{"processHandle":"p1","stream":"stdout","deltaBase64":"SGk=","capReached":false}`,
+			assert: func(t *testing.T, ev types.ThreadEvent) {
+				got := ev.(*types.ProcessOutputDelta)
+				if got.ProcessHandle != "p1" || got.Stream != "stdout" || got.DeltaBase64 != "SGk=" {
+					t.Fatalf("%+v", got)
+				}
+			},
+		},
+		{
+			name:   "process exited",
+			method: "process/exited",
+			params: `{"processHandle":"p1","exitCode":7,"stdout":"","stdoutCapReached":false,"stderr":"bad","stderrCapReached":true}`,
+			assert: func(t *testing.T, ev types.ThreadEvent) {
+				got := ev.(*types.ProcessExited)
+				if got.ExitCode != 7 || got.Stderr != "bad" || !got.StderrCapReached {
+					t.Fatalf("%+v", got)
+				}
+			},
+		},
+		{
+			name:   "file patch updated",
+			method: "item/fileChange/patchUpdated",
+			params: `{"threadId":"T","turnId":"U","itemId":"I","changes":[{"path":"a.txt","diff":"+x","kind":{"type":"add"}}]}`,
+			assert: func(t *testing.T, ev types.ThreadEvent) {
+				got := ev.(*types.FileChangePatchUpdated)
+				if got.ThreadID != "T" || got.ItemID != "I" || len(got.Changes) == 0 {
+					t.Fatalf("%+v", got)
+				}
+			},
+		},
+		{
+			name:   "thread goal updated",
+			method: "thread/goal/updated",
+			params: `{"threadId":"T","turnId":"U","goal":{"threadId":"T","objective":"ship","status":"active","tokensUsed":1,"timeUsedSeconds":2,"createdAt":3,"updatedAt":4}}`,
+			assert: func(t *testing.T, ev types.ThreadEvent) {
+				got := ev.(*types.ThreadGoalUpdated)
+				if got.ThreadID != "T" || got.TurnID == nil || len(got.Goal) == 0 {
+					t.Fatalf("%+v", got)
+				}
+			},
+		},
+		{
+			name:   "guardian warning",
+			method: "guardianWarning",
+			params: `{"threadId":"T","message":"careful"}`,
+			assert: func(t *testing.T, ev types.ThreadEvent) {
+				got := ev.(*types.GuardianWarning)
+				if got.ThreadID != "T" || got.Message != "careful" {
+					t.Fatalf("%+v", got)
+				}
+			},
+		},
+		{
+			name:   "external agent config import completed",
+			method: "externalAgentConfig/import/completed",
+			params: `{}`,
+			assert: func(t *testing.T, ev types.ThreadEvent) {
+				if _, ok := ev.(*types.ExternalAgentConfigImportCompleted); !ok {
+					t.Fatalf("got %T", ev)
+				}
+			},
+		},
+	}
+	for _, c := range cases {
+		c := c
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			ev, err := ParseEvent(jsonrpc.Notification{
+				Method: c.method,
+				Params: json.RawMessage(c.params),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, ok := ev.(*types.UnknownEvent); ok {
+				t.Fatalf("%s parsed as UnknownEvent", c.method)
+			}
+			c.assert(t, ev)
+		})
 	}
 }
 

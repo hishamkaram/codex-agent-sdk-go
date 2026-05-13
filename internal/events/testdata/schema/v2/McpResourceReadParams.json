@@ -4,7 +4,6 @@
   "type": "object",
   "required": [
     "server",
-    "threadId",
     "uri"
   ],
   "properties": {
@@ -12,7 +11,10 @@
       "type": "string"
     },
     "threadId": {
-      "type": "string"
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "uri": {
       "type": "string"

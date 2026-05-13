@@ -49,6 +49,17 @@
         "null"
       ]
     },
+    "threadSource": {
+      "description": "Optional client-supplied analytics source classification for this thread.",
+      "anyOf": [
+        {
+          "$ref": "#/definitions/ThreadSource"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "sandbox": {
       "anyOf": [
         {
@@ -65,31 +76,20 @@
         "null"
       ]
     },
-    "serviceTier": {
+    "personality": {
       "anyOf": [
         {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/ServiceTier"
-            },
-            {
-              "type": "null"
-            }
-          ]
+          "$ref": "#/definitions/Personality"
         },
         {
           "type": "null"
         }
       ]
     },
-    "sessionStartSource": {
-      "anyOf": [
-        {
-          "$ref": "#/definitions/ThreadStartSource"
-        },
-        {
-          "type": "null"
-        }
+    "serviceTier": {
+      "type": [
+        "string",
+        "null"
       ]
     },
     "model": {
@@ -110,10 +110,10 @@
         "null"
       ]
     },
-    "personality": {
+    "sessionStartSource": {
       "anyOf": [
         {
-          "$ref": "#/definitions/Personality"
+          "$ref": "#/definitions/ThreadStartSource"
         },
         {
           "type": "null"
@@ -122,11 +122,16 @@
     }
   },
   "definitions": {
+    "AbsolutePathBuf": {
+      "description": "A path that is guaranteed to be absolute and normalized (though it is not guaranteed to be canonicalized or exist on the filesystem).\n\nIMPORTANT: When deserializing an `AbsolutePathBuf`, a base path must be set using [AbsolutePathBufGuard::new]. If no base path is set, the deserialization will fail unless the path being deserialized is already absolute.",
+      "type": "string"
+    },
     "ApprovalsReviewer": {
-      "description": "Configures who approval requests are routed to for review. Examples include sandbox escapes, blocked network access, MCP approval prompts, and ARC escalations. Defaults to `user`. `guardian_subagent` uses a carefully prompted subagent to gather relevant context and apply a risk-based decision framework before approving or denying the request.",
+      "description": "Configures who approval requests are routed to for review. Examples include sandbox escapes, blocked network access, MCP approval prompts, and ARC escalations. Defaults to `user`. `auto_review` uses a carefully prompted subagent to gather relevant context and apply a risk-based decision framework before approving or denying the request. The legacy value `guardian_subagent` is accepted for compatibility.",
       "type": "string",
       "enum": [
         "user",
+        "auto_review",
         "guardian_subagent"
       ]
     },
@@ -197,8 +202,73 @@
         "inputSchema": true,
         "name": {
           "type": "string"
+        },
+        "namespace": {
+          "type": [
+            "string",
+            "null"
+          ]
         }
       }
+    },
+    "PermissionProfileModificationParams": {
+      "oneOf": [
+        {
+          "description": "Additional concrete directory that should be writable.",
+          "type": "object",
+          "required": [
+            "path",
+            "type"
+          ],
+          "properties": {
+            "path": {
+              "$ref": "#/definitions/AbsolutePathBuf"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "additionalWritableRoot"
+              ],
+              "title": "AdditionalWritableRootPermissionProfileModificationParamsType"
+            }
+          },
+          "title": "AdditionalWritableRootPermissionProfileModificationParams"
+        }
+      ]
+    },
+    "PermissionProfileSelectionParams": {
+      "oneOf": [
+        {
+          "description": "Select a named built-in or user-defined profile and optionally apply bounded modifications that Codex knows how to validate.",
+          "type": "object",
+          "required": [
+            "id",
+            "type"
+          ],
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "modifications": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "$ref": "#/definitions/PermissionProfileModificationParams"
+              }
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "profile"
+              ],
+              "title": "ProfilePermissionProfileSelectionParamsType"
+            }
+          },
+          "title": "ProfilePermissionProfileSelectionParams"
+        }
+      ]
     },
     "Personality": {
       "type": "string",
@@ -216,11 +286,12 @@
         "danger-full-access"
       ]
     },
-    "ServiceTier": {
+    "ThreadSource": {
       "type": "string",
       "enum": [
-        "fast",
-        "flex"
+        "user",
+        "subagent",
+        "memory_consolidation"
       ]
     },
     "ThreadStartSource": {
@@ -229,6 +300,21 @@
         "startup",
         "clear"
       ]
+    },
+    "TurnEnvironmentParams": {
+      "type": "object",
+      "required": [
+        "cwd",
+        "environmentId"
+      ],
+      "properties": {
+        "cwd": {
+          "$ref": "#/definitions/AbsolutePathBuf"
+        },
+        "environmentId": {
+          "type": "string"
+        }
+      }
     }
   }
 }

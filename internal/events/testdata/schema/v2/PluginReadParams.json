@@ -3,15 +3,27 @@
   "title": "PluginReadParams",
   "type": "object",
   "required": [
-    "marketplacePath",
     "pluginName"
   ],
   "properties": {
     "marketplacePath": {
-      "$ref": "#/definitions/AbsolutePathBuf"
+      "anyOf": [
+        {
+          "$ref": "#/definitions/AbsolutePathBuf"
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "pluginName": {
       "type": "string"
+    },
+    "remoteMarketplaceName": {
+      "type": [
+        "string",
+        "null"
+      ]
     }
   },
   "definitions": {

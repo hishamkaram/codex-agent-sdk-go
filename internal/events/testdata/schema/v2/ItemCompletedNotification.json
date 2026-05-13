@@ -3,11 +3,17 @@
   "title": "ItemCompletedNotification",
   "type": "object",
   "required": [
+    "completedAtMs",
     "item",
     "threadId",
     "turnId"
   ],
   "properties": {
+    "completedAtMs": {
+      "description": "Unix timestamp (in milliseconds) when this item lifecycle completed.",
+      "type": "integer",
+      "format": "int64"
+    },
     "item": {
       "$ref": "#/definitions/ThreadItem"
     },
@@ -814,6 +820,12 @@
             "id": {
               "type": "string"
             },
+            "mcpAppResourceUri": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "result": {
               "anyOf": [
                 {
@@ -873,6 +885,12 @@
             },
             "id": {
               "type": "string"
+            },
+            "namespace": {
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "status": {
               "$ref": "#/definitions/DynamicToolCallStatus"

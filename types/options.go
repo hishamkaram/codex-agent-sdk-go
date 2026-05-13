@@ -91,12 +91,17 @@ type CodexOptions struct {
 	// behavior.
 	//
 	// Methods that require this flag (verified live against codex
-	// 0.121.0):
+	// 0.130.0):
 	//   - thread/backgroundTerminals/clean
 	//
 	// Calling such methods without this option set returns a
 	// *types.FeatureNotEnabledError.
 	ExperimentalAPI bool
+
+	// OptOutNotificationMethods asks codex app-server not to emit exact
+	// notification methods listed here. This is a transport-volume knob only;
+	// callers must not rely on it for correctness.
+	OptOutNotificationMethods []string
 }
 
 // NewCodexOptions returns a CodexOptions populated with sensible defaults:
@@ -248,6 +253,13 @@ func (o *CodexOptions) WithHookTimeout(d time.Duration) *CodexOptions {
 // methods. See CodexOptions.ExperimentalAPI for the current list.
 func (o *CodexOptions) WithExperimentalAPI(enabled bool) *CodexOptions {
 	o.ExperimentalAPI = enabled
+	return o
+}
+
+// WithOptOutNotificationMethods sets exact app-server notification methods to
+// suppress during initialize capability negotiation.
+func (o *CodexOptions) WithOptOutNotificationMethods(methods ...string) *CodexOptions {
+	o.OptOutNotificationMethods = append([]string(nil), methods...)
 	return o
 }
 

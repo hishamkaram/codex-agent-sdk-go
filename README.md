@@ -42,6 +42,7 @@ Codex's app-server exposes a JSON-RPC 2.0 protocol over stdio — bidirectional,
 
 - Go 1.25+
 - Codex CLI installed: `npm install -g @openai/codex` (or your distro's equivalent)
+  - Recommended/tested CLI: `0.130.0` (verified 2026-05-13); older versions run with a soft warning.
 - Auth (one of):
   - `OPENAI_API_KEY` environment variable (pay-per-token)
   - `~/.codex/auth.json` (ChatGPT Plus/Pro subscription; run `codex login` once outside the daemon)

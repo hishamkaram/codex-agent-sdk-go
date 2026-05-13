@@ -47,6 +47,19 @@
         }
       }
     },
+    "HookEventName": {
+      "type": "string",
+      "enum": [
+        "preToolUse",
+        "permissionRequest",
+        "postToolUse",
+        "preCompact",
+        "postCompact",
+        "sessionStart",
+        "userPromptSubmit",
+        "stop"
+      ]
+    },
     "PluginAuthPolicy": {
       "type": "string",
       "enum": [
@@ -54,12 +67,29 @@
         "ON_USE"
       ]
     },
+    "PluginAvailability": {
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "DISABLED_BY_ADMIN"
+          ]
+        },
+        {
+          "description": "Plugin-service currently sends `\"ENABLED\"` for available remote plugins. Codex app-server exposes `\"AVAILABLE\"` in its API; the alias keeps decoding compatible with that upstream response.",
+          "type": "string",
+          "enum": [
+            "AVAILABLE"
+          ]
+        }
+      ]
+    },
     "PluginDetail": {
       "type": "object",
       "required": [
         "apps",
+        "hooks",
         "marketplaceName",
-        "marketplacePath",
         "mcpServers",
         "skills",
         "summary"
@@ -77,11 +107,24 @@
             "null"
           ]
         },
+        "hooks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/PluginHookSummary"
+          }
+        },
         "marketplaceName": {
           "type": "string"
         },
         "marketplacePath": {
-          "$ref": "#/definitions/AbsolutePathBuf"
+          "anyOf": [
+            {
+              "$ref": "#/definitions/AbsolutePathBuf"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "mcpServers": {
           "type": "array",
@@ -100,6 +143,21 @@
         }
       }
     },
+    "PluginHookSummary": {
+      "type": "object",
+      "required": [
+        "eventName",
+        "key"
+      ],
+      "properties": {
+        "eventName": {
+          "$ref": "#/definitions/HookEventName"
+        },
+        "key": {
+          "type": "string"
+        }
+      }
+    },
     "PluginInstallPolicy": {
       "type": "string",
       "enum": [
@@ -112,6 +170,7 @@
       "type": "object",
       "required": [
         "capabilities",
+        "screenshotUrls",
         "screenshots"
       ],
       "properties": {
@@ -134,6 +193,7 @@
           ]
         },
         "composerIcon": {
+          "description": "Local composer icon path, resolved from the installed plugin package.",
           "anyOf": [
             {
               "$ref": "#/definitions/AbsolutePathBuf"
@@ -141,6 +201,13 @@
             {
               "type": "null"
             }
+          ]
+        },
+        "composerIconUrl": {
+          "description": "Remote composer icon URL from the plugin catalog.",
+          "type": [
+            "string",
+            "null"
           ]
         },
         "defaultPrompt": {
@@ -166,6 +233,7 @@
           ]
         },
         "logo": {
+          "description": "Local logo path, resolved from the installed plugin package.",
           "anyOf": [
             {
               "$ref": "#/definitions/AbsolutePathBuf"
@@ -173,6 +241,13 @@
             {
               "type": "null"
             }
+          ]
+        },
+        "logoUrl": {
+          "description": "Remote logo URL from the plugin catalog.",
+          "type": [
+            "string",
+            "null"
           ]
         },
         "longDescription": {
@@ -187,7 +262,15 @@
             "null"
           ]
         },
+        "screenshotUrls": {
+          "description": "Remote screenshot URLs from the plugin catalog.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
         "screenshots": {
+          "description": "Local screenshot paths, resolved from the installed plugin package.",
           "type": "array",
           "items": {
             "$ref": "#/definitions/AbsolutePathBuf"
@@ -213,6 +296,71 @@
         }
       }
     },
+    "PluginShareContext": {
+      "type": "object",
+      "required": [
+        "remotePluginId"
+      ],
+      "properties": {
+        "creatorAccountUserId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "creatorName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "remotePluginId": {
+          "type": "string"
+        },
+        "shareTargets": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/definitions/PluginSharePrincipal"
+          }
+        },
+        "shareUrl": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "PluginSharePrincipal": {
+      "type": "object",
+      "required": [
+        "name",
+        "principalId",
+        "principalType"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "principalId": {
+          "type": "string"
+        },
+        "principalType": {
+          "$ref": "#/definitions/PluginSharePrincipalType"
+        }
+      }
+    },
+    "PluginSharePrincipalType": {
+      "type": "string",
+      "enum": [
+        "user",
+        "group",
+        "workspace"
+      ]
+    },
     "PluginSource": {
       "oneOf": [
         {
@@ -234,6 +382,61 @@
             }
           },
           "title": "LocalPluginSource"
+        },
+        {
+          "type": "object",
+          "required": [
+            "type",
+            "url"
+          ],
+          "properties": {
+            "path": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "refName": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "sha": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "git"
+              ],
+              "title": "GitPluginSourceType"
+            },
+            "url": {
+              "type": "string"
+            }
+          },
+          "title": "GitPluginSource"
+        },
+        {
+          "description": "The plugin is available in the remote catalog. Download metadata is kept server-side and is not exposed through the app-server API.",
+          "type": "object",
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "remote"
+              ],
+              "title": "RemotePluginSourceType"
+            }
+          },
+          "title": "RemotePluginSource"
         }
       ]
     },
@@ -251,6 +454,15 @@
       "properties": {
         "authPolicy": {
           "$ref": "#/definitions/PluginAuthPolicy"
+        },
+        "availability": {
+          "description": "Availability state for installing and using the plugin.",
+          "default": "AVAILABLE",
+          "allOf": [
+            {
+              "$ref": "#/definitions/PluginAvailability"
+            }
+          ]
         },
         "enabled": {
           "type": "boolean"
@@ -274,8 +486,26 @@
             }
           ]
         },
+        "keywords": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
         "name": {
           "type": "string"
+        },
+        "shareContext": {
+          "description": "Remote sharing context associated with this plugin when available.",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/PluginShareContext"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "source": {
           "$ref": "#/definitions/PluginSource"
@@ -336,8 +566,7 @@
       "required": [
         "description",
         "enabled",
-        "name",
-        "path"
+        "name"
       ],
       "properties": {
         "description": {
@@ -360,7 +589,14 @@
           "type": "string"
         },
         "path": {
-          "$ref": "#/definitions/AbsolutePathBuf"
+          "anyOf": [
+            {
+              "$ref": "#/definitions/AbsolutePathBuf"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "shortDescription": {
           "type": [
