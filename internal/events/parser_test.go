@@ -182,6 +182,15 @@ func TestParseEvent_TokenUsageUpdated_RealShape(t *testing.T) {
 		tu.Usage.ReasoningOutputTokens != 10 {
 		t.Fatalf("%+v", tu.Usage)
 	}
+	if tu.TotalUsage.TotalTokens != 12632 || tu.TotalUsage.InputTokens != 12615 ||
+		tu.TotalUsage.CachedInputTokens != 4480 || tu.TotalUsage.OutputTokens != 17 ||
+		tu.TotalUsage.ReasoningOutputTokens != 10 {
+		t.Fatalf("TotalUsage = %+v", tu.TotalUsage)
+	}
+	if tu.LastUsage.TotalTokens != 120 || tu.LastUsage.InputTokens != 100 ||
+		tu.LastUsage.OutputTokens != 20 {
+		t.Fatalf("LastUsage = %+v", tu.LastUsage)
+	}
 	if tu.ModelContextWindow != 258400 {
 		t.Fatalf("ModelContextWindow = %d, want 258400", tu.ModelContextWindow)
 	}
@@ -198,6 +207,12 @@ func TestParseEvent_TokenUsageUpdated_FlatFallback(t *testing.T) {
 	tu := ev.(*types.TokenUsageUpdated)
 	if tu.Usage.InputTokens != 5 || tu.Usage.OutputTokens != 2 {
 		t.Fatalf("%+v", tu.Usage)
+	}
+	if tu.LastUsage != (types.TokenUsage{}) {
+		t.Fatalf("LastUsage = %+v, want zero for flat fallback", tu.LastUsage)
+	}
+	if tu.TotalUsage != (types.TokenUsage{}) {
+		t.Fatalf("TotalUsage = %+v, want zero for flat fallback", tu.TotalUsage)
 	}
 	if tu.ModelContextWindow != 0 {
 		t.Fatalf("ModelContextWindow = %d, want 0", tu.ModelContextWindow)

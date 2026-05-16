@@ -99,12 +99,16 @@ type ItemCompleted struct {
 func (*ItemCompleted) isThreadEvent()      {}
 func (*ItemCompleted) EventMethod() string { return "item/completed" }
 
-// TokenUsageUpdated is emitted periodically with a running token-usage
-// snapshot. This is NOT the same as TurnCompleted.Usage (which is the
-// turn's final accounting) — this one reports the thread-cumulative total.
+// TokenUsageUpdated is emitted periodically with token-usage snapshots.
+//
+// The codex wire carries both "last" (the current turn slice) and "total"
+// (thread cumulative). Usage remains the cumulative total for compatibility
+// with existing callers. New callers that bill per turn should use LastUsage.
 type TokenUsageUpdated struct {
 	ThreadID           string     `json:"thread_id"`
 	Usage              TokenUsage `json:"usage"`
+	LastUsage          TokenUsage `json:"last_usage,omitempty"`
+	TotalUsage         TokenUsage `json:"total_usage,omitempty"`
 	ModelContextWindow int64      `json:"model_context_window,omitempty"`
 }
 

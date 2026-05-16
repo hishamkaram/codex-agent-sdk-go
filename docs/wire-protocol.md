@@ -206,8 +206,10 @@ shape:
                "modelContextWindow":258400}}
 ```
 
-The SDK surfaces `total` (running thread total) on
-`TokenUsageUpdated.Usage` and `modelContextWindow` on
+The SDK keeps `total` (running thread total) on `TokenUsageUpdated.Usage`
+for compatibility, exposes the per-turn `last` snapshot on
+`TokenUsageUpdated.LastUsage`, and preserves explicit cumulative `total` on
+`TokenUsageUpdated.TotalUsage`. `modelContextWindow` is surfaced on
 `TokenUsageUpdated.ModelContextWindow`. `Thread.Run` tracks the latest
 snapshot and assigns it to `Turn.Usage` when the turn terminates.
 

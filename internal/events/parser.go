@@ -456,8 +456,9 @@ func parseTokenUsageUpdated(raw json.RawMessage) (types.ThreadEvent, error) {
 	//   {"threadId","turnId","tokenUsage":{"last":{…},"total":{…},
 	//    "modelContextWindow":258400}}
 	// "last" is the per-turn slice; "total" is the running thread total.
-	// The SDK surfaces "total" as the canonical Usage on TokenUsageUpdated
-	// so callers tracking lifetime cost see the cumulative figure.
+	// The SDK keeps "total" as the canonical Usage on TokenUsageUpdated for
+	// compatibility, while also exposing LastUsage so billing callers can use
+	// the per-turn slice and avoid double-counting cumulative snapshots.
 	// Also accept the flat shape {"usage":{…}} for forward-compat.
 	var env struct {
 		ThreadID   string `json:"threadId"`
@@ -472,11 +473,18 @@ func parseTokenUsageUpdated(raw json.RawMessage) (types.ThreadEvent, error) {
 		return nil, err
 	}
 	var usage types.TokenUsage
+	var lastUsage types.TokenUsage
+	var totalUsage types.TokenUsage
 	switch {
 	case env.TokenUsage != nil && env.TokenUsage.Total != nil:
-		usage = *env.TokenUsage.Total
+		totalUsage = *env.TokenUsage.Total
+		usage = totalUsage
+		if env.TokenUsage.Last != nil {
+			lastUsage = *env.TokenUsage.Last
+		}
 	case env.TokenUsage != nil && env.TokenUsage.Last != nil:
-		usage = *env.TokenUsage.Last
+		lastUsage = *env.TokenUsage.Last
+		usage = lastUsage
 	case env.Usage != nil:
 		usage = *env.Usage
 	}
@@ -487,6 +495,8 @@ func parseTokenUsageUpdated(raw json.RawMessage) (types.ThreadEvent, error) {
 	return &types.TokenUsageUpdated{
 		ThreadID:           env.ThreadID,
 		Usage:              usage,
+		LastUsage:          lastUsage,
+		TotalUsage:         totalUsage,
 		ModelContextWindow: modelContextWindow,
 	}, nil
 }
