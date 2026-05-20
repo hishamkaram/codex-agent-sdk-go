@@ -31,10 +31,6 @@ func DecisionToResponse(event types.HookEventName, decision types.HookDecision) 
 
 func allowResponse(event types.HookEventName, a types.HookAllow) HookResponse {
 	resp := HookResponse{ExitCode: 0}
-	if a.SystemMessage != nil {
-		// Common field across most output shapes — include it in a way
-		// the unknown-event fallback still works.
-	}
 	out, err := buildAllowOutput(event, a)
 	if err != nil {
 		return HookResponse{Stdout: "", ExitCode: 0, Stderr: err.Error()}

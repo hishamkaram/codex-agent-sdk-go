@@ -46,7 +46,11 @@ func main() {
 	if err := client.Connect(ctx); err != nil {
 		log.Fatal(err)
 	}
-	defer client.Close(context.Background())
+	defer func() {
+		if err := client.Close(context.Background()); err != nil {
+			log.Printf("close client: %v", err)
+		}
+	}()
 
 	thread, err := client.StartThread(ctx, nil)
 	if err != nil {

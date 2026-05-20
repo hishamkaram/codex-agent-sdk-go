@@ -130,8 +130,12 @@ func TestEnvSubset(t *testing.T) {
 
 func TestEnvSubset_NoKeysSet(t *testing.T) {
 	// NOTE: mutates os.Unsetenv — sequential.
-	os.Unsetenv("DOES_NOT_EXIST_1")
-	os.Unsetenv("DOES_NOT_EXIST_2")
+	if err := os.Unsetenv("DOES_NOT_EXIST_1"); err != nil {
+		t.Fatalf("Unsetenv DOES_NOT_EXIST_1: %v", err)
+	}
+	if err := os.Unsetenv("DOES_NOT_EXIST_2"); err != nil {
+		t.Fatalf("Unsetenv DOES_NOT_EXIST_2: %v", err)
+	}
 	got := envSubset("DOES_NOT_EXIST_1", "DOES_NOT_EXIST_2")
 	if got != nil {
 		t.Fatalf("expected nil, got %+v", got)
