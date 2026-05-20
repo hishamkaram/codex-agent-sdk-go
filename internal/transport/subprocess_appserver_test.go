@@ -76,15 +76,15 @@ func TestBuildEnv_EmptyValueUnsets(t *testing.T) {
 func TestRingBuffer_GrowsToCapThenWrapsAround(t *testing.T) {
 	t.Parallel()
 	rb := newRingBuffer(8)
-	rb.Write([]byte("ABCDE"))
+	writeRingBuffer(t, rb, "ABCDE")
 	if got := rb.String(); got != "ABCDE" {
 		t.Fatalf("phase-1: %q", got)
 	}
-	rb.Write([]byte("FGHIJKL")) // total would be ABCDEFGHIJKL, ring keeps last 8
+	writeRingBuffer(t, rb, "FGHIJKL") // total would be ABCDEFGHIJKL, ring keeps last 8
 	if got := rb.String(); got != "EFGHIJKL" {
 		t.Fatalf("phase-2 (ring wrap): %q, want %q", got, "EFGHIJKL")
 	}
-	rb.Write([]byte("MNOP"))
+	writeRingBuffer(t, rb, "MNOP")
 	if got := rb.String(); got != "IJKLMNOP" {
 		t.Fatalf("phase-3 (continued wrap): %q, want %q", got, "IJKLMNOP")
 	}
@@ -93,9 +93,20 @@ func TestRingBuffer_GrowsToCapThenWrapsAround(t *testing.T) {
 func TestRingBuffer_WriteLargerThanSize(t *testing.T) {
 	t.Parallel()
 	rb := newRingBuffer(4)
-	rb.Write([]byte("ABCDEFGHIJ"))
+	writeRingBuffer(t, rb, "ABCDEFGHIJ")
 	if got := rb.String(); got != "GHIJ" {
 		t.Fatalf("got %q, want %q", got, "GHIJ")
+	}
+}
+
+func writeRingBuffer(t *testing.T, rb *ringBuffer, value string) {
+	t.Helper()
+	n, err := rb.Write([]byte(value))
+	if err != nil {
+		t.Fatalf("ringBuffer.Write(%q): %v", value, err)
+	}
+	if n != len(value) {
+		t.Fatalf("ringBuffer.Write(%q) wrote %d bytes, want %d", value, n, len(value))
 	}
 }
 

@@ -34,7 +34,11 @@ func TestFixtureReplay_SpikeTranscript(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
+	defer func() {
+		if err := f.Close(); err != nil {
+			t.Errorf("close fixture: %v", err)
+		}
+	}()
 
 	// Per-method counters for a summary at the end.
 	known := map[string]int{}
@@ -156,7 +160,11 @@ func TestFixtureReplay_ItemsExercised(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
+	defer func() {
+		if err := f.Close(); err != nil {
+			t.Errorf("close fixture: %v", err)
+		}
+	}()
 
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)

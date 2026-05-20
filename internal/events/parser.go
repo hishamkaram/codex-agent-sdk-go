@@ -397,36 +397,6 @@ func parseItemUpdated(raw json.RawMessage) (types.ThreadEvent, error) {
 	}, nil
 }
 
-// parseAgentMessageDeltaEvent handles the real streaming text channel for
-// agent_message items. Wire shape (verified against spike transcript):
-//
-//	{"method":"item/agentMessage/delta",
-//	 "params":{"threadId":"...","turnId":"...","itemId":"msg_...",
-//	           "delta":"OK"}}
-//
-// The flat "delta" string is mapped to a types.AgentMessageDelta inside
-// an ItemUpdated so callers see a single ItemUpdated event type across
-// all streaming item variants.
-func parseAgentMessageDeltaEvent(raw json.RawMessage) (types.ThreadEvent, error) {
-	var env struct {
-		ThreadID string `json:"threadId"`
-		TurnID   string `json:"turnId"`
-		ItemID   string `json:"itemId"`
-		Delta    string `json:"delta"`
-	}
-	if len(raw) > 0 {
-		if err := json.Unmarshal(raw, &env); err != nil {
-			return nil, types.NewJSONDecodeError(string(raw), err)
-		}
-	}
-	return &types.ItemUpdated{
-		ThreadID: env.ThreadID,
-		TurnID:   env.TurnID,
-		ItemID:   env.ItemID,
-		Delta:    &types.AgentMessageDelta{TextChunk: env.Delta},
-	}, nil
-}
-
 func parseItemCompleted(raw json.RawMessage) (types.ThreadEvent, error) {
 	var env identifiersEnvelope
 	if err := unmarshalEnvelope(raw, &env); err != nil {
