@@ -523,7 +523,7 @@ func buildThreadStartParams(clientOpts *types.CodexOptions, opts *types.ThreadOp
 		p["sandbox"] = string(clientOpts.DefaultSandbox)
 	}
 	if clientOpts.DefaultApprovalPolicy != "" {
-		p["approvalPolicy"] = string(clientOpts.DefaultApprovalPolicy)
+		p["approvalPolicy"] = encodeApprovalPolicy(clientOpts.DefaultApprovalPolicy)
 	}
 	// Per-call overrides win.
 	if opts != nil {
@@ -537,7 +537,7 @@ func buildThreadStartParams(clientOpts *types.CodexOptions, opts *types.ThreadOp
 			p["sandbox"] = string(opts.Sandbox)
 		}
 		if opts.ApprovalPolicy != "" {
-			p["approvalPolicy"] = string(opts.ApprovalPolicy)
+			p["approvalPolicy"] = encodeApprovalPolicy(opts.ApprovalPolicy)
 		}
 	}
 	return p

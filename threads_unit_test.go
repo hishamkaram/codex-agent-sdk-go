@@ -161,6 +161,19 @@ func TestBuildThreadStartParams_DefaultsAndOverrides(t *testing.T) {
 	}
 }
 
+func TestBuildThreadStartParams_GranularApprovalPolicyUsesStructuredObject(t *testing.T) {
+	t.Parallel()
+
+	p1 := buildThreadStartParams(&types.CodexOptions{DefaultApprovalPolicy: types.ApprovalGranular}, nil)
+	assertGranularApprovalPolicyValue(t, p1["approvalPolicy"])
+
+	p2 := buildThreadStartParams(
+		&types.CodexOptions{DefaultApprovalPolicy: types.ApprovalOnRequest},
+		&types.ThreadOptions{ApprovalPolicy: types.ApprovalGranular},
+	)
+	assertGranularApprovalPolicyValue(t, p2["approvalPolicy"])
+}
+
 func TestBuildThreadStartParams_EmptyClientOptsNoKeys(t *testing.T) {
 	t.Parallel()
 	clientOpts := &types.CodexOptions{} // no defaults

@@ -79,6 +79,26 @@ error at `thread/start`):
 | `ApprovalGranular` | Delegates per-action policy to a server-side ruleset (see codex config). |
 | `ApprovalNever` | Nothing prompts. Combine with `SandboxReadOnly` or trust the agent completely. |
 
+The public Go API remains string-typed. For ordinary policies the SDK
+writes that string verbatim. For `ApprovalGranular`, the SDK writes the
+structured Codex wire form on both `thread/start` and
+`config/value/write`:
+
+```json
+{
+  "granular": {
+    "mcp_elicitations": true,
+    "rules": true,
+    "sandbox_approval": true
+  }
+}
+```
+
+`Client.ReadConfig()` also accepts Codex's object-form
+`approval_policy`: `types.Config.ApprovalPolicy` is normalized to
+`"granular"` while `types.Config.Raw["approval_policy"]` preserves the
+original JSON payload.
+
 ## Sandbox modes
 
 `CodexOptions.WithSandbox` is orthogonal to approval policy — it
