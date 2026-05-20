@@ -25,7 +25,7 @@ Codex's app-server exposes a JSON-RPC 2.0 protocol over stdio — bidirectional,
 | ThreadItem variants: agentMessage, userMessage, commandExecution, fileChange, mcpToolCall, webSearch, memoryRead/Write, plan, reasoning, systemError | ✅ |
 | Input variants: text, localImage | ✅ |
 | Sandbox modes: read-only, workspace-write, danger-full-access | ✅ |
-| Approval policies: auto, read-only, untrusted, never, on-request | ✅ |
+| Approval policies: untrusted, on-failure, on-request, granular, never | ✅ |
 | Approval callback (server-initiated request → caller decides) | ✅ |
 | MCP server config (stdio + streamable HTTP) | ✅ |
 | JSON-schema structured output | ✅ |

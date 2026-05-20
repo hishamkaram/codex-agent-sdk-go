@@ -53,6 +53,9 @@ _ = client.SetModel(ctx, "gpt-5.4")
 _ = client.SetApprovalPolicy(ctx, types.ApprovalOnRequest)
 ```
 
+`types.ApprovalGranular` uses the same typed API, but the SDK encodes it
+to Codex's structured wire object when writing `approval_policy`.
+
 ### `/fast` / sandbox toggles → `Client.SetSandbox`
 
 ```go
@@ -113,7 +116,7 @@ ReviewTarget variants:
 | `/mcp` | `Client.ListMCPServerStatus()` | Returns `{data, nextCursor}`; tools is a map keyed by name |
 | `/apps` | `Client.ListApps()` | **Caveat:** often 403s on ChatGPT auth (upstream Cloudflare) |
 | `/plugins` | `Client.ListSkills()` | Grouped by cwd; iterate `[]SkillsCwdGroup` |
-| `/debug-config` | `Client.ReadConfig()` | Wrapped under `config.*`; use `Config.Raw` map for fields the SDK doesn't curate |
+| `/debug-config` | `Client.ReadConfig()` | Wrapped under `config.*`; use `Config.Raw` map for fields the SDK doesn't curate. Object-form `approval_policy` is normalized to curated `"granular"` while the raw JSON stays in `Config.Raw["approval_policy"]` |
 
 ## Thread lifecycle
 

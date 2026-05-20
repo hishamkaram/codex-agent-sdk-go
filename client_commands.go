@@ -375,14 +375,16 @@ func (c *Client) SetModel(ctx context.Context, model string) error {
 }
 
 // SetApprovalPolicy is sugar for
-// `WriteConfigValue("approval_policy", policy, MergeReplace)`. Use to
-// change codex's approval stance mid-session (e.g., switch from
-// `untrusted` to `never` after the user gains confidence).
+// `WriteConfigValue("approval_policy", encodedPolicy, MergeReplace)`.
+// Use to change codex's approval stance mid-session (e.g., switch from
+// `untrusted` to `never` after the user gains confidence). The public
+// policy remains string-typed; the SDK encodes codex's structured
+// granular variant internally.
 func (c *Client) SetApprovalPolicy(ctx context.Context, policy types.ApprovalPolicy) error {
 	if policy == "" {
 		return fmt.Errorf("codex.Client.SetApprovalPolicy: policy must not be empty")
 	}
-	_, err := c.WriteConfigValue(ctx, "approval_policy", string(policy), types.MergeReplace)
+	_, err := c.WriteConfigValue(ctx, "approval_policy", encodeApprovalPolicy(policy), types.MergeReplace)
 	return err
 }
 

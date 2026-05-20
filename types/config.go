@@ -1,6 +1,10 @@
 package types
 
-import "encoding/json"
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+)
 
 // ConfigReadResult is the response of `config/read`. The full effective
 // codex configuration sits under a "config" wrapper. codex serializes
@@ -49,6 +53,72 @@ type Config struct {
 	// callers can read fields the SDK has not curated. Populated by
 	// the SDK after unmarshaling — NOT present on the wire.
 	Raw map[string]json.RawMessage `json:"-"`
+}
+
+// UnmarshalJSON accepts both the legacy scalar approval_policy values
+// and codex's structured granular object while preserving the raw
+// config payload for forward-compatible callers.
+func (c *Config) UnmarshalJSON(data []byte) error {
+	var aux struct {
+		Model              *string                    `json:"model,omitempty"`
+		Sandbox            *string                    `json:"sandbox,omitempty"`
+		DefaultPermissions json.RawMessage            `json:"default_permissions,omitempty"`
+		Features           map[string]bool            `json:"features,omitempty"`
+		ApprovalsReviewer  *string                    `json:"approvals_reviewer,omitempty"`
+		History            json.RawMessage            `json:"history,omitempty"`
+		Marketplaces       map[string]json.RawMessage `json:"marketplaces,omitempty"`
+		Apps               json.RawMessage            `json:"apps,omitempty"`
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	*c = Config{
+		Model:              aux.Model,
+		Sandbox:            aux.Sandbox,
+		DefaultPermissions: aux.DefaultPermissions,
+		Features:           aux.Features,
+		ApprovalsReviewer:  aux.ApprovalsReviewer,
+		History:            aux.History,
+		Marketplaces:       aux.Marketplaces,
+		Apps:               aux.Apps,
+		Raw:                raw,
+	}
+
+	if approvalRaw, ok := raw["approval_policy"]; ok {
+		policy, err := decodeConfigApprovalPolicy(approvalRaw)
+		if err != nil {
+			return err
+		}
+		c.ApprovalPolicy = policy
+	}
+	return nil
+}
+
+func decodeConfigApprovalPolicy(raw json.RawMessage) (*string, error) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return nil, nil
+	}
+
+	var policy string
+	if err := json.Unmarshal(trimmed, &policy); err == nil {
+		return &policy, nil
+	}
+
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(trimmed, &object); err != nil {
+		return nil, fmt.Errorf("types.Config.approval_policy: expected string, null, or object: %w", err)
+	}
+	if _, ok := object[string(ApprovalGranular)]; ok {
+		policy := string(ApprovalGranular)
+		return &policy, nil
+	}
+	return nil, nil
 }
 
 // MergeStrategy controls how a config write blends with the

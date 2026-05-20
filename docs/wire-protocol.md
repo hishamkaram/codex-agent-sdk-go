@@ -43,6 +43,20 @@ field names preferred in this order: flat > nested.
 | `turn/start` | `{threadId,input:[{type:"text"|"localImage",…}],outputSchema?,collaborationMode?}` | `{turn:{id,…}}` | `Thread.RunStreamed` |
 | `turn/interrupt` | `{threadId,turnId}` | `{}` | `Thread.Interrupt` |
 
+`approvalPolicy` is a wire union. Ordinary policies are JSON strings
+(`"untrusted"`, `"on-failure"`, `"on-request"`, `"never"`). Granular is
+sent as:
+
+```json
+{
+  "granular": {
+    "mcp_elicitations": true,
+    "rules": true,
+    "sandbox_approval": true
+  }
+}
+```
+
 ## Server-initiated notifications (→ ThreadEvent)
 
 The SDK recognizes these method names. Unrecognized methods return
