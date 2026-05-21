@@ -6,9 +6,65 @@ import (
 	"os/user"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/hishamkaram/codex-agent-sdk-go/types"
 )
+
+var defaultCLIDiscoveryCache cliDiscoveryCache
+
+var cliFallbackLocations = []string{
+	"~/.codex/bin/codex",
+	"/opt/homebrew/bin/codex",
+	"/usr/local/bin/codex",
+	"~/.npm-global/bin/codex",
+	"~/.local/bin/codex",
+	"~/node_modules/.bin/codex",
+}
+
+type cliDiscoveryCache struct {
+	mu       sync.Mutex
+	path     string
+	inFlight *cliDiscoveryFlight
+}
+
+type cliDiscoveryFlight struct {
+	done chan struct{}
+	path string
+	err  error
+}
+
+func (c *cliDiscoveryCache) find(discover func() (string, error)) (string, error) {
+	c.mu.Lock()
+	if c.path != "" {
+		path := c.path
+		c.mu.Unlock()
+		return path, nil
+	}
+	if flight := c.inFlight; flight != nil {
+		c.mu.Unlock()
+		<-flight.done
+		return flight.path, flight.err
+	}
+
+	flight := &cliDiscoveryFlight{done: make(chan struct{})}
+	c.inFlight = flight
+	c.mu.Unlock()
+
+	path, err := discover()
+
+	c.mu.Lock()
+	if err == nil {
+		c.path = path
+	}
+	flight.path = path
+	flight.err = err
+	c.inFlight = nil
+	close(flight.done)
+	c.mu.Unlock()
+
+	return path, err
+}
 
 // FindCLI searches for the codex CLI binary in standard locations:
 //  1. PATH via exec.LookPath("codex")
@@ -22,19 +78,15 @@ import (
 // Returns the absolute path or a *types.CLINotFoundError with remediation
 // guidance.
 func FindCLI() (string, error) {
+	return defaultCLIDiscoveryCache.find(findCLIUncached)
+}
+
+func findCLIUncached() (string, error) {
 	if cliPath, err := exec.LookPath("codex"); err == nil {
 		return cliPath, nil
 	}
 
-	locations := []string{
-		"~/.codex/bin/codex",
-		"/opt/homebrew/bin/codex",
-		"/usr/local/bin/codex",
-		"~/.npm-global/bin/codex",
-		"~/.local/bin/codex",
-		"~/node_modules/.bin/codex",
-	}
-	for _, location := range locations {
+	for _, location := range cliFallbackLocations {
 		expanded := expandHome(location)
 		if _, err := os.Stat(expanded); err == nil {
 			return expanded, nil
