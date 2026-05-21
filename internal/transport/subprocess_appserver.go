@@ -257,16 +257,15 @@ func (t *AppServer) doClose(ctx context.Context) error {
 	return t.classifyExit(err, true)
 }
 
-// drainStderr waits briefly for the stderr goroutine to finish so t.stderr
-// is stable when callers read it. Bounded: we never block forever here.
+// drainStderr waits for the stderr goroutine to finish so t.stderr is stable
+// when callers read it. Call only after cmd.Wait has observed process exit or
+// after the process has been killed; at that point the stderr pipe must reach
+// EOF.
 func (t *AppServer) drainStderr(done chan struct{}) {
 	if done == nil {
 		return
 	}
-	select {
-	case <-done:
-	case <-time.After(500 * time.Millisecond):
-	}
+	<-done
 }
 
 // classifyExit maps an *exec.Cmd Wait() error into either nil or a
