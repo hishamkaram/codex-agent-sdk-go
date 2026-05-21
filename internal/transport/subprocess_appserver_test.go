@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -97,12 +98,35 @@ func TestRingBuffer_GrowsToCapThenWrapsAround(t *testing.T) {
 	}
 }
 
+func TestRingBuffer_ExactCapacity(t *testing.T) {
+	t.Parallel()
+	rb := newRingBuffer(8)
+	writeRingBuffer(t, rb, "ABCDEFGH")
+	if got := rb.String(); got != "ABCDEFGH" {
+		t.Fatalf("got %q, want %q", got, "ABCDEFGH")
+	}
+}
+
 func TestRingBuffer_WriteLargerThanSize(t *testing.T) {
 	t.Parallel()
 	rb := newRingBuffer(4)
 	writeRingBuffer(t, rb, "ABCDEFGHIJ")
 	if got := rb.String(); got != "GHIJ" {
 		t.Fatalf("got %q, want %q", got, "GHIJ")
+	}
+}
+
+func TestRingBuffer_FinalByteSentinelPreserved(t *testing.T) {
+	t.Parallel()
+	rb := newRingBuffer(8)
+	input := "prefix-0123456789-SENTINEL_Z"
+	want := input[len(input)-8:]
+	writeRingBuffer(t, rb, input)
+	if got := rb.String(); got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+	if !strings.HasSuffix(rb.String(), "Z") {
+		t.Fatalf("final sentinel byte was not preserved: %q", rb.String())
 	}
 }
 
@@ -177,10 +201,18 @@ func writeAppServerHelper(t *testing.T, body string) string {
 func TestAppServerStderrTailStableAfterClose(t *testing.T) {
 	t.Parallel()
 
-	payload := strings.Repeat("C", StderrRingSize+19)
+	chunk := "0123456789abcdef"
+	repeatCount := StderrRingSize/len(chunk) + 32
+	sentinel := "TAIL_SENTINEL_codex_close_issue_79"
+	payload := strings.Repeat(chunk, repeatCount) + sentinel
 	stderr := payload + "\n"
 	want := stderr[len(stderr)-StderrRingSize:]
-	helper := writeAppServerHelper(t, "printf '%s\\n' '"+payload+"' >&2\nwhile IFS= read -r _line; do :; done\nexit 0")
+	helper := writeAppServerHelper(t, fmt.Sprintf(
+		"while IFS= read -r _line; do :; done\ni=0\nwhile [ \"$i\" -lt %d ]; do printf '%s' >&2; i=$((i + 1)); done\nprintf '%%s\\n' '%s' >&2\nexit 0",
+		repeatCount,
+		chunk,
+		sentinel,
+	))
 
 	app := NewAppServer(AppServerConfig{CLIPath: helper})
 	if err := app.Connect(context.Background()); err != nil {
@@ -191,12 +223,67 @@ func TestAppServerStderrTailStableAfterClose(t *testing.T) {
 	if err := app.Close(closeCtx); err != nil {
 		t.Fatalf("Close() failed: %v", err)
 	}
-	if got := app.Stderr(); got != want {
-		t.Fatalf("Stderr() len=%d, want len=%d", len(got), len(want))
+	gotFirst := app.Stderr()
+	if gotFirst != want {
+		t.Fatalf(
+			"Stderr() mismatch: got len=%d suffix=%q; want len=%d suffix=%q; first diff at byte %d",
+			len(gotFirst), suffixForLog(gotFirst, 96), len(want), suffixForLog(want, 96), firstDiffIndex(gotFirst, want),
+		)
 	}
-	if got := app.Stderr(); got != want {
-		t.Fatalf("Stderr() changed after close: len=%d want len=%d", len(got), len(want))
+	gotSecond := app.Stderr()
+	if gotSecond != gotFirst {
+		t.Fatalf(
+			"Stderr() changed after close: first len=%d suffix=%q; second len=%d suffix=%q; first diff at byte %d",
+			len(gotFirst), suffixForLog(gotFirst, 96), len(gotSecond), suffixForLog(gotSecond, 96), firstDiffIndex(gotSecond, gotFirst),
+		)
 	}
+}
+
+func TestAppServerDrainStderrWaitsForDone(t *testing.T) {
+	done := make(chan struct{})
+	returned := make(chan struct{})
+	app := &AppServer{}
+
+	go func() {
+		app.drainStderr(done)
+		close(returned)
+	}()
+
+	select {
+	case <-returned:
+		t.Fatal("drainStderr returned before stderrDone closed")
+	case <-time.After(700 * time.Millisecond):
+	}
+
+	close(done)
+	select {
+	case <-returned:
+	case <-time.After(time.Second):
+		t.Fatal("drainStderr did not return after stderrDone closed")
+	}
+}
+
+func firstDiffIndex(a, b string) int {
+	limit := len(a)
+	if len(b) < limit {
+		limit = len(b)
+	}
+	for i := 0; i < limit; i++ {
+		if a[i] != b[i] {
+			return i
+		}
+	}
+	if len(a) != len(b) {
+		return limit
+	}
+	return -1
+}
+
+func suffixForLog(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[len(s)-max:]
 }
 
 func TestAppServerCloseGracefulAndIdempotent(t *testing.T) {
