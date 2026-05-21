@@ -2,9 +2,16 @@ package transport
 
 import (
 	"bytes"
+	"context"
+	"errors"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/hishamkaram/codex-agent-sdk-go/types"
 )
 
 func TestSplitKV(t *testing.T) {
@@ -148,5 +155,103 @@ func TestAppServerClassifyExitShutdownRequestedSuppressesExitError(t *testing.T)
 	}
 	if got := app.classifyExit(err, false); got == nil || !strings.Contains(got.Error(), "exit=7") {
 		t.Fatalf("classifyExit(shutdownRequested=false) = %v, want process error with exit=7", got)
+	}
+}
+
+func writeAppServerHelper(t *testing.T, body string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "codex-helper")
+	script := "#!/bin/sh\n" +
+		"if [ \"$1\" = \"--version\" ]; then echo \"codex 0.130.0\"; exit 0; fi\n" +
+		"if [ \"$1\" = \"app-server\" ]; then shift; fi\n" +
+		body + "\n"
+	if err := os.WriteFile(path, []byte(script), 0755); err != nil {
+		t.Fatalf("write helper: %v", err)
+	}
+	return path
+}
+
+func TestAppServerStderrTailStableAfterClose(t *testing.T) {
+	t.Parallel()
+
+	payload := strings.Repeat("C", StderrRingSize+19)
+	stderr := payload + "\n"
+	want := stderr[len(stderr)-StderrRingSize:]
+	helper := writeAppServerHelper(t, "printf '%s\\n' '"+payload+"' >&2\nwhile IFS= read -r _line; do :; done\nexit 0")
+
+	app := NewAppServer(AppServerConfig{CLIPath: helper})
+	if err := app.Connect(context.Background()); err != nil {
+		t.Fatalf("Connect() failed: %v", err)
+	}
+	closeCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := app.Close(closeCtx); err != nil {
+		t.Fatalf("Close() failed: %v", err)
+	}
+	if got := app.Stderr(); got != want {
+		t.Fatalf("Stderr() len=%d, want len=%d", len(got), len(want))
+	}
+	if got := app.Stderr(); got != want {
+		t.Fatalf("Stderr() changed after close: len=%d want len=%d", len(got), len(want))
+	}
+}
+
+func TestAppServerCloseGracefulAndIdempotent(t *testing.T) {
+	t.Parallel()
+
+	helper := writeAppServerHelper(t, "while IFS= read -r _line; do :; done\nexit 0")
+	app := NewAppServer(AppServerConfig{CLIPath: helper})
+	if err := app.Connect(context.Background()); err != nil {
+		t.Fatalf("Connect() failed: %v", err)
+	}
+	closeCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := app.Close(closeCtx); err != nil {
+		t.Fatalf("first Close() failed: %v", err)
+	}
+	if err := app.Close(closeCtx); err != nil {
+		t.Fatalf("second Close() failed: %v", err)
+	}
+}
+
+func TestAppServerCloseCancellationDoesNotHang(t *testing.T) {
+	t.Parallel()
+
+	helper := writeAppServerHelper(t, "trap '' INT TERM\nwhile true; do sleep 1; done")
+	app := NewAppServer(AppServerConfig{CLIPath: helper})
+	if err := app.Connect(context.Background()); err != nil {
+		t.Fatalf("Connect() failed: %v", err)
+	}
+	closeCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	done := make(chan error, 1)
+	go func() { done <- app.Close(closeCtx) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Close(canceled ctx) returned %v, want nil for shutdown-requested exit", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Close(canceled ctx) hung")
+	}
+}
+
+func TestAppServerClassifyExitUnexpectedIncludesTypedProcessError(t *testing.T) {
+	t.Parallel()
+
+	err := exec.Command("sh", "-c", "exit 7").Run()
+	if err == nil {
+		t.Fatal("expected command to fail")
+	}
+	app := &AppServer{stderr: newRingBuffer(StderrRingSize)}
+	_, _ = app.stderr.Write([]byte("codex stderr tail"))
+
+	got := app.classifyExit(err, false)
+	var procErr *types.ProcessError
+	if !errors.As(got, &procErr) {
+		t.Fatalf("classifyExit = %T %v, want *types.ProcessError", got, got)
+	}
+	if procErr.ExitCode != 7 || procErr.Stderr != "codex stderr tail" {
+		t.Fatalf("ProcessError = %+v, want exit=7 with stderr tail", procErr)
 	}
 }
