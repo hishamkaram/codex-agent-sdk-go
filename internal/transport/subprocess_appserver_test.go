@@ -165,8 +165,11 @@ func writeAppServerHelper(t *testing.T, body string) string {
 		"if [ \"$1\" = \"--version\" ]; then echo \"codex 0.130.0\"; exit 0; fi\n" +
 		"if [ \"$1\" = \"app-server\" ]; then shift; fi\n" +
 		body + "\n"
-	if err := os.WriteFile(path, []byte(script), 0755); err != nil {
+	if err := os.WriteFile(path, []byte(script), 0644); err != nil {
 		t.Fatalf("write helper: %v", err)
+	}
+	if err := os.Chmod(path, 0755); err != nil {
+		t.Fatalf("chmod helper: %v", err)
 	}
 	return path
 }
