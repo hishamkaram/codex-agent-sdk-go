@@ -428,39 +428,6 @@ func resolveCwd(c *Client, opts *types.ThreadOptions) string {
 // both ThreadOptions.Cwd and CodexOptions.DefaultCwd were empty).
 func (t *Thread) Cwd() string { return t.cwd }
 
-// ListThreads returns the persisted thread catalog. Best-effort parsing —
-// unknown fields are dropped silently.
-func (c *Client) ListThreads(ctx context.Context) ([]types.ThreadInfo, error) {
-	if !c.connected.Load() || c.closed.Load() {
-		return nil, fmt.Errorf("codex.Client.ListThreads: client not connected or already closed")
-	}
-	resp, err := c.demux.Send(ctx, "thread/list", map[string]any{})
-	if err != nil {
-		return nil, fmt.Errorf("codex.Client.ListThreads: %w", err)
-	}
-	if resp.Error != nil {
-		return nil, types.NewRPCError(resp.Error.Code, resp.Error.Message, resp.Error.Data)
-	}
-	var out struct {
-		Threads []threadListEntry `json:"threads"`
-	}
-	if err := json.Unmarshal(resp.Result, &out); err != nil {
-		return nil, types.NewJSONDecodeError(string(resp.Result), err)
-	}
-	infos := make([]types.ThreadInfo, 0, len(out.Threads))
-	for _, e := range out.Threads {
-		infos = append(infos, types.ThreadInfo{
-			ThreadID:     e.ID,
-			Cwd:          e.Cwd,
-			Model:        e.Model,
-			Summary:      e.Preview,
-			LastModified: e.Path,
-			Archived:     e.Archived,
-		})
-	}
-	return infos, nil
-}
-
 // ForkThread branches from an existing thread, returning a new Thread whose
 // history is seeded with the source thread. The source thread is
 // unaffected. Uses "thread/fork" — if the server doesn't expose this verb
@@ -578,17 +545,6 @@ func extractThreadID(result json.RawMessage) (string, error) {
 		return shape.Thread.ID, nil
 	}
 	return "", types.NewMessageParseError("thread response missing thread id", string(result))
-}
-
-// threadListEntry is the shape of each row in a thread/list response.
-// Fields match the spike-transcript shape; unknown fields are dropped.
-type threadListEntry struct {
-	ID       string `json:"id"`
-	Cwd      string `json:"cwd,omitempty"`
-	Model    string `json:"model,omitempty"`
-	Preview  string `json:"preview,omitempty"`
-	Path     string `json:"path,omitempty"`
-	Archived bool   `json:"archived,omitempty"`
 }
 
 // Compile-time check that Thread exposes the stdlib-expected surface.

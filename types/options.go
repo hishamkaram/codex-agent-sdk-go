@@ -1,6 +1,7 @@
 package types
 
 import (
+	"encoding/json"
 	"time"
 
 	"go.uber.org/zap"
@@ -63,11 +64,11 @@ type CodexOptions struct {
 	// --- Hook bridge (v0.3.0) ---
 
 	// HookCallback is invoked by the SDK when codex fires a hook handler.
-	// Setting it causes Connect to write ~/.codex/hooks.json (backing up
-	// any existing user config) so codex routes hooks through the SDK's
-	// shim binary; Close restores the user's original config. Nil means
-	// no bridge is set up — the codex_hooks feature alone only delivers
-	// HookStarted/HookCompleted observer events. See docs/hooks.md.
+	// Setting it causes Connect to generate hooks.json in an isolated
+	// CODEX_HOME by default so codex routes hooks through the SDK shim.
+	// User-home mutation is available only via HookConfigModeUserHome. Nil
+	// means no bridge is set up — the codex_hooks feature alone only
+	// delivers HookStarted/HookCompleted observer events. See docs/hooks.md.
 	HookCallback HookHandler
 
 	// ShimPath overrides auto-discovery of the codex-sdk-hook-shim binary.
@@ -82,6 +83,10 @@ type CodexOptions struct {
 	// hooks.json — otherwise codex kills the shim before the SDK
 	// responds.
 	HookTimeout time.Duration
+
+	// HookConfigMode controls where WithHookCallback writes generated
+	// hooks.json. Empty means HookConfigModeIsolated.
+	HookConfigMode HookConfigMode
 
 	// --- Capability negotiation (v0.4.0) ---
 
@@ -103,6 +108,18 @@ type CodexOptions struct {
 	// callers must not rely on it for correctness.
 	OptOutNotificationMethods []string
 }
+
+type HookConfigMode string
+
+const (
+	// HookConfigModeIsolated writes hooks.json into a temporary CODEX_HOME
+	// owned by the SDK Client. This is the default and never mutates user
+	// ~/.codex.
+	HookConfigModeIsolated HookConfigMode = "isolated"
+	// HookConfigModeUserHome writes ~/.codex/hooks.json for the Client
+	// lifetime, backing up and restoring any user config on Close.
+	HookConfigModeUserHome HookConfigMode = "user_home"
+)
 
 // NewCodexOptions returns a CodexOptions populated with sensible defaults:
 // sandbox read-only, approval policy on-request (the server default), no
@@ -233,6 +250,13 @@ func (o *CodexOptions) WithHookCallback(h HookHandler) *CodexOptions {
 	return o.WithHooks(true)
 }
 
+// WithHookConfigMode sets where WithHookCallback installs generated hooks
+// config. The default is HookConfigModeIsolated.
+func (o *CodexOptions) WithHookConfigMode(mode HookConfigMode) *CodexOptions {
+	o.HookConfigMode = mode
+	return o
+}
+
 // WithShimPath overrides shim-binary auto-discovery. Set this when
 // codex-sdk-hook-shim lives outside PATH / $GOPATH/bin / .bin/.
 func (o *CodexOptions) WithShimPath(path string) *CodexOptions {
@@ -337,12 +361,13 @@ type SkillInput struct {
 
 // ThreadInfo is the metadata record returned by Codex.ListThreads.
 type ThreadInfo struct {
-	ThreadID     string `json:"thread_id"`
-	Summary      string `json:"summary,omitempty"`
-	LastModified string `json:"last_modified,omitempty"` // ISO 8601 UTC
-	Cwd          string `json:"cwd,omitempty"`
-	Model        string `json:"model,omitempty"`
-	Archived     bool   `json:"archived,omitempty"`
+	ThreadID     string          `json:"thread_id"`
+	Summary      string          `json:"summary,omitempty"`
+	LastModified string          `json:"last_modified,omitempty"` // ISO 8601 UTC
+	Cwd          string          `json:"cwd,omitempty"`
+	Model        string          `json:"model,omitempty"`
+	Archived     bool            `json:"archived,omitempty"`
+	Raw          json.RawMessage `json:"-"`
 }
 
 // ForkResult is returned by Codex.ForkThread. The new thread ID points to
@@ -350,4 +375,87 @@ type ThreadInfo struct {
 type ForkResult struct {
 	SourceThreadID string `json:"source_thread_id"`
 	NewThreadID    string `json:"new_thread_id"`
+}
+
+// ThreadListOptions configures Client.ListThreadsPage.
+type ThreadListOptions struct {
+	Limit          int
+	Cursor         string
+	Archived       *bool
+	Cwd            []string
+	SearchTerm     string
+	SortKey        string
+	SortDirection  string
+	ModelProviders []string
+	SourceKinds    []string
+	UseStateDBOnly bool
+}
+
+// ThreadListPage is one page of thread/list results.
+type ThreadListPage struct {
+	Threads         []ThreadInfo
+	NextCursor      string
+	BackwardsCursor string
+	Raw             json.RawMessage
+}
+
+// ThreadReadOptions configures Client.ReadThread.
+type ThreadReadOptions struct {
+	IncludeTurns bool
+}
+
+// ThreadReadResult is the parsed result of thread/read.
+type ThreadReadResult struct {
+	Thread ThreadRecord
+	Raw    json.RawMessage
+}
+
+// ThreadRecord is persisted Codex thread metadata plus optional turns.
+type ThreadRecord struct {
+	ID        string
+	SessionID string
+	Name      string
+	Preview   string
+	Cwd       string
+	Model     string
+	Path      string
+	Status    string
+	CreatedAt string
+	UpdatedAt string
+	Turns     []ThreadHistoryTurn
+	Raw       json.RawMessage
+}
+
+// ThreadHistoryTurn is one persisted turn returned by thread/read.
+type ThreadHistoryTurn struct {
+	ID          string
+	Status      string
+	StartedAt   string
+	CompletedAt string
+	Items       []ThreadHistoryItem
+	Raw         json.RawMessage
+}
+
+// ThreadHistoryItem is a raw persisted item from a thread turn.
+type ThreadHistoryItem struct {
+	Type string
+	ID   string
+	Raw  json.RawMessage
+}
+
+// GetThreadMessagesOptions configures Client.GetThreadMessages.
+type GetThreadMessagesOptions struct {
+	Limit  int
+	Offset int
+}
+
+// ThreadMessage is a read-only persisted user/assistant message extracted
+// from thread/read turns.
+type ThreadMessage struct {
+	Role     string
+	ID       string
+	ThreadID string
+	TurnID   string
+	Text     string
+	Raw      json.RawMessage
 }

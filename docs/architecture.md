@@ -41,6 +41,49 @@ knowledge of the subprocess.
 The `types/` package is a leaf — every layer can import it. Errors are
 declared there with `Is*()` helpers that see through `fmt.Errorf %w`.
 
+## State Ownership
+
+Codex app-server is the SDK's only persisted state boundary. The Go SDK
+does not read `~/.codex/sessions` directly and does not scrape provider
+files. All persisted history access goes through app-server RPCs.
+
+Read-only history APIs:
+
+- `Client.ListThreads(ctx)` returns the first `thread/list` page for
+  backward-compatible callers.
+- `Client.ListThreadsPage(ctx, opts)` exposes app-server pagination and
+  filters (`limit`, `cursor`, archived, cwd, search, sorting, source, and
+  provider filters).
+- `Client.ReadThread(ctx, threadID, opts)` calls `thread/read` and can
+  request persisted turns with `IncludeTurns`.
+- `Client.GetThreadMessages(ctx, threadID, opts)` extracts user and
+  assistant messages from `thread/read includeTurns`.
+- Thread, turn, item, and list records keep raw JSON for schema drift.
+
+Mutating / turn-consuming APIs:
+
+- `StartThread`, `ResumeThread`, `ForkThread`, `ArchiveThread`, and
+  thread command methods mutate app-server state.
+- `Thread.Run` and `Thread.RunStreamed` call `turn/start` and consume
+  model turns.
+- History reads never call `thread/resume`, `thread/start`, or
+  `turn/start`.
+
+Provider files touched:
+
+- Normal history reads touch no provider files directly.
+- `WithHookCallback` writes generated `hooks.json` into an isolated
+  temporary `CODEX_HOME` by default.
+- `HookConfigModeUserHome` is the explicit opt-in mode that backs up and
+  temporarily writes user `~/.codex/hooks.json`.
+
+Drift guard:
+
+- The vendored app-server schema covers `thread/read`,
+  paged/filterable `thread/list`, and turn item shapes. Tests parse mock
+  JSON-RPC fixtures and preserve raw fields so new app-server keys do not
+  become data loss.
+
 ## The dispatcher
 
 When `Client.Connect` succeeds, a single goroutine starts:
@@ -83,7 +126,7 @@ channel that closes when the turn completes.
 
 | Call | Safe from multiple goroutines? |
 |---|---|
-| `Client.{StartThread, ResumeThread, ListThreads, ForkThread, ArchiveThread}` | Yes |
+| `Client.{StartThread, ResumeThread, ListThreads, ListThreadsPage, ReadThread, GetThreadMessages, ForkThread, ArchiveThread}` | Yes |
 | `Thread.Run` / `Thread.RunStreamed` on the SAME thread | Serialized via turnMu — later calls block |
 | `Thread.Run` / `Thread.RunStreamed` on DIFFERENT threads of one Client | Yes — they share the dispatcher but have independent inboxes |
 | `Thread.Interrupt` | Yes |
