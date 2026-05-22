@@ -161,6 +161,83 @@ func TestBuildThreadStartParams_DefaultsAndOverrides(t *testing.T) {
 	}
 }
 
+func TestBuildThreadStartParams_DefaultMCPServers(t *testing.T) {
+	t.Parallel()
+
+	defaultServers := map[string]types.McpServerConfig{
+		"local": types.McpStdioConfig{Command: "mcp-local", Args: []string{"--stdio"}},
+	}
+	p := buildThreadStartParams(
+		types.NewCodexOptions().
+			WithModel("gpt-5.4").
+			WithCwd("/repo").
+			WithSandbox(types.SandboxReadOnly).
+			WithApprovalPolicy(types.ApprovalOnRequest).
+			WithMCPServers(defaultServers),
+		nil,
+	)
+	if p["model"] != "gpt-5.4" || p["cwd"] != "/repo" {
+		t.Fatalf("model/cwd changed while adding MCP config: %+v", p)
+	}
+	if p["sandbox"] != string(types.SandboxReadOnly) || p["approvalPolicy"] != string(types.ApprovalOnRequest) {
+		t.Fatalf("sandbox/approval changed while adding MCP config: %+v", p)
+	}
+
+	cfg, ok := p["config"].(map[string]any)
+	if !ok {
+		t.Fatalf("config = %T, want map[string]any; params=%+v", p["config"], p)
+	}
+	got, ok := cfg["mcp_servers"].(map[string]types.McpServerConfig)
+	if !ok {
+		t.Fatalf("mcp_servers = %T, want map[string]types.McpServerConfig", cfg["mcp_servers"])
+	}
+	if got["local"].Kind() != "stdio" {
+		t.Fatalf("local kind = %q, want stdio", got["local"].Kind())
+	}
+}
+
+func TestBuildThreadStartParams_PerThreadMCPServersOverrideDefaults(t *testing.T) {
+	t.Parallel()
+
+	defaultServers := map[string]types.McpServerConfig{
+		"default": types.McpStdioConfig{Command: "default-mcp"},
+	}
+	threadServers := map[string]types.McpServerConfig{
+		"thread": types.McpStreamableHTTPConfig{URL: "http://127.0.0.1:8080/mcp"},
+	}
+	p := buildThreadStartParams(
+		types.NewCodexOptions().WithMCPServers(defaultServers),
+		&types.ThreadOptions{MCPServers: threadServers},
+	)
+
+	cfg := p["config"].(map[string]any)
+	got := cfg["mcp_servers"].(map[string]types.McpServerConfig)
+	if _, ok := got["default"]; ok {
+		t.Fatalf("default MCP server leaked into per-thread override: %+v", got)
+	}
+	if got["thread"].Kind() != "http" {
+		t.Fatalf("thread kind = %q, want http", got["thread"].Kind())
+	}
+}
+
+func TestBuildThreadStartParams_EmptyThreadMCPServersPreserveDefaults(t *testing.T) {
+	t.Parallel()
+
+	defaultServers := map[string]types.McpServerConfig{
+		"default": types.McpStdioConfig{Command: "default-mcp"},
+	}
+	p := buildThreadStartParams(
+		types.NewCodexOptions().WithMCPServers(defaultServers),
+		&types.ThreadOptions{MCPServers: map[string]types.McpServerConfig{}},
+	)
+
+	cfg := p["config"].(map[string]any)
+	got := cfg["mcp_servers"].(map[string]types.McpServerConfig)
+	if got["default"].Kind() != "stdio" {
+		t.Fatalf("default kind = %q, want stdio", got["default"].Kind())
+	}
+}
+
 func TestBuildThreadStartParams_GranularApprovalPolicyUsesStructuredObject(t *testing.T) {
 	t.Parallel()
 

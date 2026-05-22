@@ -513,17 +513,22 @@ func (c *Client) ArchiveThread(ctx context.Context, threadID string) error {
 func buildThreadStartParams(clientOpts *types.CodexOptions, opts *types.ThreadOptions) map[string]any {
 	p := map[string]any{}
 	// Apply client defaults first.
-	if clientOpts.DefaultModel != "" {
+	if clientOpts != nil && clientOpts.DefaultModel != "" {
 		p["model"] = clientOpts.DefaultModel
 	}
-	if clientOpts.DefaultCwd != "" {
+	if clientOpts != nil && clientOpts.DefaultCwd != "" {
 		p["cwd"] = clientOpts.DefaultCwd
 	}
-	if clientOpts.DefaultSandbox != "" {
+	if clientOpts != nil && clientOpts.DefaultSandbox != "" {
 		p["sandbox"] = string(clientOpts.DefaultSandbox)
 	}
-	if clientOpts.DefaultApprovalPolicy != "" {
+	if clientOpts != nil && clientOpts.DefaultApprovalPolicy != "" {
 		p["approvalPolicy"] = encodeApprovalPolicy(clientOpts.DefaultApprovalPolicy)
+	}
+	if servers := resolveMCPServers(clientOpts, opts); len(servers) > 0 {
+		p["config"] = map[string]any{
+			"mcp_servers": servers,
+		}
 	}
 	// Per-call overrides win.
 	if opts != nil {
@@ -541,6 +546,16 @@ func buildThreadStartParams(clientOpts *types.CodexOptions, opts *types.ThreadOp
 		}
 	}
 	return p
+}
+
+func resolveMCPServers(clientOpts *types.CodexOptions, opts *types.ThreadOptions) map[string]types.McpServerConfig {
+	if opts != nil && len(opts.MCPServers) > 0 {
+		return opts.MCPServers
+	}
+	if clientOpts != nil && len(clientOpts.DefaultMCPServers) > 0 {
+		return clientOpts.DefaultMCPServers
+	}
+	return nil
 }
 
 // extractThreadID pulls thread.id from a thread/start or thread/resume or

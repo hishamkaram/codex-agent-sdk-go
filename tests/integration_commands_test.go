@@ -11,8 +11,9 @@
 // any row is unmarked.
 //
 // File-level safety nets:
-//   - safetyNetCodexConfig is NOT applied here because none of these
-//     methods writes config.toml. Read-only.
+//   - Read-only tests avoid config writes except the OAuth MCP status
+//     fixture, which writes a temporary server under safetyNetCodexConfig.
+//   - Mutating config tests below call safetyNetCodexConfig individually.
 //   - Throwaway threads (only used by methods that need an active
 //     thread, e.g., concurrent-during-turn variants) get the
 //     _v040_probe_<unix> prefix and are archived on Cleanup.
@@ -28,11 +29,16 @@ package tests
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -273,6 +279,88 @@ func TestIntCmd_ListMCPServerStatus_ClosedClient(t *testing.T) {
 	if _, err := c.ListMCPServerStatus(context.Background()); err == nil {
 		t.Fatal("expected error")
 	}
+}
+
+func TestIntCmd_ListMCPServerStatus_OAuthPending(t *testing.T) {
+	requireCodex(t)
+	requireAuth(t)
+	safetyNetCodexConfig(t)
+	fixture := newOAuthRequiredMCPFixture(t)
+
+	configCtx, configCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	t.Cleanup(configCancel)
+	configClient, err := codex.NewClient(configCtx, types.NewCodexOptions())
+	if err != nil {
+		t.Fatalf("NewClient(config): %v", err)
+	}
+	if err := configClient.Connect(configCtx); err != nil {
+		t.Fatalf("Connect(config): %v", err)
+	}
+	if _, err := configClient.WriteConfigBatch(configCtx, []types.ConfigEntry{
+		{
+			KeyPath:       "mcp_servers.oauth_fixture.url",
+			MergeStrategy: types.MergeReplace,
+			Value:         fixture.URL + "/mcp",
+		},
+		{
+			KeyPath:       "mcp_servers.oauth_fixture.auth_type",
+			MergeStrategy: types.MergeReplace,
+			Value:         "oauth",
+		},
+	}); err != nil {
+		_ = configClient.Close(context.Background())
+		t.Fatalf("WriteConfigBatch oauth fixture: %v", err)
+	}
+	if err := configClient.Close(context.Background()); err != nil {
+		t.Fatalf("Close(config): %v", err)
+	}
+
+	statusCtx, statusCancel := context.WithTimeout(context.Background(), 45*time.Second)
+	t.Cleanup(statusCancel)
+	c, err := codex.NewClient(statusCtx, types.NewCodexOptions())
+	if err != nil {
+		t.Fatalf("NewClient(status): %v", err)
+	}
+	if err := c.Connect(statusCtx); err != nil {
+		t.Fatalf("Connect(status): %v", err)
+	}
+	t.Cleanup(func() { _ = c.Close(context.Background()) })
+
+	deadline := time.Now().Add(20 * time.Second)
+	var lastRows []string
+	for {
+		result, err := c.ListMCPServerStatus(context.Background())
+		if err != nil {
+			t.Fatalf("ListMCPServerStatus: %v", err)
+		}
+		lastRows = mcpStatusRows(result)
+		for _, srv := range result.Data {
+			if srv.Name != "oauth_fixture" {
+				continue
+			}
+			authStatus := strings.ToLower(srv.AuthStatus)
+			if !strings.Contains(authStatus, "oauth") && !strings.Contains(authStatus, "login") && authStatus != "notloggedin" {
+				t.Fatalf("oauth_fixture AuthStatus = %q, want OAuth pending/login status row; row=%+v", srv.AuthStatus, srv)
+			}
+			t.Logf("oauth fixture row: name=%s authStatus=%s", srv.Name, srv.AuthStatus)
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("oauth_fixture did not appear in MCP status list before timeout; fixture requests=%d rows=%v", fixtureRequests(fixture), lastRows)
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+}
+
+func mcpStatusRows(result *types.MCPServerStatusListResult) []string {
+	if result == nil {
+		return nil
+	}
+	rows := make([]string, 0, len(result.Data))
+	for _, srv := range result.Data {
+		rows = append(rows, srv.Name+":"+srv.AuthStatus)
+	}
+	return rows
 }
 
 // ====================================================================
@@ -851,6 +939,49 @@ func TestIntCmd_ThreadSteer_NoActiveTurn(t *testing.T) {
 	}
 }
 
+func TestIntCmd_ThreadSteer_ActiveRunStreamed(t *testing.T) {
+	requireRunTurns(t)
+	c := connectReadOnlyClient(t)
+	thread := newThrowawayThread(t, c)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	events, err := thread.RunStreamed(ctx, "Use the shell tool to run: sleep 2; echo ready. Then answer with the output.", nil)
+	if err != nil {
+		t.Fatalf("RunStreamed: %v", err)
+	}
+
+	steered := false
+	steer := func() {
+		if steered {
+			return
+		}
+		err := thread.Steer(ctx, "Also include the word STEERED in the final answer.")
+		if err == nil {
+			steered = true
+			return
+		}
+		if strings.Contains(err.Error(), "no active turn") {
+			return
+		}
+		t.Fatalf("Steer: %v", err)
+	}
+
+	steer()
+	for ev := range events {
+		if _, ok := ev.(*types.TurnStarted); ok {
+			steer()
+		}
+	}
+	if ctx.Err() != nil {
+		t.Fatalf("RunStreamed context ended before turn completion: %v", ctx.Err())
+	}
+	if !steered {
+		t.Fatal("never observed an active turn to steer")
+	}
+}
+
 // ====================================================================
 // Thread.Compact — async with pre-installed subscription
 // ====================================================================
@@ -1116,6 +1247,76 @@ func newThrowawayThread(t *testing.T, c *codex.Client) *codex.Thread {
 		}
 	})
 	return thread
+}
+
+type oauthMCPFixture struct {
+	*httptest.Server
+	requests atomic.Int32
+}
+
+func newOAuthRequiredMCPFixture(t *testing.T) *oauthMCPFixture {
+	t.Helper()
+
+	fixture := &oauthMCPFixture{}
+	var serverURL string
+	fixture.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fixture.requests.Add(1)
+
+		switch {
+		case r.URL.Path == "/mcp":
+			metadataURL := serverURL + "/.well-known/oauth-protected-resource"
+			w.Header().Set("WWW-Authenticate", fmt.Sprintf(`Bearer resource_metadata="%s"`, metadataURL))
+			http.Error(w, "authorization required", http.StatusUnauthorized)
+		case r.URL.Path == "/.well-known/oauth-protected-resource":
+			writeJSON(w, map[string]any{
+				"resource":              serverURL + "/mcp",
+				"authorization_servers": []string{serverURL},
+			})
+		case r.URL.Path == "/.well-known/oauth-authorization-server":
+			writeJSON(w, map[string]any{
+				"issuer":                                serverURL,
+				"authorization_endpoint":                serverURL + "/authorize",
+				"token_endpoint":                        serverURL + "/token",
+				"registration_endpoint":                 serverURL + "/register",
+				"response_types_supported":              []string{"code"},
+				"grant_types_supported":                 []string{"authorization_code", "refresh_token"},
+				"code_challenge_methods_supported":      []string{"S256"},
+				"token_endpoint_auth_methods_supported": []string{"none"},
+			})
+		case r.URL.Path == "/register":
+			writeJSONWithStatus(w, http.StatusCreated, map[string]any{
+				"client_id":                  "agentd-sdk-test-client",
+				"redirect_uris":              []string{"http://127.0.0.1/callback"},
+				"token_endpoint_auth_method": "none",
+			})
+		case r.URL.Path == "/authorize":
+			http.Error(w, "interactive OAuth required", http.StatusBadRequest)
+		case r.URL.Path == "/token":
+			http.Error(w, "token unavailable in test fixture", http.StatusBadRequest)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	serverURL = fixture.URL
+	t.Cleanup(fixture.Close)
+	return fixture
+}
+
+func fixtureRequests(f *oauthMCPFixture) int32 {
+	if f == nil {
+		return 0
+	}
+	return f.requests.Load()
+}
+
+func writeJSON(w http.ResponseWriter, v any) {
+	writeJSONWithStatus(w, http.StatusOK, v)
+}
+
+func writeJSONWithStatus(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
 }
 
 // ptrStr is a nil-safe stringifier for *string fields.

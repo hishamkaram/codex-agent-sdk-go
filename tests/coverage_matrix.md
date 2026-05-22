@@ -34,7 +34,7 @@ verified against **codex 0.130.0** on **2026-05-13** via
 | `ListExperimentalFeatures` | closed client | `TestIntCmd_ListExperimentalFeatures_ClosedClient` | ✅ |
 | `ListMCPServerStatus` | happy path | `TestIntCmd_ListMCPServerStatus_Happy` | ✅ |
 | `ListMCPServerStatus` | closed client | `TestIntCmd_ListMCPServerStatus_ClosedClient` | ✅ |
-| `ListMCPServerStatus` | OAuth-pending server | — | ⏭ TEST-DEFERRED-v0.4.1: requires contriving an OAuth-requiring MCP server fixture |
+| `ListMCPServerStatus` | OAuth-pending server (`authStatus=notLoggedIn`) | `TestIntCmd_ListMCPServerStatus_OAuthPending` | ✅ |
 | `ListApps` | happy or 403 auth error | `TestIntCmd_ListApps_HappyOrAuthError` | ✅ |
 | `ListApps` | closed client | `TestIntCmd_ListApps_ClosedClient` | ✅ |
 | `ListSkills` | happy path | `TestIntCmd_ListSkills_Happy` | ✅ |
@@ -71,7 +71,7 @@ verified against **codex 0.130.0** on **2026-05-13** via
 | `Thread.SetName` | happy path | `TestIntCmd_ThreadSetName_Happy` | ✅ |
 | `Thread.SetName` | empty name | `TestIntCmd_ThreadSetName_EmptyName` | ✅ |
 | `Thread.Steer` | no active turn | `TestIntCmd_ThreadSteer_NoActiveTurn` | ✅ |
-| `Thread.Steer` | happy with active turn | — | ⏭ TEST-DEFERRED-v0.4.1: requires streaming turn scaffolding beyond the simple `thread.Run` path |
+| `Thread.Steer` | happy with active turn | `TestIntCmd_ThreadSteer_ActiveRunStreamed` | 🔒 |
 | `Thread.CleanBackgroundTerminals` | feature not enabled | `TestIntCmd_CleanBackgroundTerminals_FeatureNotEnabled` | ✅ |
 | `Thread.CleanBackgroundTerminals` | happy with capability | `TestIntCmd_CleanBackgroundTerminals_HappyWithCapability` | ✅ |
 
@@ -125,15 +125,15 @@ verified against **codex 0.130.0** on **2026-05-13** via
 | Batch write vs serial write equivalence | `TestIntInteract_BatchVsSerialEquivalence` | ✅ |
 | Thread cwd stored from ThreadOptions | `TestIntInteract_ThreadCwd_GitDiffUsesIt` | ✅ |
 | Thread cwd override via ResumeOptions | `TestIntInteract_ThreadCwd_ResumeCarriesCwd` | ✅ (skipped on empty thread) |
-| WriteConfigValue(`hooks.*`) while HookCallback active | — | ⏭ TEST-DEFERRED-v0.4.1: runtime guard planned; see Risk R7 in plan |
+| WriteConfigValue(`hooks.*`) while HookCallback active | `TestIntegration_HookCallbackBlocksHooksConfigWrites` | ✅ |
 
 ## Summary
 
-- **Total integration tests**: 71 (across 4 test files)
-- **Total unit tests added for v0.4.0**: 47
+- **Total integration tests**: 78 (across 4 test files)
+- **Total unit tests added for v0.4.0**: 52
 - **Stress**: every batch passes 3-5 consecutive `-count=5` runs clean
 - **Upstream quirks documented**: 3 (Compact notification, ListApps 403, Detached review needs rollout)
-- **Deferred with rationale**: 3 (MCP OAuth probe, Steer happy-path, hooks.* guard)
+- **Deferred with rationale**: 0
 
 ## How to run
 

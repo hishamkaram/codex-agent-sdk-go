@@ -257,6 +257,57 @@ func TestClientCommands_MutatingNotConnected(t *testing.T) {
 	}
 }
 
+func TestClientCommands_HookCallbackBlocksHooksConfigWrites(t *testing.T) {
+	t.Parallel()
+
+	c, _ := NewClient(context.Background(), types.NewCodexOptions().WithHookCallback(types.DefaultAllowHookHandler))
+	c.connected.Store(true)
+
+	_, err := c.WriteConfigValue(context.Background(), "hooks.PreToolUse", []any{}, types.MergeReplace)
+	if err == nil {
+		t.Fatal("expected hooks config write to be blocked")
+	}
+	if !strings.Contains(err.Error(), "WithHookCallback owns generated hooks.json") {
+		t.Fatalf("err = %q, want hook ownership guard", err)
+	}
+
+	_, err = c.WriteConfigBatch(context.Background(), []types.ConfigEntry{
+		{KeyPath: "model", Value: "gpt-5.4"},
+		{KeyPath: "hooks", Value: map[string]any{}},
+	})
+	if err == nil {
+		t.Fatal("expected hooks batch config write to be blocked")
+	}
+	if !strings.Contains(err.Error(), "WriteConfigBatch") || !strings.Contains(err.Error(), "hooks") {
+		t.Fatalf("err = %q, want batch hook key context", err)
+	}
+}
+
+func TestClientCommands_HookConfigKeyDetection(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		key  string
+		want bool
+	}{
+		{"hooks", true},
+		{"hooks.PreToolUse", true},
+		{"hooks.pre_tool_use.0", true},
+		{"model", false},
+		{"features.codex_hooks", false},
+		{"hooks_json", false},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.key, func(t *testing.T) {
+			t.Parallel()
+			if got := isHooksConfigKeyPath(tt.key); got != tt.want {
+				t.Fatalf("isHooksConfigKeyPath(%q) = %v, want %v", tt.key, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestClassifyRPCError_FeatureNotEnabled(t *testing.T) {
 	t.Parallel()
 	// Verify the wire-error→typed-error mapping for the
