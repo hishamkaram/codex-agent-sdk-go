@@ -312,6 +312,9 @@ func (c *Client) WriteConfigValue(ctx context.Context, keyPath string, value any
 	if keyPath == "" {
 		return nil, fmt.Errorf("codex.Client.WriteConfigValue: keyPath must not be empty")
 	}
+	if err := c.rejectHookConfigWrite("WriteConfigValue", keyPath); err != nil {
+		return nil, err
+	}
 	if strategy == "" {
 		strategy = types.MergeReplace
 	}
@@ -342,6 +345,11 @@ func (c *Client) WriteConfigBatch(ctx context.Context, edits []types.ConfigEntry
 	if len(edits) == 0 {
 		return nil, fmt.Errorf("codex.Client.WriteConfigBatch: edits must not be empty")
 	}
+	for _, e := range edits {
+		if err := c.rejectHookConfigWrite("WriteConfigBatch", e.KeyPath); err != nil {
+			return nil, err
+		}
+	}
 	// Default mergeStrategy to MergeReplace per-edit when caller left
 	// it empty. Mutates a copy so caller's slice is untouched.
 	normalized := make([]types.ConfigEntry, len(edits))
@@ -362,6 +370,23 @@ func (c *Client) WriteConfigBatch(ctx context.Context, edits []types.ConfigEntry
 		return nil, fmt.Errorf("codex.Client.WriteConfigBatch: decode response: %w", err)
 	}
 	return &out, nil
+}
+
+func (c *Client) rejectHookConfigWrite(callerName, keyPath string) error {
+	if !isHooksConfigKeyPath(keyPath) {
+		return nil
+	}
+	if c == nil || c.opts == nil || c.opts.HookCallback == nil {
+		return nil
+	}
+	if !c.connected.Load() || c.closed.Load() {
+		return nil
+	}
+	return fmt.Errorf("codex.Client.%s: refusing to write %q while WithHookCallback owns generated hooks.json; close this client or create one without WithHookCallback", callerName, keyPath)
+}
+
+func isHooksConfigKeyPath(keyPath string) bool {
+	return keyPath == "hooks" || strings.HasPrefix(keyPath, "hooks.")
 }
 
 // SetModel is sugar for `WriteConfigValue("model", model, MergeReplace)`.

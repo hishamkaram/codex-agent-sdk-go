@@ -2,8 +2,9 @@ package types
 
 // McpServerConfig describes a single Model Context Protocol server the
 // codex session may call into. Configured via
-// CodexOptions.WithMCPServers(...). The SDK delivers the full map to the
-// codex app-server via `config/batchWrite` immediately after initialize.
+// CodexOptions.WithMCPServers(...) or ThreadOptions.MCPServers. The SDK
+// delivers the selected map as a per-thread `config.mcp_servers` override
+// in `thread/start`.
 type McpServerConfig interface {
 	isMcpServerConfig()
 	// Kind returns a string discriminator for debugging/logging.

@@ -266,6 +266,38 @@ func TestLifecycle_ConcurrentClientsConflict(t *testing.T) {
 	}
 }
 
+func TestIntegration_HookCallbackBlocksHooksConfigWrites(t *testing.T) {
+	safetyNetCodexConfig(t)
+	client := connectWithCallback(t, types.DefaultAllowHookHandler)
+
+	if _, err := client.WriteConfigValue(context.Background(), "hooks.PreToolUse", []any{}, types.MergeReplace); err == nil {
+		t.Fatal("expected WriteConfigValue hooks.* guard")
+	} else if !strings.Contains(err.Error(), "WithHookCallback owns generated hooks.json") {
+		t.Fatalf("WriteConfigValue err = %q, want hook ownership guard", err)
+	}
+
+	if _, err := client.WriteConfigBatch(context.Background(), []types.ConfigEntry{
+		{KeyPath: "model", Value: "gpt-5.4"},
+		{KeyPath: "hooks", Value: map[string]any{}},
+	}); err == nil {
+		t.Fatal("expected WriteConfigBatch hooks guard")
+	} else if !strings.Contains(err.Error(), "WithHookCallback owns generated hooks.json") {
+		t.Fatalf("WriteConfigBatch err = %q, want hook ownership guard", err)
+	}
+
+	cfg, err := client.ReadConfig(context.Background())
+	if err != nil {
+		t.Fatalf("ReadConfig: %v", err)
+	}
+	model := "gpt-5.4"
+	if cfg.Model != nil && *cfg.Model != "" {
+		model = *cfg.Model
+	}
+	if _, err := client.WriteConfigValue(context.Background(), "model", model, types.MergeReplace); err != nil {
+		t.Fatalf("unrelated config write should still work while hook callback owns hooks.json: %v", err)
+	}
+}
+
 // TestHookCallback_Allow is the canonical end-to-end callback test.
 // Asserts that the Go callback fires for at least one preToolUse hook
 // during a tiny turn, and that the new HookInput fields (Model,
