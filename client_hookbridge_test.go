@@ -9,6 +9,7 @@ import (
 	"time"
 
 	sdklog "github.com/hishamkaram/codex-agent-sdk-go/internal/log"
+	"github.com/hishamkaram/codex-agent-sdk-go/types"
 )
 
 // newTestClient builds a Client with just enough wiring for the hook
@@ -218,4 +219,47 @@ func TestRestoreUserHooksJSON_NoOpWhenNeverInstalled(t *testing.T) {
 	c := newTestClient(t)
 	// Did not call installHooksJSON. restoreUserHooksJSON must be a no-op.
 	c.restoreUserHooksJSON()
+}
+
+func TestSetupHookBridge_DefaultIsolatedCODEXHome(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	shim := filepath.Join(t.TempDir(), "codex-sdk-hook-shim")
+	if err := os.WriteFile(shim, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatalf("write shim: %v", err)
+	}
+	c := newTestClient(t)
+	c.opts = types.NewCodexOptions().
+		WithShimPath(shim).
+		WithHookCallback(types.DefaultAllowHookHandler)
+	var env []string
+	if err := c.setupHookBridge(&env); err != nil {
+		t.Fatalf("setupHookBridge: %v", err)
+	}
+	t.Cleanup(func() {
+		if c.hookListener != nil {
+			_ = c.hookListener.Close()
+		}
+		c.restoreUserHooksJSON()
+		if c.hookCodexHome != "" {
+			_ = os.RemoveAll(c.hookCodexHome)
+		}
+	})
+
+	userHooks := filepath.Join(home, ".codex", "hooks.json")
+	if _, err := os.Stat(userHooks); !os.IsNotExist(err) {
+		t.Fatalf("user hooks.json should not be created in isolated mode, stat err=%v", err)
+	}
+	var codexHome string
+	for _, entry := range env {
+		if strings.HasPrefix(entry, "CODEX_HOME=") {
+			codexHome = strings.TrimPrefix(entry, "CODEX_HOME=")
+		}
+	}
+	if codexHome == "" || codexHome != c.hookCodexHome {
+		t.Fatalf("CODEX_HOME env = %q, hookCodexHome=%q", codexHome, c.hookCodexHome)
+	}
+	if _, err := os.Stat(filepath.Join(codexHome, "hooks.json")); err != nil {
+		t.Fatalf("isolated hooks.json missing: %v", err)
+	}
 }

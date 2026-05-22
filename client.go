@@ -54,6 +54,8 @@ type Client struct {
 	// backup of the user's pre-Connect hooks.json. Empty when no hooks.json
 	// existed before Connect (Close removes the SDK-written hooks.json instead).
 	hookBackupPath string
+	// hookCodexHome is non-empty only for isolated hook mode; Close removes it.
+	hookCodexHome string
 	// hookHadUserConfig records whether a hooks.json existed at Connect time.
 	hookHadUserConfig bool
 
@@ -101,12 +103,9 @@ func (c *Client) Connect(ctx context.Context) error {
 		return fmt.Errorf("codex.Client.Connect: client is closed")
 	}
 
-	// v0.3.0: hook-bridge auto-wiring is end-to-end. When HookCallback is
-	// set, the SDK starts a Unix socket listener under
-	// ~/.cache/codex-sdk/, backs up the user's ~/.codex/hooks.json (if
-	// any), and writes a generated hooks.json that points codex at the
-	// shim. Close restores the user's original config byte-for-byte. See
-	// setupHookBridge for the full lifecycle.
+	// Hook-bridge auto-wiring is end-to-end. By default, HookCallback uses an
+	// isolated CODEX_HOME containing SDK-generated hooks.json. Opt-in
+	// user-home mode preserves the original backup/restore behavior.
 	extraEnv := append([]string(nil), c.opts.Env...)
 	if c.opts.HookCallback != nil {
 		if err := c.setupHookBridge(&extraEnv); err != nil {
@@ -243,6 +242,13 @@ func (c *Client) Close(ctx context.Context) error {
 	// SDK-written file when no original existed). Logged but never
 	// fatal — Close must remain best-effort.
 	c.restoreUserHooksJSON()
+	if c.hookCodexHome != "" {
+		if err := os.RemoveAll(c.hookCodexHome); err != nil {
+			c.logger.Warn("removing isolated CODEX_HOME failed",
+				zap.String("codex_home", c.hookCodexHome), zap.Error(err))
+		}
+		c.hookCodexHome = ""
+	}
 	return trErr
 }
 
@@ -263,11 +269,10 @@ const staleBackupAge = 60 * time.Second
 const hooksJSONTimeoutSeconds = 30
 
 // setupHookBridge starts the Unix socket listener, resolves the shim
-// binary, and installs the generated hooks.json so codex actually
-// invokes the shim. Wires the listener path through
-// CODEX_SDK_HOOK_SOCKET so the shim can dial back. Calls
-// installHooksJSON which backs up the user's existing hooks.json (if
-// any). Close calls restoreUserHooksJSON to undo the changes.
+// binary, and installs generated hooks.json so codex actually invokes
+// the shim. Wires the listener path through CODEX_SDK_HOOK_SOCKET so
+// the shim can dial back. Default mode uses an isolated CODEX_HOME;
+// user-home mode backs up ~/.codex/hooks.json and restores it on Close.
 //
 // On any error after the listener starts, this method tears the listener
 // down so the caller can return cleanly.
@@ -298,10 +303,37 @@ func (c *Client) setupHookBridge(extraEnv *[]string) error {
 	}
 	c.hookListener = ln
 
-	if err := c.installHooksJSON(home, shimPath); err != nil {
+	mode := c.opts.HookConfigMode
+	if mode == "" {
+		mode = types.HookConfigModeIsolated
+	}
+	switch mode {
+	case types.HookConfigModeIsolated:
+		codexHome, err := os.MkdirTemp("", "codex-sdk-home-*")
+		if err != nil {
+			_ = ln.Close()
+			c.hookListener = nil
+			return fmt.Errorf("isolated CODEX_HOME: %w", err)
+		}
+		c.hookCodexHome = codexHome
+		if err := c.installIsolatedHooksJSON(codexHome, shimPath); err != nil {
+			_ = os.RemoveAll(codexHome)
+			c.hookCodexHome = ""
+			_ = ln.Close()
+			c.hookListener = nil
+			return err
+		}
+		*extraEnv = append(*extraEnv, "CODEX_HOME="+codexHome)
+	case types.HookConfigModeUserHome:
+		if err := c.installHooksJSON(home, shimPath); err != nil {
+			_ = ln.Close()
+			c.hookListener = nil
+			return err
+		}
+	default:
 		_ = ln.Close()
 		c.hookListener = nil
-		return err
+		return fmt.Errorf("unsupported hook config mode %q", mode)
 	}
 
 	*extraEnv = append(*extraEnv, "CODEX_SDK_HOOK_SOCKET="+socketPath)
@@ -310,6 +342,23 @@ func (c *Client) setupHookBridge(extraEnv *[]string) error {
 		zap.String("hooks_json", c.hookHooksJSONPath),
 		zap.String("socket", socketPath),
 		zap.Bool("backed_up_user_config", c.hookHadUserConfig))
+	return nil
+}
+
+func (c *Client) installIsolatedHooksJSON(codexHome, shimPath string) error {
+	if err := os.MkdirAll(codexHome, 0o700); err != nil {
+		return fmt.Errorf("ensure isolated CODEX_HOME: %w", err)
+	}
+	hooksPath := filepath.Join(codexHome, "hooks.json")
+	hooksJSON, err := hookbridge.GenerateHooksJSON(shimPath, hooksJSONTimeoutSeconds)
+	if err != nil {
+		return fmt.Errorf("generate hooks.json: %w", err)
+	}
+	if err := os.WriteFile(hooksPath, hooksJSON, 0o600); err != nil {
+		return fmt.Errorf("write isolated hooks.json: %w", err)
+	}
+	c.hookHooksJSONPath = hooksPath
+	c.hookHadUserConfig = false
 	return nil
 }
 

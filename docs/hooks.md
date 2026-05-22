@@ -40,7 +40,7 @@ Whatever codex hooks you already run (command handlers, agent handlers,
 prompt handlers) — the SDK observes them. Observer mode does NOT modify
 your hooks.json.
 
-## Tier 2: Programmatic Go callbacks (v0.3.0)
+## Tier 2: Programmatic Go callbacks
 
 Register a Go function and the SDK takes care of everything else:
 
@@ -55,8 +55,8 @@ opts := types.NewCodexOptions().
     })
 
 client, _ := codex.NewClient(ctx, opts)
-client.Connect(ctx) // SDK writes ~/.codex/hooks.json + starts socket
-defer client.Close(ctx) // SDK restores ~/.codex/hooks.json
+client.Connect(ctx) // SDK starts socket + isolated CODEX_HOME
+defer client.Close(ctx) // SDK removes isolated CODEX_HOME
 ```
 
 ### What Connect / Close do
@@ -67,19 +67,30 @@ On `Connect` (when `WithHookCallback` is set), the SDK:
    `$HOME/go/bin`, `./.bin`, or `WithShimPath`).
 2. Starts a Unix socket listener at
    `~/.cache/codex-sdk/hook-<pid>.sock`.
-3. Backs up your existing `~/.codex/hooks.json` (if any) to
-   `~/.codex/hooks.json.sdk-backup-<pid>`.
-4. Writes a generated `~/.codex/hooks.json` that points codex at the
-   shim for all five event names.
-5. Exports `CODEX_SDK_HOOK_SOCKET=<socket path>` to the codex
+3. Creates a temporary isolated `CODEX_HOME`.
+4. Writes generated `hooks.json` in that isolated `CODEX_HOME`.
+5. Exports `CODEX_HOME=<tempdir>` and
+   `CODEX_SDK_HOOK_SOCKET=<socket path>` to the codex
    subprocess so the shim can dial back.
 
-On `Close`, the SDK restores your original `~/.codex/hooks.json`
-byte-for-byte (or removes the file entirely if you had no original).
+On `Close`, the SDK removes the isolated `CODEX_HOME`.
+
+To temporarily mutate user `~/.codex/hooks.json` instead, opt in
+explicitly:
+
+```go
+opts := types.NewCodexOptions().
+    WithHookCallback(handler).
+    WithHookConfigMode(types.HookConfigModeUserHome)
+```
+
+In user-home mode, `Connect` backs up your existing
+`~/.codex/hooks.json` (if any), writes generated config for the SDK
+lifetime, and `Close` restores the original byte-for-byte.
 
 If the SDK process is killed before `Close` runs (`kill -9`), the next
-SDK `Connect` finds the stale backup file (>60 seconds old), restores
-it, and proceeds. Your data is never lost across crashes.
+SDK user-home `Connect` finds the stale backup file (>60 seconds old),
+restores it, and proceeds. Your data is never lost across crashes.
 
 ### Install the shim (one-time)
 
@@ -145,11 +156,13 @@ Notes on what each decision actually does under codex 0.121.0:
 
 ### Concurrent SDK clients
 
-v0.3.0 supports **one** `WithHookCallback`-enabled `Client` per machine.
-A second `Client` whose Connect overlaps with the first will fail with
+Isolated hook mode supports multiple `WithHookCallback` Clients because
+each Client gets its own `CODEX_HOME`.
+
+User-home hook mode supports **one** `WithHookCallback`-enabled `Client`
+per machine. A second overlapping user-home Client fails with
 `concurrent codex SDK Client detected`. This prevents the silent
-corruption that would happen if two backups chained: the second Close
-would restore the first SDK's generated config over your true original.
+corruption that would happen if two backups chained.
 
 If you need multiple Clients in one process, share a single
 HookCallback-enabled Client and route from it. Multi-client merge mode
@@ -157,10 +170,9 @@ is on the v0.3.1 roadmap.
 
 ### Caveats (upstream codex 0.121.0 limitations)
 
-- **`codex exec` hangs** when `~/.codex/hooks.json` is present.
-  `codex app-server` (this SDK's transport) is unaffected. If you run
-  `codex exec` manually while an SDK Client is connected, you'll hit
-  the hang — close the SDK Client first.
+- **`codex exec` hangs** when hook config is present in the same
+  `CODEX_HOME`. The default isolated SDK mode avoids mutating your user
+  home, so manual `codex exec` in your normal shell is unaffected.
 - **`PreToolUse.updatedInput` is rejected**. codex 0.121.0 acknowledges
   the field in its wire schema but logs `"PreToolUse hook returned
   unsupported updatedInput"` and does not consume it. The SDK silently

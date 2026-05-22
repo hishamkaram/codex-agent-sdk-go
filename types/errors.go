@@ -306,3 +306,57 @@ func IsAGENTSMDExistsError(err error) bool {
 	var e *AGENTSMDExistsError
 	return errors.As(err, &e)
 }
+
+// ThreadHistoryError is returned for read-only persisted history failures.
+type ThreadHistoryError struct {
+	Code     string
+	ThreadID string
+	Message  string
+	Cause    error
+}
+
+func (e *ThreadHistoryError) Error() string {
+	if e == nil {
+		return "<nil ThreadHistoryError>"
+	}
+	msg := e.Message
+	if msg == "" {
+		msg = e.Code
+	}
+	if e.ThreadID != "" {
+		msg = fmt.Sprintf("%s (thread_id=%s)", msg, e.ThreadID)
+	}
+	if e.Cause != nil {
+		return fmt.Sprintf("%s: %v", msg, e.Cause)
+	}
+	return msg
+}
+
+func (e *ThreadHistoryError) Unwrap() error { return e.Cause }
+
+const (
+	ThreadHistoryInvalidThreadID    = "invalid_thread_id"
+	ThreadHistoryNotFound           = "thread_not_found"
+	ThreadHistoryUnsupportedPaging  = "unsupported_history_paging"
+	ThreadHistoryMalformed          = "malformed_history"
+	ThreadHistoryFeatureUnavailable = "feature_unavailable"
+)
+
+func NewThreadHistoryError(code, threadID, message string, cause error) *ThreadHistoryError {
+	return &ThreadHistoryError{Code: code, ThreadID: threadID, Message: message, Cause: cause}
+}
+
+func IsThreadHistoryError(err error) bool {
+	var e *ThreadHistoryError
+	return errors.As(err, &e)
+}
+
+func IsInvalidThreadIDError(err error) bool {
+	var e *ThreadHistoryError
+	return errors.As(err, &e) && e.Code == ThreadHistoryInvalidThreadID
+}
+
+func IsThreadNotFoundError(err error) bool {
+	var e *ThreadHistoryError
+	return errors.As(err, &e) && e.Code == ThreadHistoryNotFound
+}
