@@ -99,6 +99,10 @@ func TestThread_Mutating_ClosedThread(t *testing.T) {
 			_, err := th.StartReview(context.Background(), reviewOptsForTest())
 			return err
 		}},
+		{"StartReviewStreamed", func(th *Thread) error {
+			_, err := th.StartReviewStreamed(context.Background(), reviewOptsForTest())
+			return err
+		}},
 	}
 	for _, tt := range tests {
 		tt := tt
@@ -127,6 +131,34 @@ func TestThread_StartReview_TargetRequired(t *testing.T) {
 		t.Fatal("expected error for empty target")
 	}
 	if !strings.Contains(err.Error(), "opts.Target.Type is required") {
+		t.Errorf("err = %q", err)
+	}
+}
+
+func TestThread_StartReviewStreamed_TargetRequired(t *testing.T) {
+	t.Parallel()
+	th := &Thread{id: "test"}
+	_, err := th.StartReviewStreamed(context.Background(), types.ReviewOptions{})
+	if err == nil {
+		t.Fatal("expected error for empty target")
+	}
+	if !strings.Contains(err.Error(), "opts.Target.Type is required") {
+		t.Errorf("err = %q", err)
+	}
+}
+
+func TestThread_StartReviewStreamed_RejectsDetachedDelivery(t *testing.T) {
+	t.Parallel()
+	th := &Thread{id: "test"}
+	th.activeTurnID.Store("")
+	_, err := th.StartReviewStreamed(context.Background(), types.ReviewOptions{
+		Target:   types.ReviewTargetUncommittedChanges(),
+		Delivery: types.ReviewDetached,
+	})
+	if err == nil {
+		t.Fatal("expected error for detached delivery")
+	}
+	if !strings.Contains(err.Error(), "detached review delivery is not streamable") {
 		t.Errorf("err = %q", err)
 	}
 }
