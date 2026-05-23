@@ -235,3 +235,46 @@ func (t *Thread) StartReview(ctx context.Context, opts types.ReviewOptions) (*ty
 	}
 	return &result, nil
 }
+
+// StartReviewStreamed invokes codex's reviewer on the current thread and
+// returns the review event stream. It is the review/start equivalent of
+// RunStreamed: the caller owns the returned channel until the review turn
+// emits TurnCompleted or TurnFailed, or ctx is canceled.
+//
+// Only inline delivery is streamable through this thread handle. Detached
+// review creates another thread; callers that need detached review output must
+// use StartReview and explicitly attach to the returned ReviewThreadID.
+func (t *Thread) StartReviewStreamed(ctx context.Context, opts types.ReviewOptions) (<-chan types.ThreadEvent, error) {
+	if t.closed.Load() {
+		return nil, fmt.Errorf("codex.Thread.StartReviewStreamed: thread closed")
+	}
+	if opts.Target.Type == "" {
+		return nil, fmt.Errorf("codex.Thread.StartReviewStreamed: opts.Target.Type is required (use ReviewTarget* constructors)")
+	}
+	if opts.Delivery == types.ReviewDetached {
+		return nil, fmt.Errorf("codex.Thread.StartReviewStreamed: detached review delivery is not streamable from the current thread")
+	}
+
+	t.turnMu.Lock()
+	unlockOnError := true
+	defer func() {
+		if unlockOnError {
+			t.turnMu.Unlock()
+		}
+	}()
+
+	result, err := t.StartReview(ctx, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	turnID := result.Turn.ID
+	if turnID != "" {
+		t.activeTurnID.Store(turnID)
+	}
+
+	out := make(chan types.ThreadEvent, ThreadInboxBuffer)
+	unlockOnError = false
+	go t.streamLoop(ctx, turnID, out)
+	return out, nil
+}

@@ -235,6 +235,73 @@ func TestClient_StartThreadAndRun_HappyPath(t *testing.T) {
 	}
 }
 
+func TestClient_StartReviewStreamed_HappyPath(t *testing.T) {
+	t.Parallel()
+
+	var sawReviewStart bool
+	c, srv := setupMockClient(t, types.NewCodexOptions(), func(req jsonrpc.Request) jsonrpc.Response {
+		switch req.Method {
+		case "thread/start":
+			return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{"thread":{"id":"T-review"}}`)}
+		case "review/start":
+			sawReviewStart = true
+			var params types.ReviewStartParams
+			if err := json.Unmarshal(req.Params, &params); err != nil {
+				return jsonrpc.Response{ID: req.ID, Error: &jsonrpc.RPCError{Code: -32602, Message: err.Error()}}
+			}
+			if params.ThreadID != "T-review" || params.Target.Type != "uncommittedChanges" || params.Delivery != types.ReviewInline {
+				return jsonrpc.Response{ID: req.ID, Error: &jsonrpc.RPCError{Code: -32602, Message: "unexpected review params"}}
+			}
+			return jsonrpc.Response{
+				ID:     req.ID,
+				Result: json.RawMessage(`{"reviewThreadId":"T-review","turn":{"id":"R-1","status":"running"}}`),
+			}
+		}
+		return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{}`)}
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	thread, err := c.StartThread(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	events, err := thread.StartReviewStreamed(ctx, types.ReviewOptions{
+		Target:   types.ReviewTargetUncommittedChanges(),
+		Delivery: types.ReviewInline,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !sawReviewStart {
+		t.Fatal("review/start was not called")
+	}
+
+	srv.push(notify("turn/started", map[string]any{"threadId": "T-review", "turnId": "R-1"}))
+	srv.push(notify("item/completed", map[string]any{
+		"threadId": "T-review", "turnId": "R-1", "itemId": "I-review",
+		"item": map[string]any{"type": "agentMessage", "text": "Review finding"},
+	}))
+	srv.push(notify("turn/completed", map[string]any{
+		"threadId": "T-review", "turnId": "R-1", "status": "success",
+	}))
+
+	var sawText bool
+	for ev := range events {
+		if item, ok := ev.(*types.ItemCompleted); ok {
+			msg, ok := item.Item.(*types.AgentMessage)
+			if ok && msg.Text == "Review finding" {
+				sawText = true
+			}
+		}
+	}
+	if !sawText {
+		t.Fatal("review stream did not include review output")
+	}
+}
+
 func TestClient_ThreadRun_BufferedTurnResult(t *testing.T) {
 	t.Parallel()
 
