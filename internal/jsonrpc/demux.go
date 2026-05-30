@@ -296,7 +296,7 @@ func (d *Demux) readLoop(ctx context.Context) {
 				d.logger.Error("jsonrpc.Demux: too many consecutive decode errors, terminating subprocess",
 					zap.Uint("consecutive_errors", consecutiveParseErrors))
 				d.observer.OnParseGiveUp(consecutiveParseErrors)
-				exitErr = fmt.Errorf("jsonrpc.Demux.readLoop: %w (%d consecutive)", ErrParseGiveUp, consecutiveParseErrors)
+				exitErr = fmt.Errorf("jsonrpc.Demux.readLoop: %d consecutive decode errors: %w", consecutiveParseErrors, ErrParseGiveUp)
 				if d.onUnrecoverable != nil {
 					d.onUnrecoverable(exitErr)
 				}
