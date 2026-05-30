@@ -320,7 +320,17 @@ func (c *Client) setupHookBridge(extraEnv *[]string) error {
 	if err := os.MkdirAll(cacheDir, 0o700); err != nil {
 		return fmt.Errorf("cache dir: %w", err)
 	}
-	socketPath := filepath.Join(cacheDir, fmt.Sprintf("hook-%d.sock", os.Getpid()))
+	// The hook socket is a private IPC rendezvous handed to the shim via
+	// CODEX_SDK_HOOK_SOCKET; its location is an implementation detail. The
+	// preferred path under $HOME/.cache can overflow the AF_UNIX sun_path
+	// limit (~108 bytes) on a deep $HOME or a long CI tempdir, where bind()
+	// returns a confusing EINVAL. chooseHookSocketPath relocates to a short
+	// path under the system temp dir in that case so the bind always succeeds.
+	socketPath := chooseHookSocketPath(
+		filepath.Join(cacheDir, fmt.Sprintf("hook-%d.sock", os.Getpid())),
+		hookSocketFallbackDir(),
+		os.Getpid(),
+	)
 
 	shimPath, err := resolveShimPath(c.opts.ShimPath)
 	if err != nil {
@@ -378,6 +388,50 @@ func (c *Client) setupHookBridge(extraEnv *[]string) error {
 		zap.String("socket", socketPath),
 		zap.Bool("backed_up_user_config", c.hookHadUserConfig))
 	return nil
+}
+
+// maxUnixSocketLen is a conservative cross-platform budget for an AF_UNIX
+// socket path. Linux caps sockaddr_un.sun_path at 108 bytes (107 usable
+// before the NUL terminator); macOS/BSD cap it at 104 (103 usable). Using the
+// smaller bound guarantees a path chosen here binds on every supported
+// platform.
+const maxUnixSocketLen = 103
+
+// chooseHookSocketPath returns preferred when it fits inside the AF_UNIX
+// sun_path budget, otherwise a short, collision-free path under fallbackDir.
+// The hook socket is a private IPC rendezvous whose location is handed to the
+// shim via CODEX_SDK_HOOK_SOCKET, so relocating it when the preferred path
+// would overflow sun_path is transparent — it avoids a bind-time EINVAL on a
+// deep $HOME or long CI tempdir while preserving the PID-keyed uniqueness of
+// the original name. If fallbackDir is itself pathologically long, preferred
+// is returned unchanged and bind surfaces the platform error as before.
+func chooseHookSocketPath(preferred, fallbackDir string, pid int) string {
+	if len(preferred) <= maxUnixSocketLen {
+		return preferred
+	}
+	fallback := filepath.Join(fallbackDir, fmt.Sprintf("cxh-%d.sock", pid))
+	if len(fallback) <= maxUnixSocketLen {
+		return fallback
+	}
+	return preferred
+}
+
+// hookSocketFallbackDir returns the directory that hosts the relocated hook
+// socket when the preferred path under $HOME/.cache would overflow the AF_UNIX
+// sun_path limit. It prefers $XDG_RUNTIME_DIR — the per-user, 0700, short-path
+// runtime directory provided for exactly this purpose on Linux — and falls back
+// to os.TempDir(), which is itself a per-user private directory on macOS. This
+// keeps the relocated socket owner-private, matching the 0700 ~/.cache/codex-sdk
+// directory the preferred path lives in, rather than dropping a hook-decision
+// socket into a world-writable /tmp on Linux. A set-but-stale XDG_RUNTIME_DIR
+// (not an existing directory) is ignored so bind never fails on a dead path.
+func hookSocketFallbackDir() string {
+	if dir := os.Getenv("XDG_RUNTIME_DIR"); dir != "" {
+		if info, err := os.Stat(dir); err == nil && info.IsDir() {
+			return dir
+		}
+	}
+	return os.TempDir()
 }
 
 func (c *Client) installIsolatedHooksJSON(codexHome, shimPath string) error {
