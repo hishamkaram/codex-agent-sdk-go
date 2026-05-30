@@ -1,77 +1,82 @@
 package codex
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
-// TestChooseHookSocketPath verifies the AF_UNIX sun_path overflow guard:
-// short preferred paths pass through unchanged, over-long ones relocate to a
-// short PID-keyed name under the fallback dir, and a pathologically long
-// fallback dir leaves the (still-too-long) preferred path untouched so bind
-// surfaces the platform error rather than this helper hiding it.
-func TestChooseHookSocketPath(t *testing.T) {
+// TestRelocateHookSocketUnderPrivateDir verifies the AF_UNIX sun_path overflow
+// guard AND the security property that a relocated hook socket lands inside a
+// freshly-created 0700 directory — the owner-only access gate for the
+// approval-decision channel — never directly in a world-writable temp dir.
+func TestRelocateHookSocketUnderPrivateDir(t *testing.T) {
 	t.Parallel()
 
-	const pid = 4242
-	tests := []struct {
-		name        string
-		preferred   string
-		fallbackDir string
-		wantPref    bool // result must equal preferred verbatim
-	}{
-		{
-			name:        "short preferred path used unchanged",
-			preferred:   "/home/u/.cache/codex-sdk/hook-4242.sock",
-			fallbackDir: "/tmp",
-			wantPref:    true,
-		},
-		{
-			name:        "over-long preferred relocates under fallback dir",
-			preferred:   "/tmp/claude-1000/" + strings.Repeat("x", 80) + "/.cache/codex-sdk/hook-4242.sock",
-			fallbackDir: "/tmp",
-			wantPref:    false,
-		},
-		{
-			name:        "pathological fallback dir returns preferred",
-			preferred:   "/" + strings.Repeat("p", 120) + ".sock",
-			fallbackDir: "/" + strings.Repeat("q", 120),
-			wantPref:    true,
-		},
-	}
-	for _, tt := range tests {
-		tt := tt
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
+	t.Run("short preferred path used unchanged, no dir created", func(t *testing.T) {
+		t.Parallel()
+		preferred := "/home/u/.cache/codex-sdk/hook-4242.sock"
+		got, dir := relocateHookSocketUnderPrivateDir(preferred, t.TempDir())
+		if got != preferred {
+			t.Fatalf("socketPath = %q, want preferred %q", got, preferred)
+		}
+		if dir != "" {
+			t.Fatalf("dir = %q, want empty (no relocation, nothing to clean up)", dir)
+		}
+	})
 
-			// Guard the test data itself: the "relocate" case is only
-			// meaningful if the preferred path genuinely overflows the limit.
-			if !tt.wantPref && len(tt.preferred) <= maxUnixSocketLen {
-				t.Fatalf("test setup: preferred %q (len %d) does not exceed maxUnixSocketLen %d",
-					tt.preferred, len(tt.preferred), maxUnixSocketLen)
-			}
+	t.Run("over-long preferred relocates under a fresh 0700 dir", func(t *testing.T) {
+		t.Parallel()
+		// preferred overflows unconditionally; base is the real system temp dir
+		// (short on normal hosts), so relocation under a fresh 0700 dir is the
+		// expected outcome — the same path production takes.
+		preferred := "/" + strings.Repeat("x", 120) + "/hook-4242.sock"
+		base := os.TempDir()
 
-			got := chooseHookSocketPath(tt.preferred, tt.fallbackDir, pid)
+		got, dir := relocateHookSocketUnderPrivateDir(preferred, base)
+		if dir == "" {
+			// os.TempDir() is itself pathologically long in this environment, so
+			// no relocated socket can fit sun_path; the helper correctly returns
+			// preferred rather than leaking a directory. The invariant still holds.
+			if got != preferred {
+				t.Fatalf("no-relocation path: socketPath = %q, want preferred %q", got, preferred)
+			}
+			t.Skipf("os.TempDir() %q (len %d) too long to exercise relocation", base, len(base))
+		}
+		t.Cleanup(func() { _ = os.RemoveAll(dir) })
 
-			if tt.wantPref {
-				if got != tt.preferred {
-					t.Fatalf("chooseHookSocketPath = %q, want preferred %q", got, tt.preferred)
-				}
-				return
-			}
+		if len(got) > maxUnixSocketLen {
+			t.Fatalf("relocated socket %q len=%d exceeds maxUnixSocketLen=%d", got, len(got), maxUnixSocketLen)
+		}
+		if filepath.Dir(got) != dir {
+			t.Fatalf("relocated socket %q is not directly inside returned dir %q", got, dir)
+		}
+		info, err := os.Stat(dir)
+		if err != nil {
+			t.Fatalf("relocation dir not created: %v", err)
+		}
+		// The 0700 parent dir is the atomic owner-only gate that closes the
+		// net.Listen→chmod window — assert it explicitly.
+		if perm := info.Mode().Perm(); perm != 0o700 {
+			t.Fatalf("relocation dir mode = %04o, want 0700 (owner-only gate)", perm)
+		}
+	})
 
-			if len(got) > maxUnixSocketLen {
-				t.Fatalf("relocated path %q len=%d exceeds maxUnixSocketLen=%d", got, len(got), maxUnixSocketLen)
-			}
-			want := filepath.Join(tt.fallbackDir, fmt.Sprintf("cxh-%d.sock", pid))
-			if got != want {
-				t.Fatalf("relocated path = %q, want %q", got, want)
-			}
-		})
-	}
+	t.Run("pathological base returns preferred and leaks no dir", func(t *testing.T) {
+		t.Parallel()
+		preferred := "/" + strings.Repeat("p", 120) + ".sock"
+		// A nonexistent over-long base makes MkdirTemp fail; the helper must
+		// return preferred unchanged rather than hide the eventual bind error.
+		base := filepath.Join(t.TempDir(), strings.Repeat("q", 200))
+		got, dir := relocateHookSocketUnderPrivateDir(preferred, base)
+		if got != preferred {
+			t.Fatalf("socketPath = %q, want preferred %q", got, preferred)
+		}
+		if dir != "" {
+			t.Fatalf("dir = %q, want empty when MkdirTemp fails", dir)
+		}
+	})
 }
 
 // TestHookSocketFallbackDir verifies the relocated-socket directory prefers a

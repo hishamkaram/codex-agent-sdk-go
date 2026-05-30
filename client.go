@@ -56,6 +56,10 @@ type Client struct {
 	hookBackupPath string
 	// hookCodexHome is non-empty only for isolated hook mode; Close removes it.
 	hookCodexHome string
+	// hookSocketDir is non-empty only when the hook socket was relocated under a
+	// freshly-created 0700 directory (the sun_path-overflow fallback); Close
+	// removes it. The 0700 parent is the authoritative owner-only access gate.
+	hookSocketDir string
 	// hookHadUserConfig records whether a hooks.json existed at Connect time.
 	hookHadUserConfig bool
 
@@ -284,7 +288,22 @@ func (c *Client) Close(ctx context.Context) error {
 		}
 		c.hookCodexHome = ""
 	}
+	c.cleanupHookSocketDir()
 	return trErr
+}
+
+// cleanupHookSocketDir removes the private 0700 directory that hosted a
+// relocated hook socket, if one was created. Safe to call when none was (no-op)
+// and idempotent. Best-effort: a failure is logged, never fatal.
+func (c *Client) cleanupHookSocketDir() {
+	if c.hookSocketDir == "" {
+		return
+	}
+	if err := os.RemoveAll(c.hookSocketDir); err != nil {
+		c.logger.Warn("removing hook socket dir failed",
+			zap.String("dir", c.hookSocketDir), zap.Error(err))
+	}
+	c.hookSocketDir = ""
 }
 
 // hookBackupSuffix identifies SDK-written backup files of the user's
@@ -326,11 +345,17 @@ func (c *Client) setupHookBridge(extraEnv *[]string) error {
 	// limit (~108 bytes) on a deep $HOME or a long CI tempdir, where bind()
 	// returns a confusing EINVAL. chooseHookSocketPath relocates to a short
 	// path under the system temp dir in that case so the bind always succeeds.
-	socketPath := chooseHookSocketPath(
-		filepath.Join(cacheDir, fmt.Sprintf("hook-%d.sock", os.Getpid())),
-		hookSocketFallbackDir(),
-		os.Getpid(),
-	)
+	preferredSocket := filepath.Join(cacheDir, fmt.Sprintf("hook-%d.sock", os.Getpid()))
+	socketPath, socketDir := relocateHookSocketUnderPrivateDir(preferredSocket, hookSocketFallbackDir())
+	c.hookSocketDir = socketDir
+	// If anything below fails, remove the relocation dir (when we created one).
+	// On success it persists and Close removes it alongside the listener.
+	hookBridgeReady := false
+	defer func() {
+		if !hookBridgeReady {
+			c.cleanupHookSocketDir()
+		}
+	}()
 
 	shimPath, err := resolveShimPath(c.opts.ShimPath)
 	if err != nil {
@@ -387,6 +412,7 @@ func (c *Client) setupHookBridge(extraEnv *[]string) error {
 		zap.String("hooks_json", c.hookHooksJSONPath),
 		zap.String("socket", socketPath),
 		zap.Bool("backed_up_user_config", c.hookHadUserConfig))
+	hookBridgeReady = true
 	return nil
 }
 
@@ -397,34 +423,51 @@ func (c *Client) setupHookBridge(extraEnv *[]string) error {
 // platform.
 const maxUnixSocketLen = 103
 
-// chooseHookSocketPath returns preferred when it fits inside the AF_UNIX
-// sun_path budget, otherwise a short, collision-free path under fallbackDir.
-// The hook socket is a private IPC rendezvous whose location is handed to the
-// shim via CODEX_SDK_HOOK_SOCKET, so relocating it when the preferred path
-// would overflow sun_path is transparent — it avoids a bind-time EINVAL on a
-// deep $HOME or long CI tempdir while preserving the PID-keyed uniqueness of
-// the original name. If fallbackDir is itself pathologically long, preferred
-// is returned unchanged and bind surfaces the platform error as before.
-func chooseHookSocketPath(preferred, fallbackDir string, pid int) string {
+// relocateHookSocketUnderPrivateDir handles the case where the preferred hook
+// socket path overflows the AF_UNIX sun_path budget. It creates a fresh 0700
+// directory under base (os.MkdirTemp always uses mode 0700 and a collision-free
+// random name) and returns a short socket path inside it, plus that directory so
+// the caller can remove it on Close.
+//
+// The 0700 parent is the authoritative access gate and is what makes the
+// relocation safe: it closes the window between net.Listen (which creates the
+// socket at the process umask — commonly group-connectable) and the listener's
+// chmod, during which a socket placed directly in a world-writable $TMPDIR would
+// be connectable by other local users. That is unacceptable for a channel that
+// carries tool-approval (allow/deny) decisions. The preferred path already lives
+// under the 0700 ~/.cache/codex-sdk directory; this gives the fallback the same
+// guarantee atomically at creation rather than relying on the post-bind chmod.
+//
+// When preferred already fits, it is returned unchanged with an empty dir (no
+// relocation, nothing to clean up). If even the relocated path would overflow
+// sun_path, the temp dir is removed and preferred is returned unchanged so bind
+// surfaces the platform error as before rather than leaking a directory.
+func relocateHookSocketUnderPrivateDir(preferred, base string) (socketPath, dir string) {
 	if len(preferred) <= maxUnixSocketLen {
-		return preferred
+		return preferred, ""
 	}
-	fallback := filepath.Join(fallbackDir, fmt.Sprintf("cxh-%d.sock", pid))
-	if len(fallback) <= maxUnixSocketLen {
-		return fallback
+	d, err := os.MkdirTemp(base, "cxh-")
+	if err != nil {
+		return preferred, ""
 	}
-	return preferred
+	relocated := filepath.Join(d, "h.sock")
+	if len(relocated) > maxUnixSocketLen {
+		_ = os.RemoveAll(d)
+		return preferred, ""
+	}
+	return relocated, d
 }
 
-// hookSocketFallbackDir returns the directory that hosts the relocated hook
-// socket when the preferred path under $HOME/.cache would overflow the AF_UNIX
-// sun_path limit. It prefers $XDG_RUNTIME_DIR — the per-user, 0700, short-path
-// runtime directory provided for exactly this purpose on Linux — and falls back
-// to os.TempDir(), which is itself a per-user private directory on macOS. This
-// keeps the relocated socket owner-private, matching the 0700 ~/.cache/codex-sdk
-// directory the preferred path lives in, rather than dropping a hook-decision
-// socket into a world-writable /tmp on Linux. A set-but-stale XDG_RUNTIME_DIR
-// (not an existing directory) is ignored so bind never fails on a dead path.
+// hookSocketFallbackDir returns the base directory under which a relocated hook
+// socket's private 0700 directory is created when the preferred path under
+// $HOME/.cache would overflow the AF_UNIX sun_path limit. It prefers
+// $XDG_RUNTIME_DIR — the per-user, 0700, short-path runtime directory provided
+// for exactly this purpose on Linux — and falls back to os.TempDir(). On macOS
+// os.TempDir() is already a per-user private directory; on Linux it is the
+// world-writable /tmp, which is why the relocated socket is never placed there
+// directly but inside a freshly-created 0700 subdirectory (see
+// relocateHookSocketUnderPrivateDir). A set-but-stale XDG_RUNTIME_DIR (not an
+// existing directory) is ignored so bind never fails on a dead path.
 func hookSocketFallbackDir() string {
 	if dir := os.Getenv("XDG_RUNTIME_DIR"); dir != "" {
 		if info, err := os.Stat(dir); err == nil && info.IsDir() {
