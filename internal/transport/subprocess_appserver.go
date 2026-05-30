@@ -25,6 +25,14 @@ const ShutdownGrace = 3 * time.Second
 // TerminateGrace is the time allowed after SIGTERM before SIGKILL.
 const TerminateGrace = 2 * time.Second
 
+// StderrDrainTimeout bounds how long the transport waits for the stderr drain
+// goroutine to reach EOF. The drain only finishes once every writer of the
+// subprocess's stderr pipe closes it; on the SIGKILL path a descendant that
+// inherited the write-end can keep it open after the parent is reaped, so the
+// wait MUST be bounded or Close (and watchExit) would hang forever. Matches the
+// claude-agent-sdk-go sibling's bound.
+const StderrDrainTimeout = 500 * time.Millisecond
+
 // StderrRingSize is the size of the stderr ring buffer captured for
 // diagnostic reporting on process errors. 64 KiB is enough for the tail of
 // any reasonable crash dump.
@@ -231,10 +239,19 @@ func (t *AppServer) watchExit(cmd *exec.Cmd, stderrDone <-chan struct{}) {
 	// pipe MUST complete before Wait is called — otherwise Wait races the stderr drain
 	// and truncates the captured tail mid-copy (issue 79). The process's stderr
 	// write-end closes on exit, the drain goroutine reads to EOF and closes stderrDone,
-	// and only then is it safe to reap. On the SIGKILL path the kernel closes stderr
-	// too, so the drain still reaches EOF and this never deadlocks.
+	// and only then is it safe to reap.
+	//
+	// The wait is BOUNDED by StderrDrainTimeout: on the SIGKILL path a descendant
+	// that inherited the stderr write-end can keep the pipe open after the parent is
+	// reaped, so stderrDone may never close. We accept a possibly-truncated tail in
+	// that rare case rather than hang Close forever. cmd.Wait() reaps only the parent
+	// (StderrPipe has no os/exec copy goroutine), so it returns promptly once we stop
+	// waiting on the drain.
 	if stderrDone != nil {
-		<-stderrDone
+		select {
+		case <-stderrDone:
+		case <-time.After(StderrDrainTimeout):
+		}
 	}
 	waitErr := cmd.Wait()
 	t.waitDone <- waitErr
@@ -416,13 +433,17 @@ func (t *AppServer) doClose(ctx context.Context) error {
 
 // drainStderr waits for the stderr goroutine to finish so t.stderr is stable
 // when callers read it. Call only after cmd.Wait has observed process exit or
-// after the process has been killed; at that point the stderr pipe must reach
-// EOF.
+// after the process has been killed; at that point the stderr pipe normally
+// reaches EOF. The wait is bounded by StderrDrainTimeout so a descendant that
+// inherited the stderr write-end cannot wedge Close indefinitely.
 func (t *AppServer) drainStderr(done chan struct{}) {
 	if done == nil {
 		return
 	}
-	<-done
+	select {
+	case <-done:
+	case <-time.After(StderrDrainTimeout):
+	}
 }
 
 // classifyExit maps an *exec.Cmd Wait() error into either nil or a
