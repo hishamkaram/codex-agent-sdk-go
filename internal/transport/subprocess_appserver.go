@@ -174,7 +174,7 @@ func (t *AppServer) doConnect(ctx context.Context) error {
 	// Wait goroutine — observes exit for Close() and emits the single
 	// OnSubprocessExit telemetry. Exit info is captured under the lock; the
 	// Observer is invoked AFTER unlock so it can never block under the mutex.
-	go t.watchExit(cmd)
+	go t.watchExit(cmd, t.stderrDone)
 
 	lw := jsonrpc.NewLineWriter(stdin)
 	bufSize := t.cfg.ReadBufferSize
@@ -200,7 +200,16 @@ func (t *AppServer) doConnect(ctx context.Context) error {
 // emits OnSubprocessExit exactly once. Exit code, requested-flag, and cause are
 // captured under the lock; the Observer is invoked after the unlock so it never
 // runs under the mutex.
-func (t *AppServer) watchExit(cmd *exec.Cmd) {
+func (t *AppServer) watchExit(cmd *exec.Cmd, stderrDone <-chan struct{}) {
+	// cmd.Wait() closes the StderrPipe, so per the os/exec docs all reads from that
+	// pipe MUST complete before Wait is called — otherwise Wait races the stderr drain
+	// and truncates the captured tail mid-copy (issue 79). The process's stderr
+	// write-end closes on exit, the drain goroutine reads to EOF and closes stderrDone,
+	// and only then is it safe to reap. On the SIGKILL path the kernel closes stderr
+	// too, so the drain still reaches EOF and this never deadlocks.
+	if stderrDone != nil {
+		<-stderrDone
+	}
 	waitErr := cmd.Wait()
 	t.waitDone <- waitErr
 
