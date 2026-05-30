@@ -79,6 +79,20 @@ func New(cfg Config) (*Listener, error) {
 	if err != nil {
 		return nil, fmt.Errorf("hookbridge.New: listen %q: %w", cfg.SocketPath, err)
 	}
+	// Restrict the socket to owner-only access. The hook bridge carries tool-
+	// approval (allow/deny) decisions, so a same-host user must never be able to
+	// connect and inject decisions into the owner's codex session. net.Listen
+	// creates the socket with the process umask (commonly group-connectable);
+	// chmod 0700 closes it to non-owners (on Linux and macOS connect() honors the
+	// socket file mode). This is defense-in-depth: the SDK additionally places
+	// every hook socket under a 0700 parent directory (the preferred
+	// ~/.cache/codex-sdk dir or a freshly-created 0700 relocation dir), so the
+	// owner-only parent is the primary, atomically-established access gate that
+	// closes the brief net.Listen→chmod window entirely.
+	if err := os.Chmod(cfg.SocketPath, 0o700); err != nil {
+		_ = ln.Close()
+		return nil, fmt.Errorf("hookbridge.New: chmod socket %q: %w", cfg.SocketPath, err)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	l := &Listener{
 		socketPath: cfg.SocketPath,

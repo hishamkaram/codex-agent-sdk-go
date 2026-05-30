@@ -56,6 +56,10 @@ type Client struct {
 	hookBackupPath string
 	// hookCodexHome is non-empty only for isolated hook mode; Close removes it.
 	hookCodexHome string
+	// hookSocketDir is non-empty only when the hook socket was relocated under a
+	// freshly-created 0700 directory (the sun_path-overflow fallback); Close
+	// removes it. The 0700 parent is the authoritative owner-only access gate.
+	hookSocketDir string
 	// hookHadUserConfig records whether a hooks.json existed at Connect time.
 	hookHadUserConfig bool
 
@@ -95,13 +99,20 @@ func NewClient(ctx context.Context, opts *types.CodexOptions) (*Client, error) {
 //
 // Calling Connect more than once returns an error — create a new Client
 // for a new session.
-func (c *Client) Connect(ctx context.Context) error {
+func (c *Client) Connect(ctx context.Context) (err error) {
 	if !c.connected.CompareAndSwap(false, true) {
 		return fmt.Errorf("codex.Client.Connect: already connected")
 	}
 	if c.closed.Load() {
 		return fmt.Errorf("codex.Client.Connect: client is closed")
 	}
+
+	// Emit connect telemetry once the full handshake completes. The Client holds
+	// no mutex across the Connect body (connected/closed are atomics), so this
+	// deferred emission never runs under a lock. err is the named return, so the
+	// closure observes the terminal outcome.
+	connectStart := time.Now()
+	defer func() { c.opts.ObserverOrNop().OnConnect(time.Since(connectStart), err) }()
 
 	// Hook-bridge auto-wiring is end-to-end. By default, HookCallback uses an
 	// isolated CODEX_HOME containing SDK-generated hooks.json. Opt-in
@@ -113,12 +124,18 @@ func (c *Client) Connect(ctx context.Context) error {
 		}
 	}
 
+	maxParseErrors := uint(0)
+	if c.opts.MaxConsecutiveParseErrors != nil {
+		maxParseErrors = *c.opts.MaxConsecutiveParseErrors
+	}
 	c.tr = transport.NewAppServer(transport.AppServerConfig{
-		CLIPath:        c.opts.CLIPath,
-		ExtraArgs:      c.opts.ExtraArgs,
-		Env:            extraEnv,
-		Logger:         c.logger,
-		ReadBufferSize: c.opts.ReadBufferSize,
+		CLIPath:                   c.opts.CLIPath,
+		ExtraArgs:                 c.opts.ExtraArgs,
+		Env:                       extraEnv,
+		Logger:                    c.logger,
+		ReadBufferSize:            c.opts.ReadBufferSize,
+		Observer:                  c.opts.ObserverOrNop(),
+		MaxConsecutiveParseErrors: maxParseErrors,
 	})
 	if err := c.tr.Connect(ctx); err != nil {
 		return fmt.Errorf("codex.Client.Connect: transport: %w", err)
@@ -191,6 +208,28 @@ func (c *Client) ProcessID() int {
 	return c.tr.Pid()
 }
 
+// Health returns a snapshot of the underlying transport/subprocess health
+// (connected, ready, PID, last error). It returns a zero TransportHealth when
+// the transport does not expose health (e.g. before Connect) so callers can read
+// it for a health endpoint rather than reconstructing liveness themselves.
+func (c *Client) Health() types.TransportHealth {
+	// Inline-interface type assertion mirrors the claude SDK: the transport
+	// concrete type owns Health(), and the Client surfaces it without widening
+	// the narrow Transport interface for non-health callers. The nil check comes
+	// first — a typed-nil *AppServer still satisfies the interface, and its
+	// Health() would dereference a nil receiver's mutex.
+	if c.tr == nil {
+		return types.TransportHealth{}
+	}
+	type healthProvider interface {
+		Health() types.TransportHealth
+	}
+	if hp, ok := any(c.tr).(healthProvider); ok {
+		return hp.Health()
+	}
+	return types.TransportHealth{}
+}
+
 // SessionID returns the ID of the most recently started or resumed
 // thread, or "" when no thread has been registered yet (or the latest
 // was unregistered). The Codex SDK supports multiple concurrent threads
@@ -249,7 +288,22 @@ func (c *Client) Close(ctx context.Context) error {
 		}
 		c.hookCodexHome = ""
 	}
+	c.cleanupHookSocketDir()
 	return trErr
+}
+
+// cleanupHookSocketDir removes the private 0700 directory that hosted a
+// relocated hook socket, if one was created. Safe to call when none was (no-op)
+// and idempotent. Best-effort: a failure is logged, never fatal.
+func (c *Client) cleanupHookSocketDir() {
+	if c.hookSocketDir == "" {
+		return
+	}
+	if err := os.RemoveAll(c.hookSocketDir); err != nil {
+		c.logger.Warn("removing hook socket dir failed",
+			zap.String("dir", c.hookSocketDir), zap.Error(err))
+	}
+	c.hookSocketDir = ""
 }
 
 // hookBackupSuffix identifies SDK-written backup files of the user's
@@ -285,7 +339,24 @@ func (c *Client) setupHookBridge(extraEnv *[]string) error {
 	if err := os.MkdirAll(cacheDir, 0o700); err != nil {
 		return fmt.Errorf("cache dir: %w", err)
 	}
-	socketPath := filepath.Join(cacheDir, fmt.Sprintf("hook-%d.sock", os.Getpid()))
+	// The hook socket is a private IPC rendezvous handed to the shim via
+	// CODEX_SDK_HOOK_SOCKET; its location is an implementation detail. The
+	// preferred path under $HOME/.cache can overflow the AF_UNIX sun_path
+	// limit (~108 bytes) on a deep $HOME or a long CI tempdir, where bind()
+	// returns a confusing EINVAL. relocateHookSocketUnderPrivateDir creates a
+	// fresh 0700 directory under the fallback base and returns a short socket
+	// path inside it so the bind succeeds and the socket stays owner-private.
+	preferredSocket := filepath.Join(cacheDir, fmt.Sprintf("hook-%d.sock", os.Getpid()))
+	socketPath, socketDir := relocateHookSocketUnderPrivateDir(preferredSocket, hookSocketFallbackDir())
+	c.hookSocketDir = socketDir
+	// If anything below fails, remove the relocation dir (when we created one).
+	// On success it persists and Close removes it alongside the listener.
+	hookBridgeReady := false
+	defer func() {
+		if !hookBridgeReady {
+			c.cleanupHookSocketDir()
+		}
+	}()
 
 	shimPath, err := resolveShimPath(c.opts.ShimPath)
 	if err != nil {
@@ -342,7 +413,69 @@ func (c *Client) setupHookBridge(extraEnv *[]string) error {
 		zap.String("hooks_json", c.hookHooksJSONPath),
 		zap.String("socket", socketPath),
 		zap.Bool("backed_up_user_config", c.hookHadUserConfig))
+	hookBridgeReady = true
 	return nil
+}
+
+// maxUnixSocketLen is a conservative cross-platform budget for an AF_UNIX
+// socket path. Linux caps sockaddr_un.sun_path at 108 bytes (107 usable
+// before the NUL terminator); macOS/BSD cap it at 104 (103 usable). Using the
+// smaller bound guarantees a path chosen here binds on every supported
+// platform.
+const maxUnixSocketLen = 103
+
+// relocateHookSocketUnderPrivateDir handles the case where the preferred hook
+// socket path overflows the AF_UNIX sun_path budget. It creates a fresh 0700
+// directory under base (os.MkdirTemp always uses mode 0700 and a collision-free
+// random name) and returns a short socket path inside it, plus that directory so
+// the caller can remove it on Close.
+//
+// The 0700 parent is the authoritative access gate and is what makes the
+// relocation safe: it closes the window between net.Listen (which creates the
+// socket at the process umask — commonly group-connectable) and the listener's
+// chmod, during which a socket placed directly in a world-writable $TMPDIR would
+// be connectable by other local users. That is unacceptable for a channel that
+// carries tool-approval (allow/deny) decisions. The preferred path already lives
+// under the 0700 ~/.cache/codex-sdk directory; this gives the fallback the same
+// guarantee atomically at creation rather than relying on the post-bind chmod.
+//
+// When preferred already fits, it is returned unchanged with an empty dir (no
+// relocation, nothing to clean up). If even the relocated path would overflow
+// sun_path, the temp dir is removed and preferred is returned unchanged so bind
+// surfaces the platform error as before rather than leaking a directory.
+func relocateHookSocketUnderPrivateDir(preferred, base string) (socketPath, dir string) {
+	if len(preferred) <= maxUnixSocketLen {
+		return preferred, ""
+	}
+	d, err := os.MkdirTemp(base, "cxh-")
+	if err != nil {
+		return preferred, ""
+	}
+	relocated := filepath.Join(d, "h.sock")
+	if len(relocated) > maxUnixSocketLen {
+		_ = os.RemoveAll(d)
+		return preferred, ""
+	}
+	return relocated, d
+}
+
+// hookSocketFallbackDir returns the base directory under which a relocated hook
+// socket's private 0700 directory is created when the preferred path under
+// $HOME/.cache would overflow the AF_UNIX sun_path limit. It prefers
+// $XDG_RUNTIME_DIR — the per-user, 0700, short-path runtime directory provided
+// for exactly this purpose on Linux — and falls back to os.TempDir(). On macOS
+// os.TempDir() is already a per-user private directory; on Linux it is the
+// world-writable /tmp, which is why the relocated socket is never placed there
+// directly but inside a freshly-created 0700 subdirectory (see
+// relocateHookSocketUnderPrivateDir). A set-but-stale XDG_RUNTIME_DIR (not an
+// existing directory) is ignored so bind never fails on a dead path.
+func hookSocketFallbackDir() string {
+	if dir := os.Getenv("XDG_RUNTIME_DIR"); dir != "" {
+		if info, err := os.Stat(dir); err == nil && info.IsDir() {
+			return dir
+		}
+	}
+	return os.TempDir()
 }
 
 func (c *Client) installIsolatedHooksJSON(codexHome, shimPath string) error {
@@ -646,6 +779,13 @@ func (c *Client) handleNotification(n jsonrpc.Notification) {
 			zap.String("method", n.Method),
 			zap.Error(err))
 		return
+	}
+	// An UnknownEvent means codex emitted a notification method the SDK does not
+	// recognize — wire-format drift ahead of the SDK. Surface it as telemetry so
+	// drift is observable, not silent. (The demux already classifies frame-shape
+	// drift; this catches method-name drift one layer up.)
+	if _, ok := ev.(*types.UnknownEvent); ok {
+		c.opts.ObserverOrNop().OnUnknownMessage(n.Method)
 	}
 	threadID := extractThreadIDFromEvent(ev)
 	if threadID == "" {

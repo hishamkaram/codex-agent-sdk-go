@@ -249,10 +249,15 @@ func TestAppServerDrainStderrWaitsForDone(t *testing.T) {
 		close(returned)
 	}()
 
+	// drainStderr waits for done, but is now bounded by StderrDrainTimeout so a
+	// descendant holding the stderr write-end can't wedge Close forever. Probe
+	// well under that bound: with done still open, the drain must still be
+	// blocked. (The bounded-return-on-timeout path is covered separately by
+	// TestDrainStderrBoundedWhenPipeNeverEOFs.)
 	select {
 	case <-returned:
-		t.Fatal("drainStderr returned before stderrDone closed")
-	case <-time.After(700 * time.Millisecond):
+		t.Fatal("drainStderr returned before stderrDone closed and before its timeout")
+	case <-time.After(StderrDrainTimeout / 5):
 	}
 
 	close(done)

@@ -107,6 +107,21 @@ type CodexOptions struct {
 	// notification methods listed here. This is a transport-volume knob only;
 	// callers must not rely on it for correctness.
 	OptOutNotificationMethods []string
+
+	// --- Observability + reliability ---
+
+	// Observer receives SDK lifecycle and health telemetry (connect, first
+	// message, subprocess exit, decode errors, give-up, backpressure, unknown
+	// frames). A nil Observer drops all telemetry (NopObserver semantics) and is
+	// fully backwards-compatible. Never serialized.
+	Observer Observer `json:"-"`
+
+	// MaxConsecutiveParseErrors caps how many consecutive inbound JSON-RPC decode
+	// failures the demux tolerates before it authoritatively terminates the
+	// subprocess (rather than looping on garbage forever and leaking a zombie).
+	// nil or 0 uses the demux default. Pointer so the zero value is
+	// distinguishable from "explicitly set to default". Never serialized.
+	MaxConsecutiveParseErrors *uint `json:"-"`
 }
 
 type HookConfigMode string
@@ -284,6 +299,32 @@ func (o *CodexOptions) WithExperimentalAPI(enabled bool) *CodexOptions {
 // suppress during initialize capability negotiation.
 func (o *CodexOptions) WithOptOutNotificationMethods(methods ...string) *CodexOptions {
 	o.OptOutNotificationMethods = append([]string(nil), methods...)
+	return o
+}
+
+// WithObserver sets the telemetry Observer for SDK lifecycle and health events.
+// Passing nil restores NopObserver semantics (telemetry dropped).
+func (o *CodexOptions) WithObserver(obs Observer) *CodexOptions {
+	o.Observer = obs
+	return o
+}
+
+// ObserverOrNop returns the configured Observer, or NopObserver{} when none is
+// set (or the receiver is nil). This is the single nil-guard owner: every
+// emission site calls ObserverOrNop so individual sites never repeat the nil
+// check.
+func (o *CodexOptions) ObserverOrNop() Observer {
+	if o == nil || o.Observer == nil {
+		return NopObserver{}
+	}
+	return o.Observer
+}
+
+// WithMaxConsecutiveParseErrors sets how many consecutive inbound decode
+// failures the demux tolerates before terminating the subprocess as
+// unrecoverable. A value of 0 is ignored (the demux default applies).
+func (o *CodexOptions) WithMaxConsecutiveParseErrors(n uint) *CodexOptions {
+	o.MaxConsecutiveParseErrors = &n
 	return o
 }
 
