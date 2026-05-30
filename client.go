@@ -95,13 +95,20 @@ func NewClient(ctx context.Context, opts *types.CodexOptions) (*Client, error) {
 //
 // Calling Connect more than once returns an error — create a new Client
 // for a new session.
-func (c *Client) Connect(ctx context.Context) error {
+func (c *Client) Connect(ctx context.Context) (err error) {
 	if !c.connected.CompareAndSwap(false, true) {
 		return fmt.Errorf("codex.Client.Connect: already connected")
 	}
 	if c.closed.Load() {
 		return fmt.Errorf("codex.Client.Connect: client is closed")
 	}
+
+	// Emit connect telemetry once the full handshake completes. The Client holds
+	// no mutex across the Connect body (connected/closed are atomics), so this
+	// deferred emission never runs under a lock. err is the named return, so the
+	// closure observes the terminal outcome.
+	connectStart := time.Now()
+	defer func() { c.opts.ObserverOrNop().OnConnect(time.Since(connectStart), err) }()
 
 	// Hook-bridge auto-wiring is end-to-end. By default, HookCallback uses an
 	// isolated CODEX_HOME containing SDK-generated hooks.json. Opt-in
@@ -113,12 +120,18 @@ func (c *Client) Connect(ctx context.Context) error {
 		}
 	}
 
+	maxParseErrors := uint(0)
+	if c.opts.MaxConsecutiveParseErrors != nil {
+		maxParseErrors = *c.opts.MaxConsecutiveParseErrors
+	}
 	c.tr = transport.NewAppServer(transport.AppServerConfig{
-		CLIPath:        c.opts.CLIPath,
-		ExtraArgs:      c.opts.ExtraArgs,
-		Env:            extraEnv,
-		Logger:         c.logger,
-		ReadBufferSize: c.opts.ReadBufferSize,
+		CLIPath:                   c.opts.CLIPath,
+		ExtraArgs:                 c.opts.ExtraArgs,
+		Env:                       extraEnv,
+		Logger:                    c.logger,
+		ReadBufferSize:            c.opts.ReadBufferSize,
+		Observer:                  c.opts.ObserverOrNop(),
+		MaxConsecutiveParseErrors: maxParseErrors,
 	})
 	if err := c.tr.Connect(ctx); err != nil {
 		return fmt.Errorf("codex.Client.Connect: transport: %w", err)
@@ -189,6 +202,28 @@ func (c *Client) ProcessID() int {
 		return 0
 	}
 	return c.tr.Pid()
+}
+
+// Health returns a snapshot of the underlying transport/subprocess health
+// (connected, ready, PID, last error). It returns a zero TransportHealth when
+// the transport does not expose health (e.g. before Connect) so callers can read
+// it for a health endpoint rather than reconstructing liveness themselves.
+func (c *Client) Health() types.TransportHealth {
+	// Inline-interface type assertion mirrors the claude SDK: the transport
+	// concrete type owns Health(), and the Client surfaces it without widening
+	// the narrow Transport interface for non-health callers. The nil check comes
+	// first — a typed-nil *AppServer still satisfies the interface, and its
+	// Health() would dereference a nil receiver's mutex.
+	if c.tr == nil {
+		return types.TransportHealth{}
+	}
+	type healthProvider interface {
+		Health() types.TransportHealth
+	}
+	if hp, ok := any(c.tr).(healthProvider); ok {
+		return hp.Health()
+	}
+	return types.TransportHealth{}
 }
 
 // SessionID returns the ID of the most recently started or resumed
@@ -646,6 +681,13 @@ func (c *Client) handleNotification(n jsonrpc.Notification) {
 			zap.String("method", n.Method),
 			zap.Error(err))
 		return
+	}
+	// An UnknownEvent means codex emitted a notification method the SDK does not
+	// recognize — wire-format drift ahead of the SDK. Surface it as telemetry so
+	// drift is observable, not silent. (The demux already classifies frame-shape
+	// drift; this catches method-name drift one layer up.)
+	if _, ok := ev.(*types.UnknownEvent); ok {
+		c.opts.ObserverOrNop().OnUnknownMessage(n.Method)
 	}
 	threadID := extractThreadIDFromEvent(ev)
 	if threadID == "" {
