@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/hishamkaram/codex-agent-sdk-go/internal/jsonrpc"
@@ -133,27 +134,52 @@ func (t *AppServer) doConnect(ctx context.Context) error {
 	}
 
 	args := append([]string{"app-server"}, t.cfg.ExtraArgs...)
-	cmd := exec.CommandContext(ctx, cliPath, args...)
-	cmd.Env = buildEnv(t.cfg.Env)
 
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		return types.NewCLIConnectionError("stdin pipe", err)
-	}
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		_ = stdin.Close()
-		return types.NewCLIConnectionError("stdout pipe", err)
-	}
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		_ = stdin.Close()
-		return types.NewCLIConnectionError("stderr pipe", err)
-	}
+	// Spawn with a bounded retry on ETXTBSY ("text file busy"). Under heavy concurrent
+	// fork/exec, the child of an unrelated spawn can transiently hold a write fd to the
+	// target binary in the window between fork and exec, which the kernel reports as
+	// ETXTBSY. cmd.Start() consumes its pipes, so the command is rebuilt each attempt.
+	// This is the standard mitigation for the Go fork/exec ETXTBSY race.
+	var (
+		cmd    *exec.Cmd
+		stdin  io.WriteCloser
+		stdout io.ReadCloser
+		stderr io.ReadCloser
+	)
+	const maxSpawnAttempts = 5
+	for attempt := 1; ; attempt++ {
+		cmd = exec.CommandContext(ctx, cliPath, args...)
+		cmd.Env = buildEnv(t.cfg.Env)
 
-	if err := cmd.Start(); err != nil {
+		var pipeErr error
+		if stdin, pipeErr = cmd.StdinPipe(); pipeErr != nil {
+			return types.NewCLIConnectionError("stdin pipe", pipeErr)
+		}
+		if stdout, pipeErr = cmd.StdoutPipe(); pipeErr != nil {
+			_ = stdin.Close()
+			return types.NewCLIConnectionError("stdout pipe", pipeErr)
+		}
+		if stderr, pipeErr = cmd.StderrPipe(); pipeErr != nil {
+			_ = stdin.Close()
+			return types.NewCLIConnectionError("stderr pipe", pipeErr)
+		}
+
+		startErr := cmd.Start()
+		if startErr == nil {
+			break
+		}
 		_ = stdin.Close()
-		return types.NewCLIConnectionError(fmt.Sprintf("spawn %q", cliPath), err)
+		if errors.Is(startErr, syscall.ETXTBSY) && attempt < maxSpawnAttempts {
+			t.logger.Debug("spawn hit ETXTBSY; retrying",
+				zap.Int("attempt", attempt), zap.String("cli", cliPath))
+			select {
+			case <-ctx.Done():
+				return types.NewCLIConnectionError(fmt.Sprintf("spawn %q", cliPath), ctx.Err())
+			case <-time.After(time.Duration(attempt) * 5 * time.Millisecond):
+			}
+			continue
+		}
+		return types.NewCLIConnectionError(fmt.Sprintf("spawn %q", cliPath), startErr)
 	}
 
 	t.mu.Lock()
