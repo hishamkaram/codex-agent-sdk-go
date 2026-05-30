@@ -343,8 +343,9 @@ func (c *Client) setupHookBridge(extraEnv *[]string) error {
 	// CODEX_SDK_HOOK_SOCKET; its location is an implementation detail. The
 	// preferred path under $HOME/.cache can overflow the AF_UNIX sun_path
 	// limit (~108 bytes) on a deep $HOME or a long CI tempdir, where bind()
-	// returns a confusing EINVAL. chooseHookSocketPath relocates to a short
-	// path under the system temp dir in that case so the bind always succeeds.
+	// returns a confusing EINVAL. relocateHookSocketUnderPrivateDir creates a
+	// fresh 0700 directory under the fallback base and returns a short socket
+	// path inside it so the bind succeeds and the socket stays owner-private.
 	preferredSocket := filepath.Join(cacheDir, fmt.Sprintf("hook-%d.sock", os.Getpid()))
 	socketPath, socketDir := relocateHookSocketUnderPrivateDir(preferredSocket, hookSocketFallbackDir())
 	c.hookSocketDir = socketDir
