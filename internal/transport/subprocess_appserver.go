@@ -51,12 +51,24 @@ type AppServerConfig struct {
 	// ReadBufferSize overrides the demux read-buffer ceiling. 0 picks the
 	// 2 MiB default.
 	ReadBufferSize int
+
+	// Observer receives subprocess-exit and demux telemetry. nil is treated as
+	// NopObserver (telemetry dropped). The transport owns OnSubprocessExit; the
+	// demux owns the decode/backpressure/first-message events. OnConnect is owned
+	// by the Client layer (it spans the full handshake).
+	Observer types.Observer
+
+	// MaxConsecutiveParseErrors caps consecutive inbound decode failures before
+	// the demux gives up and the transport kills the subprocess. 0 uses the demux
+	// default (jsonrpc.DefaultMaxConsecutiveParseErrors).
+	MaxConsecutiveParseErrors uint
 }
 
 // AppServer is a Transport implementation that spawns `codex app-server`.
 type AppServer struct {
-	cfg    AppServerConfig
-	logger *sdklog.Logger
+	cfg      AppServerConfig
+	logger   *sdklog.Logger
+	observer types.Observer
 
 	mu          sync.Mutex
 	cmd         *exec.Cmd
@@ -65,8 +77,12 @@ type AppServer struct {
 	stderr      *ringBuffer
 	stderrDone  chan struct{}
 	waitDone    chan error
+	ready       bool  // true between successful spawn and process exit
+	shutdownReq bool  // set by Close before signaling the subprocess
+	lastErr     error // first transport-level error (give-up, unexpected exit)
 	closedOnce  sync.Once
 	connectOnce sync.Once
+	exitOnce    sync.Once // guards the single OnSubprocessExit emission
 }
 
 // NewAppServer constructs an AppServer transport. It does not spawn the
@@ -76,7 +92,11 @@ func NewAppServer(cfg AppServerConfig) *AppServer {
 	if logger == nil {
 		logger = sdklog.NewLoggerFromZap(nil)
 	}
-	return &AppServer{cfg: cfg, logger: logger}
+	observer := cfg.Observer
+	if observer == nil {
+		observer = types.NopObserver{}
+	}
+	return &AppServer{cfg: cfg, logger: logger, observer: observer}
 }
 
 // Connect spawns the subprocess and starts the demux read loop.
@@ -136,11 +156,14 @@ func (t *AppServer) doConnect(ctx context.Context) error {
 		return types.NewCLIConnectionError(fmt.Sprintf("spawn %q", cliPath), err)
 	}
 
+	t.mu.Lock()
 	t.cmd = cmd
 	t.stdinW = stdin
 	t.stderr = newRingBuffer(StderrRingSize)
 	t.stderrDone = make(chan struct{})
 	t.waitDone = make(chan error, 1)
+	t.ready = true
+	t.mu.Unlock()
 
 	// Stderr drain goroutine — copies into ring buffer for diagnostics.
 	go func() {
@@ -148,10 +171,10 @@ func (t *AppServer) doConnect(ctx context.Context) error {
 		_, _ = io.Copy(t.stderr, stderr)
 	}()
 
-	// Wait goroutine — observes exit for Close().
-	go func() {
-		t.waitDone <- cmd.Wait()
-	}()
+	// Wait goroutine — observes exit for Close() and emits the single
+	// OnSubprocessExit telemetry. Exit info is captured under the lock; the
+	// Observer is invoked AFTER unlock so it can never block under the mutex.
+	go t.watchExit(cmd)
 
 	lw := jsonrpc.NewLineWriter(stdin)
 	bufSize := t.cfg.ReadBufferSize
@@ -160,13 +183,77 @@ func (t *AppServer) doConnect(ctx context.Context) error {
 	}
 	lr := jsonrpc.NewLineReaderWithSize(stdout, bufSize)
 
-	t.demux = jsonrpc.NewDemux(lr, lw, t.logger)
+	t.demux = jsonrpc.NewDemux(lr, lw, t.logger,
+		jsonrpc.WithObserver(t.observer),
+		jsonrpc.WithMaxParseErrors(t.cfg.MaxConsecutiveParseErrors),
+		jsonrpc.WithUnrecoverableHandler(t.terminateOnUnrecoverableError),
+	)
 	t.demux.Run(ctx)
 
 	t.logger.Debug("codex app-server spawned",
 		zap.String("cli", cliPath),
 		zap.Int("pid", cmd.Process.Pid))
 	return nil
+}
+
+// watchExit blocks on cmd.Wait(), records the exit on waitDone for Close(), and
+// emits OnSubprocessExit exactly once. Exit code, requested-flag, and cause are
+// captured under the lock; the Observer is invoked after the unlock so it never
+// runs under the mutex.
+func (t *AppServer) watchExit(cmd *exec.Cmd) {
+	waitErr := cmd.Wait()
+	t.waitDone <- waitErr
+
+	t.mu.Lock()
+	t.ready = false
+	requested := t.shutdownReq
+	exitCode := -1
+	if cmd.ProcessState != nil {
+		exitCode = cmd.ProcessState.ExitCode()
+	}
+	var cause error
+	if !requested && waitErr != nil {
+		// Unexpected death (the process exited on its own, not via Close). Record
+		// it as the transport error (first error wins — a prior give-up error
+		// takes precedence).
+		if t.lastErr == nil {
+			t.lastErr = types.NewProcessError(
+				"codex app-server exited unexpectedly: "+waitErr.Error(),
+				exitCode,
+				t.stderrLocked(),
+			)
+		}
+		cause = t.lastErr
+	} else if !requested {
+		// Clean self-exit (waitErr == nil) that we did not request.
+		cause = t.lastErr
+	}
+	t.mu.Unlock()
+
+	t.exitOnce.Do(func() {
+		t.observer.OnSubprocessExit(exitCode, requested, cause)
+	})
+}
+
+// terminateOnUnrecoverableError is the demux give-up callback. It records the
+// terminal error (first error wins) and kills the subprocess so a parse give-up
+// does not leave a zombie. The watchExit goroutine then observes the death and
+// emits OnSubprocessExit. Safe to call from the demux read goroutine; Kill is
+// idempotent.
+func (t *AppServer) terminateOnUnrecoverableError(reason error) {
+	t.mu.Lock()
+	if t.lastErr == nil {
+		t.lastErr = reason
+	}
+	var proc *os.Process
+	if t.cmd != nil {
+		proc = t.cmd.Process
+	}
+	t.mu.Unlock()
+
+	if proc != nil {
+		_ = proc.Kill()
+	}
 }
 
 // Demux returns the underlying demux. Valid between Connect and Close.
@@ -190,10 +277,41 @@ func (t *AppServer) Pid() int {
 func (t *AppServer) Stderr() string {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	return t.stderrLocked()
+}
+
+// stderrLocked returns the captured stderr tail. Caller MUST hold t.mu. The
+// ringBuffer has its own leaf lock so calling String under t.mu is safe.
+func (t *AppServer) stderrLocked() string {
 	if t.stderr == nil {
 		return ""
 	}
 	return t.stderr.String()
+}
+
+// Health returns a point-in-time snapshot of subprocess/transport health. The
+// transport owns this truth (liveness, readiness, last error); callers read it
+// for health endpoints rather than tracking subprocess state separately.
+func (t *AppServer) Health() types.TransportHealth {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	h := types.TransportHealth{
+		Connected: t.cmd != nil && t.ready,
+		Ready:     t.ready,
+		LastError: t.lastErr,
+	}
+	if t.cmd != nil && t.cmd.Process != nil {
+		h.PID = t.cmd.Process.Pid
+	}
+	return h
+}
+
+// GetError returns the first transport-level error recorded (parse give-up or
+// unexpected subprocess exit), or nil when healthy/clean.
+func (t *AppServer) GetError() error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.lastErr
 }
 
 // Close shuts down the subprocess:
@@ -213,6 +331,10 @@ func (t *AppServer) Close(ctx context.Context) error {
 
 func (t *AppServer) doClose(ctx context.Context) error {
 	t.mu.Lock()
+	// Mark shutdown requested BEFORE signaling the subprocess so the watchExit
+	// goroutine classifies the resulting exit as requested (clean), not as an
+	// unexpected death.
+	t.shutdownReq = true
 	demux := t.demux
 	stdin := t.stdinW
 	cmd := t.cmd
