@@ -228,9 +228,14 @@ func (d *Demux) Close() error {
 	d.stopOnce.Do(func() {
 		d.mu.Lock()
 		d.closed = true
-		// Unblock every pending Send by closing its channel without delivering.
-		for id, ch := range d.pending {
-			close(ch)
+		// Drop every pending entry. Closing d.stopped (below) is what actually
+		// unblocks the waiters — each Send selects on <-d.stopped and returns
+		// ErrClosed. We must NOT close(ch) here: the read loop's response branch
+		// reads ch under d.mu, then sends ch<-resp AFTER releasing the lock, so
+		// closing ch would race that send into a send-on-closed-channel panic.
+		// The buffered-size-1 channels are simply abandoned (the waiter has
+		// already stopped reading) and garbage-collected.
+		for id := range d.pending {
 			delete(d.pending, id)
 		}
 		d.mu.Unlock()
