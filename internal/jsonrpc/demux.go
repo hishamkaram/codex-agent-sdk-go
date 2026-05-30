@@ -7,13 +7,24 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"time"
 
 	sdklog "github.com/hishamkaram/codex-agent-sdk-go/internal/log"
+	"github.com/hishamkaram/codex-agent-sdk-go/types"
 	"go.uber.org/zap"
 )
 
 // ErrClosed is returned by Send when the demux has been closed.
 var ErrClosed = errors.New("jsonrpc: demux closed")
+
+// DefaultMaxConsecutiveParseErrors is the demux's default give-up threshold:
+// after this many consecutive inbound decode failures the read loop terminates
+// the subprocess as unrecoverable rather than spinning on garbage forever.
+const DefaultMaxConsecutiveParseErrors uint = 10
+
+// ErrParseGiveUp is the terminal error surfaced via LoopError when the demux
+// gives up after crossing the consecutive-parse-error threshold.
+var ErrParseGiveUp = errors.New("jsonrpc: too many consecutive decode errors, giving up")
 
 // Demux reads JSON-RPC frames from a LineReader and classifies each one:
 //   - {id, result|error}      → response to a client-initiated request →
@@ -31,6 +42,14 @@ type Demux struct {
 	logger *sdklog.Logger
 	ids    IDAllocator
 
+	// Observability + reliability. observer is never nil (defaults to
+	// NopObserver). maxParseErrors is the give-up threshold. onUnrecoverable is
+	// invoked once when the loop gives up, so the transport can kill the
+	// subprocess; nil is a no-op.
+	observer        types.Observer
+	maxParseErrors  uint
+	onUnrecoverable func(error)
+
 	mu      sync.Mutex
 	pending map[uint64]chan Response
 	closed  bool
@@ -43,23 +62,61 @@ type Demux struct {
 	stopped  chan struct{}
 }
 
+// DemuxOption configures optional Demux behavior (observability, reliability).
+type DemuxOption func(*Demux)
+
+// WithObserver injects the telemetry Observer. nil restores NopObserver
+// semantics.
+func WithObserver(obs types.Observer) DemuxOption {
+	return func(d *Demux) {
+		if obs == nil {
+			obs = types.NopObserver{}
+		}
+		d.observer = obs
+	}
+}
+
+// WithMaxParseErrors sets the consecutive-decode-error give-up threshold. A
+// value of 0 keeps the default (DefaultMaxConsecutiveParseErrors).
+func WithMaxParseErrors(n uint) DemuxOption {
+	return func(d *Demux) {
+		if n > 0 {
+			d.maxParseErrors = n
+		}
+	}
+}
+
+// WithUnrecoverableHandler registers a callback invoked exactly once when the
+// read loop gives up on sustained decode failures. The transport wires this to
+// kill the subprocess so a parse give-up does not leave a zombie. nil is a
+// no-op.
+func WithUnrecoverableHandler(fn func(error)) DemuxOption {
+	return func(d *Demux) { d.onUnrecoverable = fn }
+}
+
 // NewDemux constructs a Demux. The caller retains ownership of r and w; the
 // demux reads r in a goroutine (started by Run) but never closes it — that
 // is the transport's responsibility.
-func NewDemux(r *LineReader, w *LineWriter, logger *sdklog.Logger) *Demux {
+func NewDemux(r *LineReader, w *LineWriter, logger *sdklog.Logger, opts ...DemuxOption) *Demux {
 	if logger == nil {
 		logger = sdklog.NewLoggerFromZap(nil)
 	}
-	return &Demux{
+	d := &Demux{
 		reader:         r,
 		writer:         w,
 		logger:         logger,
+		observer:       types.NopObserver{},
+		maxParseErrors: DefaultMaxConsecutiveParseErrors,
 		pending:        make(map[uint64]chan Response),
 		notifications:  make(chan Notification, 64),
 		serverRequests: make(chan ServerRequest, 16),
 		loopErr:        make(chan error, 1),
 		stopped:        make(chan struct{}),
 	}
+	for _, opt := range opts {
+		opt(d)
+	}
+	return d
 }
 
 // Notifications returns the channel of server-sent notifications.
@@ -182,9 +239,15 @@ func (d *Demux) Close() error {
 	return nil
 }
 
-// readLoop runs on a dedicated goroutine. Exits on io.EOF or unrecoverable
-// read error, delivering the terminal error to LoopError and closing all
-// outbound channels.
+// readLoop runs on a dedicated goroutine. Exits on io.EOF, an unrecoverable
+// read error, or a parse give-up, delivering the terminal error to LoopError
+// and closing all outbound channels.
+//
+// Telemetry: OnFirstMessage fires on the first successfully decoded frame;
+// OnParseError on each decode failure (carrying the consecutive count);
+// OnParseGiveUp + onUnrecoverable when consecutive failures cross the
+// threshold; OnBackpressure when an outbound channel saturates; OnUnknownMessage
+// when a frame cannot be classified.
 func (d *Demux) readLoop(ctx context.Context) {
 	var exitErr error
 	defer func() {
@@ -192,6 +255,10 @@ func (d *Demux) readLoop(ctx context.Context) {
 		close(d.notifications)
 		close(d.serverRequests)
 	}()
+
+	loopStart := time.Now()
+	firstMessage := true
+	var consecutiveParseErrors uint
 
 	for {
 		line, err := d.reader.ReadLine()
@@ -208,32 +275,50 @@ func (d *Demux) readLoop(ctx context.Context) {
 
 		var frame rawFrame
 		if err := json.Unmarshal(line, &frame); err != nil {
+			consecutiveParseErrors++
+			// Emit telemetry AFTER incrementing so the count is the running total.
+			d.observer.OnParseError(consecutiveParseErrors, err)
 			d.logger.Warn("jsonrpc.Demux: malformed inbound frame",
 				zap.Error(err),
+				zap.Uint("consecutive_errors", consecutiveParseErrors),
 				zap.ByteString("line", truncate(line, 512)))
+
+			// Give up after sustained garbage: the subprocess is unrecoverable.
+			// Terminate it authoritatively (transport kills it) and surface a
+			// typed terminal error rather than spinning forever or leaving a
+			// zombie.
+			if consecutiveParseErrors >= d.maxParseErrors {
+				d.logger.Error("jsonrpc.Demux: too many consecutive decode errors, terminating subprocess",
+					zap.Uint("consecutive_errors", consecutiveParseErrors))
+				d.observer.OnParseGiveUp(consecutiveParseErrors)
+				exitErr = fmt.Errorf("jsonrpc.Demux.readLoop: %w (%d consecutive)", ErrParseGiveUp, consecutiveParseErrors)
+				if d.onUnrecoverable != nil {
+					d.onUnrecoverable(exitErr)
+				}
+				return
+			}
 			continue
+		}
+
+		// Successful decode — reset the give-up counter and surface first-token.
+		consecutiveParseErrors = 0
+		if firstMessage {
+			firstMessage = false
+			d.observer.OnFirstMessage(time.Since(loopStart))
 		}
 
 		switch {
 		case frame.Method != nil && frame.ID != nil:
 			// Server-initiated request.
 			req := ServerRequest{ID: *frame.ID, Method: *frame.Method, Params: frame.Params}
-			select {
-			case d.serverRequests <- req:
-			case <-d.stopped:
-				return
-			case <-ctx.Done():
+			if !d.deliverServerRequest(ctx, req) {
 				return
 			}
 
 		case frame.Method != nil:
 			// Notification.
 			note := Notification{Method: *frame.Method, Params: frame.Params}
-			select {
-			case d.notifications <- note:
-			case <-d.stopped:
-				return
-			case <-ctx.Done():
+			if !d.deliverNotification(ctx, note) {
 				return
 			}
 
@@ -252,9 +337,63 @@ func (d *Demux) readLoop(ctx context.Context) {
 			ch <- resp
 
 		default:
+			// Unclassifiable frame — no id, no method, no result. Either codex
+			// wire-format drift or corruption. Surface as telemetry; not a parse
+			// error (the JSON decoded fine).
+			d.observer.OnUnknownMessage("unclassifiable-frame")
 			d.logger.Warn("jsonrpc.Demux: unclassifiable frame",
 				zap.ByteString("line", truncate(line, 512)))
 		}
+	}
+}
+
+// deliverNotification pushes a notification onto the outbound channel. It tries
+// a non-blocking send first; if the channel is saturated (the dispatcher is
+// behind), it emits OnBackpressure exactly once and then blocks until the send
+// succeeds, the demux stops, or ctx is canceled. Returns false only when the
+// loop must exit.
+func (d *Demux) deliverNotification(ctx context.Context, note Notification) bool {
+	select {
+	case d.notifications <- note:
+		return true
+	case <-d.stopped:
+		return false
+	case <-ctx.Done():
+		return false
+	default:
+		// Channel full — the consumer is behind. Surface backpressure, then block.
+	}
+	d.observer.OnBackpressure()
+	select {
+	case d.notifications <- note:
+		return true
+	case <-d.stopped:
+		return false
+	case <-ctx.Done():
+		return false
+	}
+}
+
+// deliverServerRequest is the server-request analog of deliverNotification.
+func (d *Demux) deliverServerRequest(ctx context.Context, req ServerRequest) bool {
+	select {
+	case d.serverRequests <- req:
+		return true
+	case <-d.stopped:
+		return false
+	case <-ctx.Done():
+		return false
+	default:
+		// Channel full — the consumer is behind. Surface backpressure, then block.
+	}
+	d.observer.OnBackpressure()
+	select {
+	case d.serverRequests <- req:
+		return true
+	case <-d.stopped:
+		return false
+	case <-ctx.Done():
+		return false
 	}
 }
 
