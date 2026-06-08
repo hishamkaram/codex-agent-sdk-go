@@ -128,7 +128,7 @@ silent auto-approve. See `docs/approvals.md` for the full flow.
 
 ## Examples
 
-Seven runnable examples live under `examples/` — see each directory's
+Eight runnable examples live under `examples/` — see each directory's
 `main.go` for the pattern:
 
 - `simple_query`     — one-shot Query
@@ -137,6 +137,7 @@ Seven runnable examples live under `examples/` — see each directory's
 - `fork`             — branch from an existing thread
 - `with_approvals`   — command/file approval callback
 - `with_mcp`         — MCP server registration (stdio + HTTP)
+- `with_hooks`       — observe hook events from configured hooks
 - `structured_output` — JSON-schema-constrained final response
 
 ## Next steps

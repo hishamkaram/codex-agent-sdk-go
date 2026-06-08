@@ -35,7 +35,7 @@ Codex's app-server exposes a JSON-RPC 2.0 protocol over stdio — bidirectional,
 | Goroutine leak detection (goleak) | ✅ |
 | Hook observer events (HookStarted / HookCompleted) | ✅ v0.2.0 — via `WithHooks(true)` |
 | Programmatic Go hook callbacks (shim bridge, auto-wired) | ✅ v0.3.0 — `WithHookCallback(h)` writes hooks.json automatically and restores on Close. See `docs/hooks.md`. |
-| Slash-command equivalents (Compact, SetModel, ListMCPServers, Review, etc.) | ✅ v0.4.0 — 20 typed methods + `GitDiff` / `InitAgentsMD` helpers. See `docs/commands.md`. |
+| Slash-command equivalents (Compact, SetModel, ListMCPServerStatus, Review, etc.) | ✅ v0.4.0 — typed methods plus `GitDiff` / `InitAgentsMD` helpers. See `docs/commands.md`. |
 | Native FFI (CGO) | ❌ deferred |
 
 ## Prerequisites
@@ -103,10 +103,10 @@ defer client.Close(ctx)
 thread, err := client.StartThread(ctx, &types.ThreadOptions{Cwd: "/my/project"})
 if err != nil { log.Fatal(err) }
 
-events, _ := thread.RunStreamed(ctx, "Make a plan to fix the CI failure")
+events, _ := thread.RunStreamed(ctx, "Make a plan to fix the CI failure", nil)
 for event := range events { /* ... */ }
 
-events2, _ := thread.RunStreamed(ctx, "Now implement the plan")
+events2, _ := thread.RunStreamed(ctx, "Now implement the plan", nil)
 for event := range events2 { /* ... */ }
 ```
 
@@ -138,8 +138,6 @@ opts = opts.WithApprovalCallback(func(ctx context.Context, req types.ApprovalReq
 ## What it does NOT do (current preview)
 
 - `codex exec --json` (fire-and-forget) transport — the `app-server` path is the only one implemented
-- Lifecycle hooks (Codex upstream doesn't expose SDK-side pre/post-tool hook registration yet)
-- CLI slash commands (those live in the interactive TUI, irrelevant to SDK callers)
 - Codex-as-MCP-server mode (experimental upstream)
 - Dynamic OpenAI pricing table (use static rates in this SDK; fetch at integration time if needed)
 
@@ -154,7 +152,7 @@ opts = opts.WithApprovalCallback(func(ctx context.Context, req types.ApprovalReq
 
 ## Examples
 
-Seven runnable examples under [`examples/`](examples/):
+Eight runnable examples under [`examples/`](examples/):
 
 | Example | What it shows |
 |---|---|
