@@ -3,6 +3,7 @@ package codex
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -17,6 +18,10 @@ import (
 // caller's channel. 256 accommodates bursty streaming without blocking the
 // dispatcher for realistic turn sizes.
 const ThreadInboxBuffer = 256
+
+// ErrNoActiveTurn is returned by Thread.Interrupt when no turn is currently
+// running. Callers can treat it as a recoverable late interrupt.
+var ErrNoActiveTurn = errors.New("codex: no active turn")
 
 // Thread is a handle to a single codex conversation. Construct via
 // Client.StartThread or Client.ResumeThread. A Thread is NOT safe for
@@ -83,6 +88,9 @@ func (t *Thread) deliverEvent(ev types.ThreadEvent) {
 	if ts, ok := ev.(*types.TurnStarted); ok {
 		t.activeTurnID.Store(ts.TurnID)
 	}
+	if isTurnTerminus(ev, "") {
+		t.clearActiveTurnID(turnIDFromTerminus(ev))
+	}
 	// Tee to any installed compact subscription.
 	if cc, ok := ev.(*types.ContextCompacted); ok {
 		if sub := t.compactSub.Load(); sub != nil {
@@ -125,7 +133,7 @@ func (t *Thread) Interrupt(ctx context.Context) error {
 	}
 	tid, _ := t.activeTurnID.Load().(string)
 	if tid == "" {
-		return fmt.Errorf("codex.Thread.Interrupt: no active turn")
+		return fmt.Errorf("codex.Thread.Interrupt: %w", ErrNoActiveTurn)
 	}
 	resp, err := t.client.demux.Send(ctx, "turn/interrupt", map[string]any{
 		"threadId": t.id,
@@ -138,6 +146,16 @@ func (t *Thread) Interrupt(ctx context.Context) error {
 		return types.NewRPCError(resp.Error.Code, resp.Error.Message, resp.Error.Data)
 	}
 	return nil
+}
+
+func (t *Thread) clearActiveTurnID(turnID string) {
+	current, _ := t.activeTurnID.Load().(string)
+	if current == "" {
+		return
+	}
+	if turnID == "" || current == turnID {
+		t.activeTurnID.Store("")
+	}
 }
 
 // RunStreamed sends a user prompt and returns a channel of events produced
@@ -237,6 +255,17 @@ func isTurnTerminus(ev types.ThreadEvent, expected string) bool {
 		return expected == "" || e.TurnID == expected
 	}
 	return false
+}
+
+func turnIDFromTerminus(ev types.ThreadEvent) string {
+	switch e := ev.(type) {
+	case *types.TurnCompleted:
+		return e.TurnID
+	case *types.TurnFailed:
+		return e.TurnID
+	default:
+		return ""
+	}
 }
 
 // Turn is the buffered result of Thread.Run — all events accumulated
