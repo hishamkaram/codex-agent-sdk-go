@@ -165,8 +165,7 @@ per machine. A second overlapping user-home Client fails with
 corruption that would happen if two backups chained.
 
 If you need multiple Clients in one process, share a single
-HookCallback-enabled Client and route from it. Multi-client merge mode
-is on the v0.3.1 roadmap.
+HookCallback-enabled Client and route from it.
 
 ### Caveats (upstream codex 0.121.0 limitations)
 
@@ -199,14 +198,7 @@ is on the v0.3.1 roadmap.
 - Default callback timeout is 30s (`WithHookTimeout` to override). If
   the callback panics or times out, the SDK fails open (`HookAllow`)
   so codex never bricks.
-- Windows: Unix sockets aren't supported; hooks mode is Linux/macOS
-  only. v0.4 may add a TCP fallback.
-
-## What's coming next
-
-- v0.3.1: merge mode (combine your existing handlers with the SDK's
-  shim instead of overriding).
-- v0.4: TCP socket fallback for Windows.
+- Windows: Unix sockets aren't supported; hooks mode is Linux/macOS only.
 
 ## References
 
