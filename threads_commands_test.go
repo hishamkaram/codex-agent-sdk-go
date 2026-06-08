@@ -2,6 +2,7 @@ package codex
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -74,6 +75,48 @@ func TestThread_Steer_NoActiveTurn(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "no active turn") {
 		t.Errorf("err = %q, want 'no active turn'", err)
+	}
+}
+
+func TestThread_Interrupt_NoActiveTurnIsRecoverableSentinel(t *testing.T) {
+	t.Parallel()
+
+	th := &Thread{id: "test"}
+	th.activeTurnID.Store("")
+	err := th.Interrupt(context.Background())
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !errors.Is(err, ErrNoActiveTurn) {
+		t.Fatalf("err = %v, want errors.Is ErrNoActiveTurn", err)
+	}
+}
+
+func TestThread_ActiveTurnIDClearsOnTerminalTurnEvent(t *testing.T) {
+	t.Parallel()
+
+	th := &Thread{id: "test"}
+	th.inbox = make(chan types.ThreadEvent, 1)
+	th.activeTurnID.Store("turn-1")
+	th.deliverEvent(&types.TurnCompleted{ThreadID: "test", TurnID: "turn-1", Status: "success"})
+
+	got, _ := th.activeTurnID.Load().(string)
+	if got != "" {
+		t.Fatalf("activeTurnID = %q, want cleared", got)
+	}
+}
+
+func TestThread_ActiveTurnIDIgnoresOlderTerminalTurnEvent(t *testing.T) {
+	t.Parallel()
+
+	th := &Thread{id: "test"}
+	th.inbox = make(chan types.ThreadEvent, 1)
+	th.activeTurnID.Store("turn-2")
+	th.deliverEvent(&types.TurnCompleted{ThreadID: "test", TurnID: "turn-1", Status: "success"})
+
+	got, _ := th.activeTurnID.Load().(string)
+	if got != "turn-2" {
+		t.Fatalf("activeTurnID = %q, want turn-2", got)
 	}
 }
 
