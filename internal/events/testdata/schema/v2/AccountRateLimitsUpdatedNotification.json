@@ -1,6 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "AccountRateLimitsUpdatedNotification",
+  "description": "Sparse rolling rate-limit update.\n\nClients should merge available values into the most recent `account/rateLimits/read` response or refetch that snapshot. Nullable account metadata may be unavailable in a rolling update and does not clear a previously observed value.",
   "type": "object",
   "required": [
     "rateLimits"
@@ -66,6 +67,16 @@
           "anyOf": [
             {
               "$ref": "#/definitions/CreditsSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "individualLimit": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/SpendControlLimitSnapshot"
             },
             {
               "type": "null"
@@ -149,6 +160,31 @@
             "null"
           ],
           "format": "int64"
+        }
+      }
+    },
+    "SpendControlLimitSnapshot": {
+      "type": "object",
+      "required": [
+        "limit",
+        "remainingPercent",
+        "resetsAt",
+        "used"
+      ],
+      "properties": {
+        "limit": {
+          "type": "string"
+        },
+        "remainingPercent": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "resetsAt": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "used": {
+          "type": "string"
         }
       }
     }

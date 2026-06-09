@@ -9,7 +9,7 @@
     "turnId"
   ],
   "properties": {
-    "threadId": {
+    "turnId": {
       "type": "string"
     },
     "approvalId": {
@@ -19,7 +19,7 @@
         "null"
       ]
     },
-    "turnId": {
+    "threadId": {
       "type": "string"
     },
     "command": {
@@ -375,7 +375,7 @@
       "enum": [
         "read",
         "write",
-        "none"
+        "deny"
       ]
     },
     "FileSystemPath": {

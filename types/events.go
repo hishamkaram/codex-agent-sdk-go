@@ -192,6 +192,18 @@ type ThreadStatusChanged struct {
 func (*ThreadStatusChanged) isThreadEvent()      {}
 func (*ThreadStatusChanged) EventMethod() string { return "thread/status/changed" }
 
+// ThreadSettingsUpdated is emitted when the server updates thread-scoped
+// settings. ThreadSettings is raw because upstream settings are broad and may
+// grow independently from SDK behavior.
+// Wire method: "thread/settings/updated".
+type ThreadSettingsUpdated struct {
+	ThreadID       string          `json:"thread_id"`
+	ThreadSettings json.RawMessage `json:"thread_settings"`
+}
+
+func (*ThreadSettingsUpdated) isThreadEvent()      {}
+func (*ThreadSettingsUpdated) EventMethod() string { return "thread/settings/updated" }
+
 // ContextCompacted is emitted when the server summarizes conversation
 // history to free context-window space. Supersedes v0.1.0's
 // CompactionEvent.
@@ -319,6 +331,21 @@ type TurnPlanUpdated struct {
 
 func (*TurnPlanUpdated) isThreadEvent()      {}
 func (*TurnPlanUpdated) EventMethod() string { return "turn/plan/updated" }
+
+// TurnModerationMetadata is emitted when the server attaches moderation
+// metadata to a turn. Metadata is preserved raw because the schema accepts any
+// JSON payload.
+// Wire method: "turn/moderationMetadata".
+type TurnModerationMetadata struct {
+	ThreadID string          `json:"thread_id"`
+	TurnID   string          `json:"turn_id"`
+	Metadata json.RawMessage `json:"metadata"`
+}
+
+func (*TurnModerationMetadata) isThreadEvent() {}
+func (*TurnModerationMetadata) EventMethod() string {
+	return "turn/moderationMetadata"
+}
 
 // --- v0.2.0 expansion: guardian auto-approval review events ---
 

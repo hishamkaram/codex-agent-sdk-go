@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "ThreadForkParams",
-  "description": "There are two ways to fork a thread: 1. By thread_id: load the thread from disk by thread_id and fork it into a new thread. 2. By path: load the thread from disk by path and fork it into a new thread.\n\nIf using path, the thread_id param will be ignored.\n\nPrefer using thread_id whenever possible.",
+  "description": "There are two ways to fork a thread: 1. By thread_id: load the thread from disk by thread_id and fork it into a new thread. 2. By path: load the thread from disk by path and fork it into a new thread.\n\nIf using a non-empty path, the thread_id param will be ignored. Empty string path values are treated as absent.\n\nPrefer using thread_id whenever possible.",
   "type": "object",
   "required": [
     "threadId"
@@ -56,15 +56,10 @@
     "ephemeral": {
       "type": "boolean"
     },
-    "threadSource": {
-      "description": "Optional client-supplied analytics source classification for this forked thread.",
-      "anyOf": [
-        {
-          "$ref": "#/definitions/ThreadSource"
-        },
-        {
-          "type": "null"
-        }
+    "serviceTier": {
+      "type": [
+        "string",
+        "null"
       ]
     },
     "model": {
@@ -80,19 +75,24 @@
         "null"
       ]
     },
-    "serviceTier": {
-      "type": [
-        "string",
-        "null"
+    "sandbox": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/SandboxMode"
+        },
+        {
+          "type": "null"
+        }
       ]
     },
     "threadId": {
       "type": "string"
     },
-    "sandbox": {
+    "threadSource": {
+      "description": "Optional client-supplied analytics source classification for this forked thread.",
       "anyOf": [
         {
-          "$ref": "#/definitions/SandboxMode"
+          "$ref": "#/definitions/ThreadSource"
         },
         {
           "type": "null"
@@ -161,65 +161,6 @@
           },
           "additionalProperties": false,
           "title": "GranularAskForApproval"
-        }
-      ]
-    },
-    "PermissionProfileModificationParams": {
-      "oneOf": [
-        {
-          "description": "Additional concrete directory that should be writable.",
-          "type": "object",
-          "required": [
-            "path",
-            "type"
-          ],
-          "properties": {
-            "path": {
-              "$ref": "#/definitions/AbsolutePathBuf"
-            },
-            "type": {
-              "type": "string",
-              "enum": [
-                "additionalWritableRoot"
-              ],
-              "title": "AdditionalWritableRootPermissionProfileModificationParamsType"
-            }
-          },
-          "title": "AdditionalWritableRootPermissionProfileModificationParams"
-        }
-      ]
-    },
-    "PermissionProfileSelectionParams": {
-      "oneOf": [
-        {
-          "description": "Select a named built-in or user-defined profile and optionally apply bounded modifications that Codex knows how to validate.",
-          "type": "object",
-          "required": [
-            "id",
-            "type"
-          ],
-          "properties": {
-            "id": {
-              "type": "string"
-            },
-            "modifications": {
-              "type": [
-                "array",
-                "null"
-              ],
-              "items": {
-                "$ref": "#/definitions/PermissionProfileModificationParams"
-              }
-            },
-            "type": {
-              "type": "string",
-              "enum": [
-                "profile"
-              ],
-              "title": "ProfilePermissionProfileSelectionParamsType"
-            }
-          },
-          "title": "ProfilePermissionProfileSelectionParams"
         }
       ]
     },

@@ -35,6 +35,8 @@ func ParseEvent(n jsonrpc.Notification) (types.ThreadEvent, error) {
 		return parseThreadNameUpdated(n.Params)
 	case "thread/status/changed":
 		return parseThreadStatusChanged(n.Params)
+	case "thread/settings/updated":
+		return parseThreadSettingsUpdated(n.Params)
 	case "thread/compacted":
 		return parseContextCompacted(n.Params)
 	case "compaction_event": // v0.1.0 forward-compat; real wire is thread/compacted
@@ -59,6 +61,8 @@ func ParseEvent(n jsonrpc.Notification) (types.ThreadEvent, error) {
 		return parseTurnDiffUpdated(n.Params)
 	case "turn/plan/updated":
 		return parseTurnPlanUpdated(n.Params)
+	case "turn/moderationMetadata":
+		return parseTurnModerationMetadata(n.Params)
 
 	// --- Items ---
 	case "item/started":
@@ -554,6 +558,20 @@ func parseThreadStatusChanged(raw json.RawMessage) (types.ThreadEvent, error) {
 	return &types.ThreadStatusChanged{ThreadID: env.ThreadID, Status: cloneRaw(env.Status)}, nil
 }
 
+func parseThreadSettingsUpdated(raw json.RawMessage) (types.ThreadEvent, error) {
+	var env struct {
+		ThreadID       string          `json:"threadId"`
+		ThreadSettings json.RawMessage `json:"threadSettings"`
+	}
+	if err := unmarshalTo(raw, &env); err != nil {
+		return nil, err
+	}
+	return &types.ThreadSettingsUpdated{
+		ThreadID:       env.ThreadID,
+		ThreadSettings: cloneRaw(env.ThreadSettings),
+	}, nil
+}
+
 func parseContextCompacted(raw json.RawMessage) (types.ThreadEvent, error) {
 	var env struct {
 		ThreadID string `json:"threadId"`
@@ -592,6 +610,22 @@ func parseTurnPlanUpdated(raw json.RawMessage) (types.ThreadEvent, error) {
 		TurnID:      env.TurnID,
 		Plan:        cloneRaw(env.Plan),
 		Explanation: env.Explanation,
+	}, nil
+}
+
+func parseTurnModerationMetadata(raw json.RawMessage) (types.ThreadEvent, error) {
+	var env struct {
+		ThreadID string          `json:"threadId"`
+		TurnID   string          `json:"turnId"`
+		Metadata json.RawMessage `json:"metadata"`
+	}
+	if err := unmarshalTo(raw, &env); err != nil {
+		return nil, err
+	}
+	return &types.TurnModerationMetadata{
+		ThreadID: env.ThreadID,
+		TurnID:   env.TurnID,
+		Metadata: cloneRaw(env.Metadata),
 	}, nil
 }
 

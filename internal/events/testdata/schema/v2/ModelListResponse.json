@@ -74,6 +74,14 @@
         "defaultReasoningEffort": {
           "$ref": "#/definitions/ReasoningEffort"
         },
+        "defaultServiceTier": {
+          "description": "Catalog default service tier id for this model, when one is configured.",
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "description": {
           "type": "string"
         },
@@ -197,16 +205,9 @@
       }
     },
     "ReasoningEffort": {
-      "description": "See https://platform.openai.com/docs/guides/reasoning?api-mode=responses#get-started-with-reasoning",
+      "description": "A non-empty reasoning effort value advertised by the model.",
       "type": "string",
-      "enum": [
-        "none",
-        "minimal",
-        "low",
-        "medium",
-        "high",
-        "xhigh"
-      ]
+      "minLength": 1
     },
     "ReasoningEffortOption": {
       "type": "object",

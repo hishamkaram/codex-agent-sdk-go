@@ -19,6 +19,30 @@
     }
   },
   "definitions": {
+    "AgentMessageInputContent": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "encrypted_content",
+            "type"
+          ],
+          "properties": {
+            "encrypted_content": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "encrypted_content"
+              ],
+              "title": "EncryptedContentAgentMessageInputContentType"
+            }
+          },
+          "title": "EncryptedContentAgentMessageInputContent"
+        }
+      ]
+    },
     "ContentItem": {
       "oneOf": [
         {
@@ -158,6 +182,26 @@
             }
           },
           "title": "InputImageFunctionCallOutputContentItem"
+        },
+        {
+          "type": "object",
+          "required": [
+            "encrypted_content",
+            "type"
+          ],
+          "properties": {
+            "encrypted_content": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "encrypted_content"
+              ],
+              "title": "EncryptedContentFunctionCallOutputContentItemType"
+            }
+          },
+          "title": "EncryptedContentFunctionCallOutputContentItem"
         }
       ]
     },
@@ -366,6 +410,37 @@
             }
           },
           "title": "MessageResponseItem"
+        },
+        {
+          "type": "object",
+          "required": [
+            "author",
+            "content",
+            "recipient",
+            "type"
+          ],
+          "properties": {
+            "author": {
+              "type": "string"
+            },
+            "content": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/AgentMessageInputContent"
+              }
+            },
+            "recipient": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "agent_message"
+              ],
+              "title": "AgentMessageResponseItemType"
+            }
+          },
+          "title": "AgentMessageResponseItem"
         },
         {
           "type": "object",
@@ -749,6 +824,22 @@
             }
           },
           "title": "CompactionResponseItem"
+        },
+        {
+          "type": "object",
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "compaction_trigger"
+              ],
+              "title": "CompactionTriggerResponseItemType"
+            }
+          },
+          "title": "CompactionTriggerResponseItem"
         },
         {
           "type": "object",

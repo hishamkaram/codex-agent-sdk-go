@@ -35,6 +35,8 @@
         "postCompact",
         "sessionStart",
         "userPromptSubmit",
+        "subagentStart",
+        "subagentStop",
         "stop"
       ]
     },
@@ -185,6 +187,7 @@
         "sessionFlags",
         "plugin",
         "cloudRequirements",
+        "cloudManagedConfig",
         "legacyManagedConfigFile",
         "legacyManagedConfigMdm",
         "unknown"

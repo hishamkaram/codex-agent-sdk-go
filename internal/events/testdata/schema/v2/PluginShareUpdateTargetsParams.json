@@ -34,7 +34,8 @@
       "type": "object",
       "required": [
         "principalId",
-        "principalType"
+        "principalType",
+        "role"
       ],
       "properties": {
         "principalId": {
@@ -42,8 +43,18 @@
         },
         "principalType": {
           "$ref": "#/definitions/PluginSharePrincipalType"
+        },
+        "role": {
+          "$ref": "#/definitions/PluginShareTargetRole"
         }
       }
+    },
+    "PluginShareTargetRole": {
+      "type": "string",
+      "enum": [
+        "reader",
+        "editor"
+      ]
     },
     "PluginShareUpdateDiscoverability": {
       "type": "string",

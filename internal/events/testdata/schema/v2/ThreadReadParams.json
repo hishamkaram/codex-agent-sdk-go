@@ -8,7 +8,6 @@
   "properties": {
     "includeTurns": {
       "description": "When true, include turns and their items from rollout history.",
-      "default": false,
       "type": "boolean"
     },
     "threadId": {

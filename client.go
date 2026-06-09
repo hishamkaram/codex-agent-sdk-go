@@ -898,9 +898,13 @@ func extractThreadIDFromEvent(ev types.ThreadEvent) string {
 		return e.ThreadID
 	case *types.ThreadStatusChanged:
 		return e.ThreadID
+	case *types.ThreadSettingsUpdated:
+		return e.ThreadID
 	case *types.TurnDiffUpdated:
 		return e.ThreadID
 	case *types.TurnPlanUpdated:
+		return e.ThreadID
+	case *types.TurnModerationMetadata:
 		return e.ThreadID
 	case *types.FileChangePatchUpdated:
 		return e.ThreadID

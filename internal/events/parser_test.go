@@ -338,6 +338,42 @@ func TestParseEvent_Codex0130Notifications(t *testing.T) {
 			},
 		},
 		{
+			name:   "thread settings updated",
+			method: "thread/settings/updated",
+			params: `{"threadId":"T","threadSettings":{"approvalPolicy":{"type":"unlessTrusted"},"sandbox":{"mode":"workspace-write"}}}`,
+			assert: func(t *testing.T, ev types.ThreadEvent) {
+				got := ev.(*types.ThreadSettingsUpdated)
+				if got.ThreadID != "T" || len(got.ThreadSettings) == 0 {
+					t.Fatalf("%+v", got)
+				}
+				var settings map[string]json.RawMessage
+				if err := json.Unmarshal(got.ThreadSettings, &settings); err != nil {
+					t.Fatalf("ThreadSettings json: %v", err)
+				}
+				if _, ok := settings["approvalPolicy"]; !ok {
+					t.Fatalf("ThreadSettings = %s, want approvalPolicy", got.ThreadSettings)
+				}
+			},
+		},
+		{
+			name:   "turn moderation metadata",
+			method: "turn/moderationMetadata",
+			params: `{"threadId":"T","turnId":"U","metadata":{"flagged":false,"categories":{"violence":0}}}`,
+			assert: func(t *testing.T, ev types.ThreadEvent) {
+				got := ev.(*types.TurnModerationMetadata)
+				if got.ThreadID != "T" || got.TurnID != "U" || len(got.Metadata) == 0 {
+					t.Fatalf("%+v", got)
+				}
+				var metadata map[string]json.RawMessage
+				if err := json.Unmarshal(got.Metadata, &metadata); err != nil {
+					t.Fatalf("Metadata json: %v", err)
+				}
+				if _, ok := metadata["categories"]; !ok {
+					t.Fatalf("Metadata = %s, want categories", got.Metadata)
+				}
+			},
+		},
+		{
 			name:   "guardian warning",
 			method: "guardianWarning",
 			params: `{"threadId":"T","message":"careful"}`,

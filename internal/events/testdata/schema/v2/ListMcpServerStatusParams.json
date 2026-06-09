@@ -29,6 +29,12 @@
       ],
       "format": "uint32",
       "minimum": 0.0
+    },
+    "threadId": {
+      "type": [
+        "string",
+        "null"
+      ]
     }
   },
   "definitions": {

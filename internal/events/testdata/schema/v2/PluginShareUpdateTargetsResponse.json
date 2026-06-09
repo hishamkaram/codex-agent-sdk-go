@@ -31,7 +31,8 @@
       "required": [
         "name",
         "principalId",
-        "principalType"
+        "principalType",
+        "role"
       ],
       "properties": {
         "name": {
@@ -42,8 +43,19 @@
         },
         "principalType": {
           "$ref": "#/definitions/PluginSharePrincipalType"
+        },
+        "role": {
+          "$ref": "#/definitions/PluginSharePrincipalRole"
         }
       }
+    },
+    "PluginSharePrincipalRole": {
+      "type": "string",
+      "enum": [
+        "reader",
+        "editor",
+        "owner"
+      ]
     },
     "PluginSharePrincipalType": {
       "type": "string",

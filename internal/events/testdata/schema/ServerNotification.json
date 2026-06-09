@@ -214,6 +214,26 @@
         "method": {
           "type": "string",
           "enum": [
+            "thread/settings/updated"
+          ],
+          "title": "Thread/settings/updatedNotificationMethod"
+        },
+        "params": {
+          "$ref": "#/definitions/ThreadSettingsUpdatedNotification"
+        }
+      },
+      "title": "Thread/settings/updatedNotification"
+    },
+    {
+      "type": "object",
+      "required": [
+        "method",
+        "params"
+      ],
+      "properties": {
+        "method": {
+          "type": "string",
+          "enum": [
             "thread/tokenUsage/updated"
           ],
           "title": "Thread/tokenUsage/updatedNotificationMethod"
@@ -940,6 +960,26 @@
         "method": {
           "type": "string",
           "enum": [
+            "turn/moderationMetadata"
+          ],
+          "title": "Turn/moderationMetadataNotificationMethod"
+        },
+        "params": {
+          "$ref": "#/definitions/TurnModerationMetadataNotification"
+        }
+      },
+      "title": "Turn/moderationMetadataNotification"
+    },
+    {
+      "type": "object",
+      "required": [
+        "method",
+        "params"
+      ],
+      "properties": {
+        "method": {
+          "type": "string",
+          "enum": [
             "warning"
           ],
           "title": "WarningNotificationMethod"
@@ -1301,6 +1341,7 @@
       }
     },
     "AccountRateLimitsUpdatedNotification": {
+      "description": "Sparse rolling rate-limit update.\n\nClients should merge available values into the most recent `account/rateLimits/read` response or refetch that snapshot. Nullable account metadata may be unavailable in a rolling update and does not clear a previously observed value.",
       "type": "object",
       "required": [
         "rateLimits"
@@ -1333,6 +1374,26 @@
               "type": "null"
             }
           ]
+        }
+      }
+    },
+    "ActivePermissionProfile": {
+      "type": "object",
+      "required": [
+        "id"
+      ],
+      "properties": {
+        "extends": {
+          "description": "Parent profile identifier from the selected permissions profile's `extends` setting, when present.",
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "description": "Identifier from `default_permissions` or the implicit built-in default, such as `:workspace` or a user-defined `[permissions.<id>]` profile.",
+          "type": "string"
         }
       }
     },
@@ -1687,6 +1748,65 @@
         }
       }
     },
+    "ApprovalsReviewer": {
+      "description": "Configures who approval requests are routed to for review. Examples include sandbox escapes, blocked network access, MCP approval prompts, and ARC escalations. Defaults to `user`. `auto_review` uses a carefully prompted subagent to gather relevant context and apply a risk-based decision framework before approving or denying the request. The legacy value `guardian_subagent` is accepted for compatibility.",
+      "type": "string",
+      "enum": [
+        "user",
+        "auto_review",
+        "guardian_subagent"
+      ]
+    },
+    "AskForApproval": {
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "untrusted",
+            "on-failure",
+            "on-request",
+            "never"
+          ]
+        },
+        {
+          "type": "object",
+          "required": [
+            "granular"
+          ],
+          "properties": {
+            "granular": {
+              "type": "object",
+              "required": [
+                "mcp_elicitations",
+                "rules",
+                "sandbox_approval"
+              ],
+              "properties": {
+                "mcp_elicitations": {
+                  "type": "boolean"
+                },
+                "request_permissions": {
+                  "default": false,
+                  "type": "boolean"
+                },
+                "rules": {
+                  "type": "boolean"
+                },
+                "sandbox_approval": {
+                  "type": "boolean"
+                },
+                "skill_approval": {
+                  "default": false,
+                  "type": "boolean"
+                }
+              }
+            }
+          },
+          "additionalProperties": false,
+          "title": "GranularAskForApproval"
+        }
+      ]
+    },
     "AuthMode": {
       "description": "Authentication mode for OpenAI-backed providers.",
       "oneOf": [
@@ -1716,6 +1836,13 @@
           "type": "string",
           "enum": [
             "agentIdentity"
+          ]
+        },
+        {
+          "description": "Programmatic Codex auth backed by a personal access token.",
+          "type": "string",
+          "enum": [
+            "personalAccessToken"
           ]
         }
       ]
@@ -1929,6 +2056,22 @@
         "completed",
         "failed"
       ]
+    },
+    "CollaborationMode": {
+      "description": "Collaboration mode for a Codex session.",
+      "type": "object",
+      "required": [
+        "mode",
+        "settings"
+      ],
+      "properties": {
+        "mode": {
+          "$ref": "#/definitions/ModeKind"
+        },
+        "settings": {
+          "$ref": "#/definitions/Settings"
+        }
+      }
     },
     "CommandAction": {
       "oneOf": [
@@ -2358,7 +2501,7 @@
       "enum": [
         "read",
         "write",
-        "none"
+        "deny"
       ]
     },
     "FileSystemPath": {
@@ -3013,6 +3156,8 @@
         "postCompact",
         "sessionStart",
         "userPromptSubmit",
+        "subagentStart",
+        "subagentStop",
         "stop"
       ]
     },
@@ -3178,6 +3323,7 @@
         "sessionFlags",
         "plugin",
         "cloudRequirements",
+        "cloudManagedConfig",
         "legacyManagedConfigFile",
         "legacyManagedConfigMdm",
         "unknown"
@@ -3203,6 +3349,15 @@
           ]
         }
       }
+    },
+    "ImageDetail": {
+      "type": "string",
+      "enum": [
+        "auto",
+        "low",
+        "high",
+        "original"
+      ]
     },
     "ItemCompletedNotification": {
       "type": "object",
@@ -3522,6 +3677,14 @@
         }
       ]
     },
+    "ModeKind": {
+      "description": "Initial collaboration mode to use when the TUI starts.",
+      "type": "string",
+      "enum": [
+        "plan",
+        "default"
+      ]
+    },
     "ModelRerouteReason": {
       "type": "string",
       "enum": [
@@ -3582,6 +3745,13 @@
           }
         }
       }
+    },
+    "NetworkAccess": {
+      "type": "string",
+      "enum": [
+        "restricted",
+        "enabled"
+      ]
     },
     "NetworkApprovalProtocol": {
       "type": "string",
@@ -3664,6 +3834,14 @@
           },
           "title": "UpdatePatchChangeKind"
         }
+      ]
+    },
+    "Personality": {
+      "type": "string",
+      "enum": [
+        "none",
+        "friendly",
+        "pragmatic"
       ]
     },
     "PlanDeltaNotification": {
@@ -3820,6 +3998,16 @@
             }
           ]
         },
+        "individualLimit": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/SpendControlLimitSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "limitId": {
           "type": [
             "string",
@@ -3908,15 +4096,28 @@
       ]
     },
     "ReasoningEffort": {
-      "description": "See https://platform.openai.com/docs/guides/reasoning?api-mode=responses#get-started-with-reasoning",
+      "description": "A non-empty reasoning effort value advertised by the model.",
       "type": "string",
-      "enum": [
-        "none",
-        "minimal",
-        "low",
-        "medium",
-        "high",
-        "xhigh"
+      "minLength": 1
+    },
+    "ReasoningSummary": {
+      "description": "A summary of the reasoning performed by the model. This can be useful for debugging and understanding the model's reasoning process. See https://platform.openai.com/docs/guides/reasoning?api-mode=responses#reasoning-summaries",
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "auto",
+            "concise",
+            "detailed"
+          ]
+        },
+        {
+          "description": "Option to disable reasoning summaries.",
+          "type": "string",
+          "enum": [
+            "none"
+          ]
+        }
       ]
     },
     "ReasoningSummaryPartAddedNotification": {
@@ -4009,9 +4210,11 @@
       ]
     },
     "RemoteControlStatusChangedNotification": {
-      "description": "Current remote-control connection status and environment id exposed to clients.",
+      "description": "Current remote-control connection status and remote identity exposed to clients.",
       "type": "object",
       "required": [
+        "installationId",
+        "serverName",
         "status"
       ],
       "properties": {
@@ -4020,6 +4223,12 @@
             "string",
             "null"
           ]
+        },
+        "installationId": {
+          "type": "string"
+        },
+        "serverName": {
+          "type": "string"
         },
         "status": {
           "$ref": "#/definitions/RemoteControlConnectionStatus"
@@ -4062,6 +4271,105 @@
         }
       },
       "additionalProperties": false
+    },
+    "SandboxPolicy": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "dangerFullAccess"
+              ],
+              "title": "DangerFullAccessSandboxPolicyType"
+            }
+          },
+          "title": "DangerFullAccessSandboxPolicy"
+        },
+        {
+          "type": "object",
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "networkAccess": {
+              "default": false,
+              "type": "boolean"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "readOnly"
+              ],
+              "title": "ReadOnlySandboxPolicyType"
+            }
+          },
+          "title": "ReadOnlySandboxPolicy"
+        },
+        {
+          "type": "object",
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "networkAccess": {
+              "default": "restricted",
+              "allOf": [
+                {
+                  "$ref": "#/definitions/NetworkAccess"
+                }
+              ]
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "externalSandbox"
+              ],
+              "title": "ExternalSandboxSandboxPolicyType"
+            }
+          },
+          "title": "ExternalSandboxSandboxPolicy"
+        },
+        {
+          "type": "object",
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "excludeSlashTmp": {
+              "default": false,
+              "type": "boolean"
+            },
+            "excludeTmpdirEnvVar": {
+              "default": false,
+              "type": "boolean"
+            },
+            "networkAccess": {
+              "default": false,
+              "type": "boolean"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "workspaceWrite"
+              ],
+              "title": "WorkspaceWriteSandboxPolicyType"
+            },
+            "writableRoots": {
+              "default": [],
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/AbsolutePathBuf"
+              }
+            }
+          },
+          "title": "WorkspaceWriteSandboxPolicy"
+        }
+      ]
     },
     "ServerRequestResolvedNotification": {
       "type": "object",
@@ -4118,9 +4426,62 @@
         }
       ]
     },
+    "Settings": {
+      "description": "Settings for a collaboration mode.",
+      "type": "object",
+      "required": [
+        "model"
+      ],
+      "properties": {
+        "developer_instructions": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "model": {
+          "type": "string"
+        },
+        "reasoning_effort": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ReasoningEffort"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
     "SkillsChangedNotification": {
       "description": "Notification emitted when watched local skill files change.\n\nTreat this as an invalidation signal and re-run `skills/list` with the client's current parameters when refreshed skill metadata is needed.",
       "type": "object"
+    },
+    "SpendControlLimitSnapshot": {
+      "type": "object",
+      "required": [
+        "limit",
+        "remainingPercent",
+        "resetsAt",
+        "used"
+      ],
+      "properties": {
+        "limit": {
+          "type": "string"
+        },
+        "remainingPercent": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "resetsAt": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "used": {
+          "type": "string"
+        }
+      }
     },
     "SubAgentSource": {
       "oneOf": [
@@ -4368,6 +4729,13 @@
             "null"
           ]
         },
+        "parentThreadId": {
+          "description": "The ID of the parent thread. This will only be set if this thread is a subagent.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "path": {
           "description": "[UNSTABLE] Path to the thread on disk.",
           "type": [
@@ -4515,6 +4883,8 @@
       "enum": [
         "active",
         "paused",
+        "blocked",
+        "usageLimited",
         "budgetLimited",
         "complete"
       ]
@@ -4553,6 +4923,12 @@
             "type"
           ],
           "properties": {
+            "clientId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "content": {
               "type": "array",
               "items": {
@@ -4853,6 +5229,12 @@
               "type": "string"
             },
             "mcpAppResourceUri": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "pluginId": {
               "type": [
                 "string",
                 "null"
@@ -5402,6 +5784,102 @@
         }
       }
     },
+    "ThreadSettings": {
+      "type": "object",
+      "required": [
+        "approvalPolicy",
+        "approvalsReviewer",
+        "collaborationMode",
+        "cwd",
+        "model",
+        "modelProvider",
+        "sandboxPolicy"
+      ],
+      "properties": {
+        "activePermissionProfile": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ActivePermissionProfile"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "approvalPolicy": {
+          "$ref": "#/definitions/AskForApproval"
+        },
+        "approvalsReviewer": {
+          "$ref": "#/definitions/ApprovalsReviewer"
+        },
+        "collaborationMode": {
+          "$ref": "#/definitions/CollaborationMode"
+        },
+        "cwd": {
+          "$ref": "#/definitions/AbsolutePathBuf"
+        },
+        "effort": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ReasoningEffort"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "model": {
+          "type": "string"
+        },
+        "modelProvider": {
+          "type": "string"
+        },
+        "personality": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Personality"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sandboxPolicy": {
+          "$ref": "#/definitions/SandboxPolicy"
+        },
+        "serviceTier": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "summary": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ReasoningSummary"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "ThreadSettingsUpdatedNotification": {
+      "type": "object",
+      "required": [
+        "threadId",
+        "threadSettings"
+      ],
+      "properties": {
+        "threadId": {
+          "type": "string"
+        },
+        "threadSettings": {
+          "$ref": "#/definitions/ThreadSettings"
+        }
+      }
+    },
     "ThreadSource": {
       "type": "string",
       "enum": [
@@ -5750,6 +6228,23 @@
         }
       ]
     },
+    "TurnModerationMetadataNotification": {
+      "type": "object",
+      "required": [
+        "metadata",
+        "threadId",
+        "turnId"
+      ],
+      "properties": {
+        "metadata": true,
+        "threadId": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        }
+      }
+    },
     "TurnPlanStep": {
       "type": "object",
       "required": [
@@ -5862,6 +6357,17 @@
             "url"
           ],
           "properties": {
+            "detail": {
+              "default": null,
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ImageDetail"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "type": {
               "type": "string",
               "enum": [
@@ -5882,6 +6388,17 @@
             "type"
           ],
           "properties": {
+            "detail": {
+              "default": null,
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ImageDetail"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "path": {
               "type": "string"
             },

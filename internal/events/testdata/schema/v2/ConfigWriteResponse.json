@@ -107,6 +107,33 @@
           "title": "SystemConfigLayerSource"
         },
         {
+          "description": "Enterprise-managed config layer delivered by the cloud config bundle.",
+          "type": "object",
+          "required": [
+            "id",
+            "name",
+            "type"
+          ],
+          "properties": {
+            "id": {
+              "description": "Stable identifier for the delivered layer.",
+              "type": "string"
+            },
+            "name": {
+              "description": "Admin-facing name for the delivered layer. This is surfaced in diagnostics so users know which cloud layer needs administrator attention.",
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "enterpriseManaged"
+              ],
+              "title": "EnterpriseManagedConfigLayerSourceType"
+            }
+          },
+          "title": "EnterpriseManagedConfigLayerSource"
+        },
+        {
           "description": "User config layer from $CODEX_HOME/config.toml. This layer is special in that it is expected to be: - writable by the user - generally outside the workspace directory",
           "type": "object",
           "required": [
@@ -120,6 +147,13 @@
                 {
                   "$ref": "#/definitions/AbsolutePathBuf"
                 }
+              ]
+            },
+            "profile": {
+              "description": "Name of the selected profile-v2 config layered on top of the base user config, when this layer represents one.",
+              "type": [
+                "string",
+                "null"
               ]
             },
             "type": {
