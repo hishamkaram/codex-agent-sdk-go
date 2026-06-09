@@ -11,7 +11,6 @@
       ]
     },
     "includeLayers": {
-      "default": false,
       "type": "boolean"
     }
   }

@@ -55,6 +55,13 @@
           "enum": [
             "agentIdentity"
           ]
+        },
+        {
+          "description": "Programmatic Codex auth backed by a personal access token.",
+          "type": "string",
+          "enum": [
+            "personalAccessToken"
+          ]
         }
       ]
     },

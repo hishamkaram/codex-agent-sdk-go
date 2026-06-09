@@ -178,6 +178,31 @@
       "title": "Account/chatgptAuthTokens/refreshRequest"
     },
     {
+      "description": "Generate a fresh upstream attestation result on demand.",
+      "type": "object",
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "attestation/generate"
+          ],
+          "title": "Attestation/generateRequestMethod"
+        },
+        "params": {
+          "$ref": "#/definitions/AttestationGenerateParams"
+        }
+      },
+      "title": "Attestation/generateRequest"
+    },
+    {
       "description": "DEPRECATED APIs below Request to approve a patch. This request is used for Turns started via the legacy APIs (i.e. SendUserTurn, SendUserMessage).",
       "type": "object",
       "required": [
@@ -348,6 +373,9 @@
           ]
         }
       }
+    },
+    "AttestationGenerateParams": {
+      "type": "object"
     },
     "ChatgptAuthTokensRefreshParams": {
       "type": "object",
@@ -576,7 +604,7 @@
         "turnId"
       ],
       "properties": {
-        "threadId": {
+        "turnId": {
           "type": "string"
         },
         "approvalId": {
@@ -586,7 +614,7 @@
             "null"
           ]
         },
-        "turnId": {
+        "threadId": {
           "type": "string"
         },
         "command": {
@@ -857,7 +885,7 @@
       "enum": [
         "read",
         "write",
-        "none"
+        "deny"
       ]
     },
     "FileSystemPath": {
@@ -1823,6 +1851,13 @@
       "properties": {
         "cwd": {
           "$ref": "#/definitions/AbsolutePathBuf"
+        },
+        "environmentId": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "itemId": {
           "type": "string"

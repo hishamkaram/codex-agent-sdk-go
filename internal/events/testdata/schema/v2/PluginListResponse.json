@@ -277,10 +277,28 @@
             "null"
           ]
         },
+        "discoverability": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/PluginShareDiscoverability"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "remotePluginId": {
           "type": "string"
         },
-        "shareTargets": {
+        "remoteVersion": {
+          "description": "Version of the remote shared plugin release when available.",
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sharePrincipals": {
           "type": [
             "array",
             "null"
@@ -297,12 +315,21 @@
         }
       }
     },
+    "PluginShareDiscoverability": {
+      "type": "string",
+      "enum": [
+        "LISTED",
+        "UNLISTED",
+        "PRIVATE"
+      ]
+    },
     "PluginSharePrincipal": {
       "type": "object",
       "required": [
         "name",
         "principalId",
-        "principalType"
+        "principalType",
+        "role"
       ],
       "properties": {
         "name": {
@@ -313,8 +340,19 @@
         },
         "principalType": {
           "$ref": "#/definitions/PluginSharePrincipalType"
+        },
+        "role": {
+          "$ref": "#/definitions/PluginSharePrincipalRole"
         }
       }
+    },
+    "PluginSharePrincipalRole": {
+      "type": "string",
+      "enum": [
+        "reader",
+        "editor",
+        "owner"
+      ]
     },
     "PluginSharePrincipalType": {
       "type": "string",
@@ -456,8 +494,23 @@
             "type": "string"
           }
         },
+        "localVersion": {
+          "description": "Version of the locally materialized plugin package when available.",
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "name": {
           "type": "string"
+        },
+        "remotePluginId": {
+          "description": "Backend remote plugin identifier when available.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "shareContext": {
           "description": "Remote sharing context associated with this plugin when available.",
