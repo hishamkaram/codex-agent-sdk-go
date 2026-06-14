@@ -89,8 +89,8 @@ type Skill struct {
 	// Path is the absolute path to the SKILL.md or SKILL.json file.
 	Path string `json:"path,omitempty"`
 	// Scope says where the skill was discovered. Observed values:
-	// "system" (codex built-in), "user" (~/.codex/skills),
-	// "project" (./.codex/skills).
+	// "system" (codex built-in), "user" ($HOME/.agents/skills),
+	// "project" (./.agents/skills).
 	Scope string `json:"scope,omitempty"`
 	// Enabled is the merged config setting (defaults to true unless
 	// the user has disabled the skill via skills/config/write).
