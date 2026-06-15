@@ -29,7 +29,13 @@ jobs:
         with:
           version: latest
       - name: Test with race detector
-        run: go test -race -count=1 -p 4 -short -cover ./...
+        run: go test -race -count=1 -p 4 -short -coverprofile=coverage.out ./...
+      - name: Enforce coverage minimum (54%)
+        run: |
+          set -euo pipefail
+          total=$(go tool cover -func=coverage.out | awk '/^total:/ {gsub(/%/,"",$3); print $3}')
+          echo "Total coverage: ${total}%"
+          awk -v t="$total" 'BEGIN { if (t == "" || (t+0) < 54) { print "::error::Coverage "t"% is below the 54% minimum"; exit 1 } }'
       - name: Build check
         run: go build ./...
       - name: govulncheck
