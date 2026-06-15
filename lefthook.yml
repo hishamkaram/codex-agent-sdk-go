@@ -4,6 +4,9 @@ pre-commit:
     go-vet:
       glob: "*.go"
       run: go vet ./...
+    golangci-lint:
+      glob: "*.go"
+      run: env GOWORK=off golangci-lint run --timeout=5m ./...
     govulncheck:
       glob: "*.go"
       run: govulncheck ./...
