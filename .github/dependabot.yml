@@ -1,0 +1,25 @@
+# Dependabot keeps Go modules and pinned GitHub Actions current. Actions are
+# SHA-pinned; Dependabot understands the `uses: <action>@<sha> # vX.Y.Z` form
+# and bumps both the SHA and the comment. Updates are grouped to reduce PR noise.
+version: 2
+updates:
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      go-modules:
+        patterns: ["*"]
+    commit-message:
+      prefix: "chore(deps)"
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      github-actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "chore(ci)"
