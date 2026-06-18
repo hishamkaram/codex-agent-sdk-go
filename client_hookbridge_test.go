@@ -2,6 +2,7 @@ package codex
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -161,8 +162,8 @@ func TestInstallHooksJSON_StaleBackupRecovered(t *testing.T) {
 	}
 
 	// Stale backup must be cleaned up.
-	if _, err := os.Stat(staleBackupPath); !os.IsNotExist(err) {
-		t.Errorf("stale backup should be removed after recovery: %v", err)
+	if _, statErr := os.Stat(staleBackupPath); !os.IsNotExist(statErr) {
+		t.Errorf("stale backup should be removed after recovery: %v", statErr)
 	}
 
 	// Round-trip: restore returns the user's original byte-for-byte.
@@ -233,7 +234,7 @@ func TestSetupHookBridge_DefaultIsolatedCODEXHome(t *testing.T) {
 		WithShimPath(shim).
 		WithHookCallback(types.DefaultAllowHookHandler)
 	var env []string
-	if err := c.setupHookBridge(&env); err != nil {
+	if err := c.setupHookBridge(context.Background(), &env); err != nil {
 		t.Fatalf("setupHookBridge: %v", err)
 	}
 	t.Cleanup(func() {

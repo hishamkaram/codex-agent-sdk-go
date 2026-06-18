@@ -55,8 +55,14 @@ type Config struct {
 // SDK uses a PID-tagged tempdir). Returns after the accept loop is
 // running.
 //
+// parent supplies request-scoped values to the listener's internal
+// context; its cancellation is intentionally detached via
+// context.WithoutCancel because the listener must outlive the caller's
+// Connect call and is torn down explicitly by Close. Pass the caller's
+// ctx so any context values propagate to hook callbacks.
+//
 // Caller MUST invoke Close to release the socket file.
-func New(cfg Config) (*Listener, error) {
+func New(parent context.Context, cfg Config) (*Listener, error) {
 	if cfg.SocketPath == "" {
 		return nil, fmt.Errorf("hookbridge.New: SocketPath required")
 	}
@@ -93,7 +99,7 @@ func New(cfg Config) (*Listener, error) {
 		_ = ln.Close()
 		return nil, fmt.Errorf("hookbridge.New: chmod socket %q: %w", cfg.SocketPath, err)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(context.WithoutCancel(parent))
 	l := &Listener{
 		socketPath: cfg.SocketPath,
 		ln:         ln,
@@ -150,12 +156,12 @@ func (l *Listener) acceptLoop() {
 		l.wg.Add(1)
 		go func() {
 			defer l.wg.Done()
-			l.serve(conn)
+			l.serve(l.ctx, conn)
 		}()
 	}
 }
 
-func (l *Listener) serve(conn net.Conn) {
+func (l *Listener) serve(ctx context.Context, conn net.Conn) {
 	defer func() { _ = conn.Close() }()
 	_ = conn.SetDeadline(time.Now().Add(l.timeout))
 
@@ -165,15 +171,15 @@ func (l *Listener) serve(conn net.Conn) {
 		return
 	}
 	var req HookRequest
-	if err := json.Unmarshal(reqBytes, &req); err != nil {
-		l.logger.Warn("hookbridge unmarshal request", zap.Error(err))
+	if unmarshalErr := json.Unmarshal(reqBytes, &req); unmarshalErr != nil {
+		l.logger.Warn("hookbridge unmarshal request", zap.Error(unmarshalErr))
 		return
 	}
 
 	// Parse the hook input JSON from req.Stdin.
 	var in types.HookInput
-	if err := json.Unmarshal([]byte(req.Stdin), &in); err != nil {
-		l.logger.Warn("hookbridge parse hook stdin", zap.Error(err),
+	if stdinErr := json.Unmarshal([]byte(req.Stdin), &in); stdinErr != nil {
+		l.logger.Warn("hookbridge parse hook stdin", zap.Error(stdinErr),
 			zap.String("shim_version", req.ShimVersion))
 		return
 	}
@@ -181,7 +187,7 @@ func (l *Listener) serve(conn net.Conn) {
 
 	// Invoke user callback under a context bounded by the configured
 	// timeout. If the callback panics, recover and default to allow.
-	cbCtx, cbCancel := context.WithTimeout(l.ctx, l.timeout)
+	cbCtx, cbCancel := context.WithTimeout(ctx, l.timeout)
 	defer cbCancel()
 
 	decision := runHandlerWithRecover(cbCtx, l.handler, in, l.logger)

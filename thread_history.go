@@ -40,9 +40,9 @@ func (c *Client) ReadThread(ctx context.Context, threadID string, opts *types.Th
 	if len(outer.Thread) == 0 {
 		return nil, types.NewThreadHistoryError(types.ThreadHistoryMalformed, threadID, "thread/read response missing thread", nil)
 	}
-	thread, err := parseThreadRecord(outer.Thread)
-	if err != nil {
-		return nil, types.NewThreadHistoryError(types.ThreadHistoryMalformed, threadID, "malformed thread/read thread", err)
+	thread, parseErr := parseThreadRecord(outer.Thread)
+	if parseErr != nil {
+		return nil, types.NewThreadHistoryError(types.ThreadHistoryMalformed, threadID, "malformed thread/read thread", parseErr)
 	}
 	return &types.ThreadReadResult{Thread: thread, Raw: cloneRaw(resp.Result)}, nil
 }

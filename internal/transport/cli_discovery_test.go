@@ -96,7 +96,9 @@ func TestFindCLI_ConcurrentCallsShareDiscovery(t *testing.T) {
 	const callers = 32
 
 	var discoveries atomic.Int64
-	discover := func() (string, error) {
+	// Typed as cliDiscoverFunc so the (string, error) shape is dictated by
+	// the cache.find contract; this stub exercises only the success path.
+	var discover cliDiscoverFunc = func() (string, error) {
 		discoveries.Add(1)
 		time.Sleep(50 * time.Millisecond)
 		return wantPath, nil

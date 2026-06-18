@@ -39,9 +39,10 @@ func (lw *LineWriter) WriteFrame(v any) error {
 	// Append \n in the same buffer so os.Pipe sees one Write. io.Pipe on a
 	// subprocess stdin also honors this; short-writes are still possible on
 	// some OSes, so loop defensively.
-	line := append(data, '\n')
+	data = append(data, '\n')
 	lw.mu.Lock()
 	defer lw.mu.Unlock()
+	line := data
 	for len(line) > 0 {
 		n, werr := lw.w.Write(line)
 		if werr != nil {

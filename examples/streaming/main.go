@@ -15,25 +15,31 @@ import (
 )
 
 func main() {
+	if err := run(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func run() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
 	client, err := codex.NewClient(ctx, types.NewCodexOptions())
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
-	if err := client.Connect(ctx); err != nil {
-		log.Fatal(err)
+	if connErr := client.Connect(ctx); connErr != nil {
+		return connErr
 	}
 	defer func() {
-		if err := client.Close(context.Background()); err != nil {
-			log.Printf("close client: %v", err)
+		if closeErr := client.Close(context.Background()); closeErr != nil {
+			log.Printf("close client: %v", closeErr)
 		}
 	}()
 
 	thread, err := client.StartThread(ctx, nil)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	fmt.Println("thread:", thread.ID())
 
@@ -45,7 +51,7 @@ func main() {
 
 		events, err := thread.RunStreamed(ctx, prompt, nil)
 		if err != nil {
-			log.Fatal(err)
+			return err
 		}
 		for ev := range events {
 			switch e := ev.(type) {
@@ -59,4 +65,5 @@ func main() {
 			}
 		}
 	}
+	return nil
 }

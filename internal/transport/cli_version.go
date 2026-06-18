@@ -47,26 +47,34 @@ func ParseSemVer(s string) (SemVer, error) {
 	if len(matches) != 4 {
 		return SemVer{}, fmt.Errorf("transport.ParseSemVer: no semver found in %q", s)
 	}
-	maj, err := strconv.Atoi(matches[1])
+	major, err := strconv.Atoi(matches[1])
 	if err != nil {
 		return SemVer{}, fmt.Errorf("transport.ParseSemVer: major: %w", err)
 	}
-	min, err := strconv.Atoi(matches[2])
+	minor, err := strconv.Atoi(matches[2])
 	if err != nil {
 		return SemVer{}, fmt.Errorf("transport.ParseSemVer: minor: %w", err)
 	}
-	pat, err := strconv.Atoi(matches[3])
+	patch, err := strconv.Atoi(matches[3])
 	if err != nil {
 		return SemVer{}, fmt.Errorf("transport.ParseSemVer: patch: %w", err)
 	}
-	return SemVer{Major: maj, Minor: min, Patch: pat}, nil
+	return SemVer{Major: major, Minor: minor, Patch: patch}, nil
 }
 
 // ProbeCLIVersion runs `<cliPath> --version` with a 5s timeout and parses
 // the semver from the output. Returns the parsed SemVer or an error if the
 // binary can't be exec'd or the output doesn't contain a semver.
 func ProbeCLIVersion(cliPath string) (SemVer, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	return probeCLIVersionCtx(context.Background(), cliPath)
+}
+
+// probeCLIVersionCtx is the context-threading core of ProbeCLIVersion. The
+// 5s probe timeout is layered onto the caller's parent ctx so connect-time
+// cancellation (e.g. the Connect context being canceled) aborts the probe
+// instead of leaving it to run to the full timeout.
+func probeCLIVersionCtx(parent context.Context, cliPath string) (SemVer, error) {
+	ctx, cancel := context.WithTimeout(parent, 5*time.Second)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, cliPath, "--version")

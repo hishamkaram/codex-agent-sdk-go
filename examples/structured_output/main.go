@@ -25,25 +25,31 @@ type RepoSummary struct {
 }
 
 func main() {
+	if err := run(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func run() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
 	client, err := codex.NewClient(ctx, types.NewCodexOptions())
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
-	if err := client.Connect(ctx); err != nil {
-		log.Fatal(err)
+	if connErr := client.Connect(ctx); connErr != nil {
+		return connErr
 	}
 	defer func() {
-		if err := client.Close(context.Background()); err != nil {
-			log.Printf("close client: %v", err)
+		if closeErr := client.Close(context.Background()); closeErr != nil {
+			log.Printf("close client: %v", closeErr)
 		}
 	}()
 
 	thread, err := client.StartThread(ctx, nil)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	schema := map[string]any{
@@ -67,12 +73,13 @@ func main() {
 			},
 		})
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	var summary RepoSummary
 	if err := json.Unmarshal([]byte(turn.FinalResponse), &summary); err != nil {
-		log.Fatalf("model returned non-conforming JSON %q: %v", turn.FinalResponse, err)
+		return fmt.Errorf("model returned non-conforming JSON %q: %w", turn.FinalResponse, err)
 	}
 	fmt.Printf("%+v\n", summary)
+	return nil
 }

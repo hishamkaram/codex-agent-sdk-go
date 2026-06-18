@@ -37,7 +37,7 @@ func (*TurnStarted) isThreadEvent()      {}
 func (*TurnStarted) EventMethod() string { return "turn/started" }
 
 // TurnCompleted is emitted when the turn reaches a terminal state. Status
-// is "success" | "failed" | "cancelled". Usage is the final per-turn
+// is "success" | "failed" | "canceled". Usage is the final per-turn
 // accounting.
 type TurnCompleted struct {
 	ThreadID string     `json:"thread_id"`

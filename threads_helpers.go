@@ -3,6 +3,7 @@ package codex
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 
@@ -67,7 +68,8 @@ func (t *Thread) GitDiff(ctx context.Context, opts *types.GitDiffOptions) (*type
 		ExitCode:  0,
 	}
 	if runErr != nil {
-		if exitErr, ok := runErr.(*exec.ExitError); ok {
+		var exitErr *exec.ExitError
+		if errors.As(runErr, &exitErr) {
 			result.ExitCode = exitErr.ExitCode()
 			// Exit code 1 from `git diff` means "differences exist" —
 			// that's success, not an error. Only return errors for

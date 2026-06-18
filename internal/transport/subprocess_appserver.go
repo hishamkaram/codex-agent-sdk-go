@@ -127,7 +127,7 @@ func (t *AppServer) doConnect(ctx context.Context) error {
 
 	// Soft version probe. Never fails; logs a warning if the version is
 	// below RecommendedCLIVersion.
-	if v, err := ProbeCLIVersion(cliPath); err == nil {
+	if v, err := probeCLIVersionCtx(ctx, cliPath); err == nil {
 		recommended, _ := ParseSemVer(RecommendedCLIVersion)
 		if !v.AtLeast(recommended) {
 			t.logger.Warn("codex CLI version below recommended",

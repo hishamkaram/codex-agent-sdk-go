@@ -1,6 +1,7 @@
 package hookbridge
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -17,7 +18,7 @@ import (
 func TestNewSocketIsOwnerOnly(t *testing.T) {
 	socket := filepath.Join(t.TempDir(), "hook.sock")
 
-	ln, err := New(Config{
+	ln, err := New(context.Background(), Config{
 		SocketPath: socket,
 		Handler:    types.DefaultAllowHookHandler,
 	})

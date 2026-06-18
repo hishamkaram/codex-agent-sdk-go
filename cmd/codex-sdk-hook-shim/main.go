@@ -114,8 +114,8 @@ func callSDK(socket string, stdinBytes []byte) (*HookResponse, error) {
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
-	if err := writeFrame(conn, reqBytes); err != nil {
-		return nil, fmt.Errorf("write frame: %w", err)
+	if writeErr := writeFrame(conn, reqBytes); writeErr != nil {
+		return nil, fmt.Errorf("write frame: %w", writeErr)
 	}
 
 	respBytes, err := readFrame(conn)
@@ -123,8 +123,8 @@ func callSDK(socket string, stdinBytes []byte) (*HookResponse, error) {
 		return nil, fmt.Errorf("read frame: %w", err)
 	}
 	var resp HookResponse
-	if err := json.Unmarshal(respBytes, &resp); err != nil {
-		return nil, fmt.Errorf("unmarshal response: %w", err)
+	if unmarshalErr := json.Unmarshal(respBytes, &resp); unmarshalErr != nil {
+		return nil, fmt.Errorf("unmarshal response: %w", unmarshalErr)
 	}
 	return &resp, nil
 }
