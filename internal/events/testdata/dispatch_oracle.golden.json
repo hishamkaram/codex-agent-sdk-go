@@ -1,0 +1,362 @@
+[
+  [
+    "event:account/login/completed",
+    "*types.AccountLoginCompleted | {\"success\":false}"
+  ],
+  [
+    "event:account/rateLimits/updated",
+    "*types.AccountRateLimitsUpdated | {\"rate_limits\":null}"
+  ],
+  [
+    "event:account/updated",
+    "*types.AccountUpdated | {}"
+  ],
+  [
+    "event:app/list/updated",
+    "*types.AppListUpdated | {\"data\":null}"
+  ],
+  [
+    "event:command/exec/outputDelta",
+    "*types.CommandExecOutputDelta | {\"process_id\":\"\",\"stream\":\"\",\"delta_base64\":\"\",\"cap_reached\":false}"
+  ],
+  [
+    "event:compaction_event",
+    "*types.ContextCompacted | {\"thread_id\":\"t1\",\"turn_id\":\"\"}"
+  ],
+  [
+    "event:configWarning",
+    "*types.ConfigWarning | {\"summary\":\"\"}"
+  ],
+  [
+    "event:deprecationNotice",
+    "*types.DeprecationNotice | {\"summary\":\"\"}"
+  ],
+  [
+    "event:error",
+    "*types.ErrorEvent | {\"code\":\"E1\",\"message\":\"fatal\"}"
+  ],
+  [
+    "event:externalAgentConfig/import/completed",
+    "*types.ExternalAgentConfigImportCompleted | {\"params\":{\"name\":\"cfg\"}}"
+  ],
+  [
+    "event:fs/changed",
+    "*types.FsChanged | {\"watch_id\":\"\",\"changed_paths\":null}"
+  ],
+  [
+    "event:fuzzyFileSearch/sessionCompleted",
+    "*types.FuzzyFileSearchSessionCompleted | {\"params\":{\"sessionId\":\"s1\"}}"
+  ],
+  [
+    "event:fuzzyFileSearch/sessionUpdated",
+    "*types.FuzzyFileSearchSessionUpdated | {\"params\":{\"sessionId\":\"s1\"}}"
+  ],
+  [
+    "event:guardianWarning",
+    "*types.GuardianWarning | {\"thread_id\":\"\",\"message\":\"risky\"}"
+  ],
+  [
+    "event:hook/completed",
+    "*types.HookCompleted | {\"thread_id\":\"t1\",\"run\":{\"id\":\"\",\"eventName\":\"\",\"handlerType\":\"\",\"executionMode\":\"\",\"scope\":\"\",\"sourcePath\":\"\",\"entries\":null,\"status\":\"\",\"displayOrder\":0,\"startedAt\":0}}"
+  ],
+  [
+    "event:hook/started",
+    "*types.HookStarted | {\"thread_id\":\"t1\",\"run\":{\"id\":\"\",\"eventName\":\"\",\"handlerType\":\"\",\"executionMode\":\"\",\"scope\":\"\",\"sourcePath\":\"\",\"entries\":null,\"status\":\"\",\"displayOrder\":0,\"startedAt\":0}}"
+  ],
+  [
+    "event:item/agentMessage/delta",
+    "*types.ItemUpdated | {\"thread_id\":\"t1\",\"turn_id\":\"\",\"item_id\":\"m1\",\"delta\":{\"text_chunk\":\"chunk\"}}"
+  ],
+  [
+    "event:item/autoApprovalReview/completed",
+    "*types.ItemGuardianApprovalReviewCompleted | {\"thread_id\":\"t1\",\"turn_id\":\"\",\"review_id\":\"\",\"action\":null,\"review\":null,\"decision_source\":null}"
+  ],
+  [
+    "event:item/autoApprovalReview/started",
+    "*types.ItemGuardianApprovalReviewStarted | {\"thread_id\":\"t1\",\"turn_id\":\"\",\"review_id\":\"\",\"action\":null,\"review\":null}"
+  ],
+  [
+    "event:item/commandExecution/outputDelta",
+    "*types.ItemUpdated | {\"thread_id\":\"t1\",\"turn_id\":\"\",\"item_id\":\"c1\",\"delta\":{\"output_chunk\":\"out\"}}"
+  ],
+  [
+    "event:item/commandExecution/terminalInteraction",
+    "*types.ItemUpdated | {\"thread_id\":\"t1\",\"turn_id\":\"\",\"item_id\":\"c1\",\"delta\":{\"process_id\":\"\",\"stdin\":\"\"}}"
+  ],
+  [
+    "event:item/completed",
+    "*types.ItemCompleted | {\"thread_id\":\"t1\",\"turn_id\":\"\",\"item_id\":\"m1\",\"item\":{\"id\":\"m1\",\"text\":\"done\"}}"
+  ],
+  [
+    "event:item/fileChange/outputDelta",
+    "*types.ItemUpdated | {\"thread_id\":\"t1\",\"turn_id\":\"\",\"item_id\":\"f1\",\"delta\":{\"diff_chunk\":\"diff\"}}"
+  ],
+  [
+    "event:item/fileChange/patchUpdated",
+    "*types.FileChangePatchUpdated | {\"thread_id\":\"t1\",\"turn_id\":\"\",\"item_id\":\"f1\",\"changes\":null}"
+  ],
+  [
+    "event:item/mcpToolCall/progress",
+    "*types.ItemUpdated | {\"thread_id\":\"t1\",\"turn_id\":\"\",\"item_id\":\"mc1\",\"delta\":{\"message\":\"\"}}"
+  ],
+  [
+    "event:item/plan/delta",
+    "*types.ItemUpdated | {\"thread_id\":\"t1\",\"turn_id\":\"\",\"item_id\":\"p1\",\"delta\":{\"chunk\":\"step\"}}"
+  ],
+  [
+    "event:item/reasoning/summaryPartAdded",
+    "*types.ItemUpdated | {\"thread_id\":\"t1\",\"turn_id\":\"\",\"item_id\":\"r1\",\"delta\":{\"summary_index\":0}}"
+  ],
+  [
+    "event:item/reasoning/summaryTextDelta",
+    "*types.ItemUpdated | {\"thread_id\":\"t1\",\"turn_id\":\"\",\"item_id\":\"r1\",\"delta\":{\"summary_chunk\":\"sum\",\"summary_index\":0}}"
+  ],
+  [
+    "event:item/reasoning/textDelta",
+    "*types.ItemUpdated | {\"thread_id\":\"t1\",\"turn_id\":\"\",\"item_id\":\"r1\",\"delta\":{\"text_chunk\":\"think\",\"content_index\":0}}"
+  ],
+  [
+    "event:item/started",
+    "*types.ItemStarted | {\"thread_id\":\"t1\",\"turn_id\":\"\",\"item_id\":\"m1\",\"item\":{\"id\":\"m1\",\"text\":\"\"}}"
+  ],
+  [
+    "event:item/updated",
+    "*types.ItemUpdated | {\"thread_id\":\"t1\",\"turn_id\":\"\",\"item_id\":\"\",\"delta\":{\"text_chunk\":\"hi\"}}"
+  ],
+  [
+    "event:mcpServer/oauthLogin/completed",
+    "*types.MCPServerOAuthLoginCompleted | {\"name\":\"\",\"success\":false}"
+  ],
+  [
+    "event:mcpServer/startupStatus/updated",
+    "*types.MCPServerStartupStatusUpdated | {\"name\":\"\",\"status\":\"ready\"}"
+  ],
+  [
+    "event:model/rerouted",
+    "*types.ModelRerouted | {\"thread_id\":\"\",\"turn_id\":\"\",\"from_model\":\"\",\"to_model\":\"\",\"reason\":null}"
+  ],
+  [
+    "event:model/verification",
+    "*types.ModelVerification | {\"thread_id\":\"\",\"turn_id\":\"\",\"verifications\":null}"
+  ],
+  [
+    "event:process/exited",
+    "*types.ProcessExited | {\"process_handle\":\"\",\"exit_code\":0,\"stdout\":\"\",\"stderr\":\"\",\"stdout_cap_reached\":false,\"stderr_cap_reached\":false}"
+  ],
+  [
+    "event:process/outputDelta",
+    "*types.ProcessOutputDelta | {\"process_handle\":\"\",\"stream\":\"\",\"delta_base64\":\"\",\"cap_reached\":false}"
+  ],
+  [
+    "event:remoteControl/status/changed",
+    "*types.RemoteControlStatusChanged | {\"status\":\"connected\"}"
+  ],
+  [
+    "event:serverRequest/resolved",
+    "*types.ServerRequestResolved | {\"thread_id\":\"\",\"request_id\":\"rq1\"}"
+  ],
+  [
+    "event:skills/changed",
+    "*types.SkillsChanged | {}"
+  ],
+  [
+    "event:thread/archived",
+    "*types.ThreadArchived | {\"thread_id\":\"t1\"}"
+  ],
+  [
+    "event:thread/closed",
+    "*types.ThreadClosed | {\"thread_id\":\"t1\"}"
+  ],
+  [
+    "event:thread/compacted",
+    "*types.ContextCompacted | {\"thread_id\":\"t1\",\"turn_id\":\"\"}"
+  ],
+  [
+    "event:thread/goal/cleared",
+    "*types.ThreadGoalCleared | {\"thread_id\":\"t1\"}"
+  ],
+  [
+    "event:thread/goal/updated",
+    "*types.ThreadGoalUpdated | {\"thread_id\":\"t1\",\"goal\":\"finish the task\"}"
+  ],
+  [
+    "event:thread/name/updated",
+    "*types.ThreadNameUpdated | {\"thread_id\":\"t1\"}"
+  ],
+  [
+    "event:thread/realtime/closed",
+    "*types.ThreadRealtimeClosed | {\"thread_id\":\"t1\",\"params\":{\"threadId\":\"t1\"}}"
+  ],
+  [
+    "event:thread/realtime/error",
+    "*types.ThreadRealtimeError | {\"thread_id\":\"t1\",\"params\":{\"threadId\":\"t1\"}}"
+  ],
+  [
+    "event:thread/realtime/itemAdded",
+    "*types.ThreadRealtimeItemAdded | {\"thread_id\":\"t1\",\"params\":{\"threadId\":\"t1\"}}"
+  ],
+  [
+    "event:thread/realtime/outputAudio/delta",
+    "*types.ThreadRealtimeOutputAudioDelta | {\"thread_id\":\"t1\",\"params\":{\"threadId\":\"t1\"}}"
+  ],
+  [
+    "event:thread/realtime/sdp",
+    "*types.ThreadRealtimeSdp | {\"thread_id\":\"t1\",\"params\":{\"threadId\":\"t1\"}}"
+  ],
+  [
+    "event:thread/realtime/started",
+    "*types.ThreadRealtimeStarted | {\"thread_id\":\"t1\",\"params\":{\"threadId\":\"t1\"}}"
+  ],
+  [
+    "event:thread/realtime/transcript/delta",
+    "*types.ThreadRealtimeTranscriptDelta | {\"thread_id\":\"t1\",\"params\":{\"threadId\":\"t1\"}}"
+  ],
+  [
+    "event:thread/realtime/transcript/done",
+    "*types.ThreadRealtimeTranscriptDone | {\"thread_id\":\"t1\",\"params\":{\"threadId\":\"t1\"}}"
+  ],
+  [
+    "event:thread/settings/updated",
+    "*types.ThreadSettingsUpdated | {\"thread_id\":\"t1\",\"thread_settings\":null}"
+  ],
+  [
+    "event:thread/started",
+    "*types.ThreadStarted | {\"thread_id\":\"t1\"}"
+  ],
+  [
+    "event:thread/status/changed",
+    "*types.ThreadStatusChanged | {\"thread_id\":\"t1\",\"status\":\"active\"}"
+  ],
+  [
+    "event:thread/tokenUsage/updated",
+    "*types.TokenUsageUpdated | {\"thread_id\":\"t1\",\"usage\":{},\"last_usage\":{},\"total_usage\":{}}"
+  ],
+  [
+    "event:thread/unarchived",
+    "*types.ThreadUnarchived | {\"thread_id\":\"t1\"}"
+  ],
+  [
+    "event:totally/unknown/method",
+    "*types.UnknownEvent | {\"method\":\"totally/unknown/method\",\"params\":{\"threadId\":\"t1\",\"turnId\":\"u1\",\"itemId\":\"i1\"},\"thread_id\":\"t1\",\"turn_id\":\"u1\",\"item_id\":\"i1\"}"
+  ],
+  [
+    "event:turn/completed",
+    "*types.TurnCompleted | {\"thread_id\":\"t1\",\"turn_id\":\"u1\",\"status\":\"\",\"usage\":{}}"
+  ],
+  [
+    "event:turn/diff/updated",
+    "*types.TurnDiffUpdated | {\"thread_id\":\"t1\",\"turn_id\":\"u1\",\"diff\":\"---\\n+++\"}"
+  ],
+  [
+    "event:turn/failed",
+    "*types.TurnFailed | {\"thread_id\":\"t1\",\"turn_id\":\"u1\"}"
+  ],
+  [
+    "event:turn/moderationMetadata",
+    "*types.TurnModerationMetadata | {\"thread_id\":\"t1\",\"turn_id\":\"u1\",\"metadata\":null}"
+  ],
+  [
+    "event:turn/plan/updated",
+    "*types.TurnPlanUpdated | {\"thread_id\":\"t1\",\"turn_id\":\"u1\",\"plan\":[]}"
+  ],
+  [
+    "event:turn/started",
+    "*types.TurnStarted | {\"thread_id\":\"t1\",\"turn_id\":\"u1\"}"
+  ],
+  [
+    "event:warning",
+    "*types.Warning | {\"message\":\"heads up\"}"
+  ],
+  [
+    "event:windows/worldWritableWarning",
+    "*types.WindowsWorldWritableWarning | {\"extra_count\":0,\"failed_scan\":false,\"sample_paths\":null}"
+  ],
+  [
+    "event:windowsSandbox/setupCompleted",
+    "*types.WindowsSandboxSetupCompleted | {\"success\":false,\"mode\":null}"
+  ],
+  [
+    "item:00",
+    "*types.AgentMessage | {\"id\":\"m1\",\"text\":\"hi\",\"phase\":\"final_answer\"}"
+  ],
+  [
+    "item:01",
+    "*types.UserMessage | {\"id\":\"u1\",\"content\":[{\"type\":\"text\",\"text\":\"hi\"}]}"
+  ],
+  [
+    "item:02",
+    "*types.CommandExecution | {\"id\":\"c1\",\"command\":\"ls\",\"cwd\":\"/\",\"status\":\"success\",\"exitCode\":0}"
+  ],
+  [
+    "item:03",
+    "*types.FileChange | {\"id\":\"f1\",\"status\":\"success\",\"changes\":[{\"path\":\"/a\",\"operation\":\"modify\",\"diff\":\"-\"}]}"
+  ],
+  [
+    "item:04",
+    "*types.MCPToolCall | {\"id\":\"mc1\",\"server\":\"docs\",\"tool\":\"search\",\"arguments\":{\"q\":\"x\"},\"status\":\"success\",\"error\":{\"Message\":\"\"}}"
+  ],
+  [
+    "item:05",
+    "*types.WebSearch | {\"id\":\"ws1\",\"query\":\"go\",\"action\":{\"kind\":\"search\"}}"
+  ],
+  [
+    "item:06",
+    "*types.MemoryRead | {\"id\":\"mr1\",\"query\":\"k\",\"result\":\"v\"}"
+  ],
+  [
+    "item:07",
+    "*types.MemoryWrite | {\"id\":\"mw1\",\"key\":\"k\",\"value\":\"v\"}"
+  ],
+  [
+    "item:08",
+    "*types.Plan | {\"id\":\"p1\",\"text\":\"step\",\"status\":\"active\"}"
+  ],
+  [
+    "item:09",
+    "*types.Reasoning | {\"id\":\"r1\",\"summary\":[\"s\"],\"content\":[\"c\"]}"
+  ],
+  [
+    "item:10",
+    "*types.SystemError | {\"id\":\"e1\",\"message\":\"boom\"}"
+  ],
+  [
+    "item:11",
+    "*types.HookPrompt | {\"id\":\"hp1\",\"fragments\":[{\"a\":1}]}"
+  ],
+  [
+    "item:12",
+    "*types.DynamicToolCall | {\"id\":\"dt1\",\"tool\":\"web\",\"arguments\":{},\"status\":\"inProgress\"}"
+  ],
+  [
+    "item:13",
+    "*types.CollabAgentToolCall | {\"id\":\"ct1\",\"tool\":\"Task\",\"status\":\"inProgress\",\"senderThreadId\":\"s\"}"
+  ],
+  [
+    "item:14",
+    "*types.ImageView | {\"id\":\"iv1\",\"path\":\"/a.png\"}"
+  ],
+  [
+    "item:15",
+    "*types.ImageGeneration | {\"id\":\"ig1\",\"status\":\"completed\",\"savedPath\":\"/o.png\"}"
+  ],
+  [
+    "item:16",
+    "*types.EnteredReviewMode | {\"id\":\"er1\",\"review\":{\"mode\":\"diff\"}}"
+  ],
+  [
+    "item:17",
+    "*types.ExitedReviewMode | {\"id\":\"ex1\",\"review\":{\"mode\":\"diff\"}}"
+  ],
+  [
+    "item:18",
+    "*types.ContextCompaction | {\"id\":\"cc1\"}"
+  ],
+  [
+    "item:19",
+    "*types.UnknownItem | {\"type\":\"futureUnknownType\"}"
+  ],
+  [
+    "item:20",
+    "*types.UnknownItem | {\"type\":\"\"}"
+  ]
+]
