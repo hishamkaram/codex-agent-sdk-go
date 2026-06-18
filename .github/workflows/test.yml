@@ -16,8 +16,10 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          # Full history so golangci-lint `new-from-merge-base: origin/main`
-          # (new-code-only ramp in .golangci.yml) can resolve the merge-base.
+          # Full history kept for any history-dependent checks. The
+          # new-code-only ramp (new-from-merge-base) was removed from
+          # .golangci.yml once the legacy backlog reached zero; lint now
+          # runs full-strength against all code.
           fetch-depth: 0
       - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
