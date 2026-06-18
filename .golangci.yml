@@ -59,6 +59,15 @@ linters:
       locale: US
   exclusions:
     rules:
+      # Complexity gates (gocyclo/gocognit) target PRODUCTION code. Table-driven
+      # tests, fixture-replay tests, and JSON round-trip tests are legitimately
+      # long and linear; forcing extraction harms readability with no
+      # maintainability gain. Documented correct-by-design carve-out — test
+      # files are still held to every OTHER linter; only complexity is relaxed.
+      - path: _test\.go
+        linters:
+          - gocyclo
+          - gocognit
       - path: _test\.go
         linters:
           - gocritic
