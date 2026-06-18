@@ -15,6 +15,51 @@ import (
 	"github.com/hishamkaram/codex-agent-sdk-go/types"
 )
 
+// itemPtr constrains PT to be a *T that also satisfies types.ThreadItem, so
+// decodeItem can return a typed pointer through the interface. Go infers PT
+// from T at each itemDecoders entry (the constraint's core type is *T).
+type itemPtr[T any] interface {
+	*T
+	types.ThreadItem
+}
+
+// decodeItem unmarshals raw into a fresh T and returns it as a ThreadItem,
+// wrapping any decode failure with the wire discriminator for context. This
+// is the single body that every concrete item case shares.
+func decodeItem[T any, PT itemPtr[T]](kind string, raw json.RawMessage) (types.ThreadItem, error) {
+	var it T
+	if err := json.Unmarshal(raw, &it); err != nil {
+		return nil, wrapParseErr(kind, raw, err)
+	}
+	return PT(&it), nil
+}
+
+// itemDecoders maps each camelCase wire discriminator to its concrete-type
+// decoder. Codex uses camelCase discriminators on the wire; see types/items.go
+// for the complete mapping. Any discriminator absent from this table falls
+// through to UnknownItem in ParseItem.
+var itemDecoders = map[string]func(string, json.RawMessage) (types.ThreadItem, error){
+	"agentMessage":        decodeItem[types.AgentMessage],
+	"userMessage":         decodeItem[types.UserMessage],
+	"commandExecution":    decodeItem[types.CommandExecution],
+	"fileChange":          decodeItem[types.FileChange],
+	"mcpToolCall":         decodeItem[types.MCPToolCall],
+	"webSearch":           decodeItem[types.WebSearch],
+	"memoryRead":          decodeItem[types.MemoryRead],
+	"memoryWrite":         decodeItem[types.MemoryWrite],
+	"plan":                decodeItem[types.Plan],
+	"reasoning":           decodeItem[types.Reasoning],
+	"systemError":         decodeItem[types.SystemError],
+	"hookPrompt":          decodeItem[types.HookPrompt],
+	"dynamicToolCall":     decodeItem[types.DynamicToolCall],
+	"collabAgentToolCall": decodeItem[types.CollabAgentToolCall],
+	"imageView":           decodeItem[types.ImageView],
+	"imageGeneration":     decodeItem[types.ImageGeneration],
+	"enteredReviewMode":   decodeItem[types.EnteredReviewMode],
+	"exitedReviewMode":    decodeItem[types.ExitedReviewMode],
+	"contextCompaction":   decodeItem[types.ContextCompaction],
+}
+
 // ParseItem decodes a raw item payload. The outer envelope must have a
 // "type" field; other fields are shape-specific.
 func ParseItem(raw json.RawMessage) (types.ThreadItem, error) {
@@ -27,130 +72,13 @@ func ParseItem(raw json.RawMessage) (types.ThreadItem, error) {
 	if err := json.Unmarshal(raw, &disc); err != nil {
 		return nil, types.NewJSONDecodeError(string(raw), err)
 	}
-	// Codex uses camelCase discriminators on the wire. See
-	// types/items.go for the complete mapping. Fall through to
-	// UnknownItem for any value not in this switch.
-	switch disc.Type {
-	case "agentMessage":
-		var it types.AgentMessage
-		if err := json.Unmarshal(raw, &it); err != nil {
-			return nil, wrapParseErr("agentMessage", raw, err)
-		}
-		return &it, nil
-	case "userMessage":
-		var it types.UserMessage
-		if err := json.Unmarshal(raw, &it); err != nil {
-			return nil, wrapParseErr("userMessage", raw, err)
-		}
-		return &it, nil
-	case "commandExecution":
-		var it types.CommandExecution
-		if err := json.Unmarshal(raw, &it); err != nil {
-			return nil, wrapParseErr("commandExecution", raw, err)
-		}
-		return &it, nil
-	case "fileChange":
-		var it types.FileChange
-		if err := json.Unmarshal(raw, &it); err != nil {
-			return nil, wrapParseErr("fileChange", raw, err)
-		}
-		return &it, nil
-	case "mcpToolCall":
-		var it types.MCPToolCall
-		if err := json.Unmarshal(raw, &it); err != nil {
-			return nil, wrapParseErr("mcpToolCall", raw, err)
-		}
-		return &it, nil
-	case "webSearch":
-		var it types.WebSearch
-		if err := json.Unmarshal(raw, &it); err != nil {
-			return nil, wrapParseErr("webSearch", raw, err)
-		}
-		return &it, nil
-	case "memoryRead":
-		var it types.MemoryRead
-		if err := json.Unmarshal(raw, &it); err != nil {
-			return nil, wrapParseErr("memoryRead", raw, err)
-		}
-		return &it, nil
-	case "memoryWrite":
-		var it types.MemoryWrite
-		if err := json.Unmarshal(raw, &it); err != nil {
-			return nil, wrapParseErr("memoryWrite", raw, err)
-		}
-		return &it, nil
-	case "plan":
-		var it types.Plan
-		if err := json.Unmarshal(raw, &it); err != nil {
-			return nil, wrapParseErr("plan", raw, err)
-		}
-		return &it, nil
-	case "reasoning":
-		var it types.Reasoning
-		if err := json.Unmarshal(raw, &it); err != nil {
-			return nil, wrapParseErr("reasoning", raw, err)
-		}
-		return &it, nil
-	case "systemError":
-		var it types.SystemError
-		if err := json.Unmarshal(raw, &it); err != nil {
-			return nil, wrapParseErr("systemError", raw, err)
-		}
-		return &it, nil
-	case "hookPrompt":
-		var it types.HookPrompt
-		if err := json.Unmarshal(raw, &it); err != nil {
-			return nil, wrapParseErr("hookPrompt", raw, err)
-		}
-		return &it, nil
-	case "dynamicToolCall":
-		var it types.DynamicToolCall
-		if err := json.Unmarshal(raw, &it); err != nil {
-			return nil, wrapParseErr("dynamicToolCall", raw, err)
-		}
-		return &it, nil
-	case "collabAgentToolCall":
-		var it types.CollabAgentToolCall
-		if err := json.Unmarshal(raw, &it); err != nil {
-			return nil, wrapParseErr("collabAgentToolCall", raw, err)
-		}
-		return &it, nil
-	case "imageView":
-		var it types.ImageView
-		if err := json.Unmarshal(raw, &it); err != nil {
-			return nil, wrapParseErr("imageView", raw, err)
-		}
-		return &it, nil
-	case "imageGeneration":
-		var it types.ImageGeneration
-		if err := json.Unmarshal(raw, &it); err != nil {
-			return nil, wrapParseErr("imageGeneration", raw, err)
-		}
-		return &it, nil
-	case "enteredReviewMode":
-		var it types.EnteredReviewMode
-		if err := json.Unmarshal(raw, &it); err != nil {
-			return nil, wrapParseErr("enteredReviewMode", raw, err)
-		}
-		return &it, nil
-	case "exitedReviewMode":
-		var it types.ExitedReviewMode
-		if err := json.Unmarshal(raw, &it); err != nil {
-			return nil, wrapParseErr("exitedReviewMode", raw, err)
-		}
-		return &it, nil
-	case "contextCompaction":
-		var it types.ContextCompaction
-		if err := json.Unmarshal(raw, &it); err != nil {
-			return nil, wrapParseErr("contextCompaction", raw, err)
-		}
-		return &it, nil
-	default:
-		// Forward-compat: return an UnknownItem with the raw payload.
-		cp := make(json.RawMessage, len(raw))
-		copy(cp, raw)
-		return &types.UnknownItem{Type: disc.Type, Raw: cp}, nil
+	if decode, ok := itemDecoders[disc.Type]; ok {
+		return decode(disc.Type, raw)
 	}
+	// Forward-compat: return an UnknownItem with the raw payload.
+	cp := make(json.RawMessage, len(raw))
+	copy(cp, raw)
+	return &types.UnknownItem{Type: disc.Type, Raw: cp}, nil
 }
 
 // ParseItemDelta decodes a raw item-delta payload. Follows the same

@@ -7,219 +7,217 @@ import (
 	"github.com/hishamkaram/codex-agent-sdk-go/types"
 )
 
+// eventParsers maps each JSON-RPC notification method to the parser that
+// produces its typed types.ThreadEvent. It is the lookup-table form of the
+// former ParseEvent switch — every entry preserves the exact parser binding,
+// including the forward-compat aliases (compaction_event → parseContextCompacted,
+// turn/failed, item/updated) and the inline constructors for the simple-thread,
+// flat-delta, realtime, hook, and raw-passthrough families.
+//
+// Wire methods covered here must stay in sync with the v2 schema emitted by
+// `codex app-server generate-json-schema`. The fixture-replay test in this
+// package fails if a method observed on the wire falls through to UnknownEvent.
+var eventParsers = map[string]func(json.RawMessage) (types.ThreadEvent, error){
+	// --- Thread lifecycle ---
+	"thread/started": parseThreadStarted,
+	"thread/archived": func(params json.RawMessage) (types.ThreadEvent, error) {
+		return parseSimpleThreadEvent(params, func(id string) types.ThreadEvent {
+			return &types.ThreadArchived{ThreadID: id}
+		})
+	},
+	"thread/unarchived": func(params json.RawMessage) (types.ThreadEvent, error) {
+		return parseSimpleThreadEvent(params, func(id string) types.ThreadEvent {
+			return &types.ThreadUnarchived{ThreadID: id}
+		})
+	},
+	"thread/closed": func(params json.RawMessage) (types.ThreadEvent, error) {
+		return parseSimpleThreadEvent(params, func(id string) types.ThreadEvent {
+			return &types.ThreadClosed{ThreadID: id}
+		})
+	},
+	"thread/name/updated":       parseThreadNameUpdated,
+	"thread/status/changed":     parseThreadStatusChanged,
+	"thread/settings/updated":   parseThreadSettingsUpdated,
+	"thread/compacted":          parseContextCompacted,
+	"compaction_event":          parseContextCompacted, // v0.1.0 forward-compat; real wire is thread/compacted
+	"thread/tokenUsage/updated": parseTokenUsageUpdated,
+	"thread/goal/updated":       parseThreadGoalUpdated,
+	"thread/goal/cleared": func(params json.RawMessage) (types.ThreadEvent, error) {
+		return parseSimpleThreadEvent(params, func(id string) types.ThreadEvent {
+			return &types.ThreadGoalCleared{ThreadID: id}
+		})
+	},
+
+	// --- Turn ---
+	"turn/started":            parseTurnStarted,
+	"turn/completed":          parseTurnCompleted,
+	"turn/failed":             parseTurnFailed, // not in v2 schema; kept for forward-compat
+	"turn/diff/updated":       parseTurnDiffUpdated,
+	"turn/plan/updated":       parseTurnPlanUpdated,
+	"turn/moderationMetadata": parseTurnModerationMetadata,
+
+	// --- Items ---
+	"item/started":   parseItemStarted,
+	"item/updated":   parseItemUpdated, // not in v2 schema; kept for forward-compat
+	"item/completed": parseItemCompleted,
+
+	// --- Items: streaming deltas (normalized into *ItemUpdated) ---
+	"item/agentMessage/delta": func(params json.RawMessage) (types.ThreadEvent, error) {
+		return parseFlatDelta(params, "delta", func(s string) types.ItemDelta {
+			return &types.AgentMessageDelta{TextChunk: s}
+		})
+	},
+	"item/commandExecution/outputDelta": func(params json.RawMessage) (types.ThreadEvent, error) {
+		return parseFlatDelta(params, "delta", func(s string) types.ItemDelta {
+			return &types.CommandOutputDelta{OutputChunk: s}
+		})
+	},
+	"item/fileChange/outputDelta": func(params json.RawMessage) (types.ThreadEvent, error) {
+		return parseFlatDelta(params, "delta", func(s string) types.ItemDelta {
+			return &types.FileChangeOutputDelta{DiffChunk: s}
+		})
+	},
+	"item/fileChange/patchUpdated": parseFileChangePatchUpdated,
+	"item/plan/delta": func(params json.RawMessage) (types.ThreadEvent, error) {
+		return parseFlatDelta(params, "delta", func(s string) types.ItemDelta {
+			return &types.PlanDelta{Chunk: s}
+		})
+	},
+	"item/reasoning/textDelta":                  parseReasoningTextDelta,
+	"item/reasoning/summaryTextDelta":           parseReasoningSummaryTextDelta,
+	"item/reasoning/summaryPartAdded":           parseReasoningSummaryPartAdded,
+	"item/mcpToolCall/progress":                 parseMCPToolCallProgress,
+	"item/commandExecution/terminalInteraction": parseTerminalInteraction,
+
+	// --- Items: guardian auto-approval review ---
+	"item/autoApprovalReview/started":   parseGuardianReviewStarted,
+	"item/autoApprovalReview/completed": parseGuardianReviewCompleted,
+
+	// --- Realtime (voice) ---
+	"thread/realtime/started": func(params json.RawMessage) (types.ThreadEvent, error) {
+		return wrapRealtime(params, func(id string, raw json.RawMessage) types.ThreadEvent {
+			return &types.ThreadRealtimeStarted{ThreadID: id, Params: raw}
+		})
+	},
+	"thread/realtime/closed": func(params json.RawMessage) (types.ThreadEvent, error) {
+		return wrapRealtime(params, func(id string, raw json.RawMessage) types.ThreadEvent {
+			return &types.ThreadRealtimeClosed{ThreadID: id, Params: raw}
+		})
+	},
+	"thread/realtime/error": func(params json.RawMessage) (types.ThreadEvent, error) {
+		return wrapRealtime(params, func(id string, raw json.RawMessage) types.ThreadEvent {
+			return &types.ThreadRealtimeError{ThreadID: id, Params: raw}
+		})
+	},
+	"thread/realtime/itemAdded": func(params json.RawMessage) (types.ThreadEvent, error) {
+		return wrapRealtime(params, func(id string, raw json.RawMessage) types.ThreadEvent {
+			return &types.ThreadRealtimeItemAdded{ThreadID: id, Params: raw}
+		})
+	},
+	"thread/realtime/outputAudio/delta": func(params json.RawMessage) (types.ThreadEvent, error) {
+		return wrapRealtime(params, func(id string, raw json.RawMessage) types.ThreadEvent {
+			return &types.ThreadRealtimeOutputAudioDelta{ThreadID: id, Params: raw}
+		})
+	},
+	"thread/realtime/sdp": func(params json.RawMessage) (types.ThreadEvent, error) {
+		return wrapRealtime(params, func(id string, raw json.RawMessage) types.ThreadEvent {
+			return &types.ThreadRealtimeSdp{ThreadID: id, Params: raw}
+		})
+	},
+	"thread/realtime/transcript/delta": func(params json.RawMessage) (types.ThreadEvent, error) {
+		return wrapRealtime(params, func(id string, raw json.RawMessage) types.ThreadEvent {
+			return &types.ThreadRealtimeTranscriptDelta{ThreadID: id, Params: raw}
+		})
+	},
+	"thread/realtime/transcript/done": func(params json.RawMessage) (types.ThreadEvent, error) {
+		return wrapRealtime(params, func(id string, raw json.RawMessage) types.ThreadEvent {
+			return &types.ThreadRealtimeTranscriptDone{ThreadID: id, Params: raw}
+		})
+	},
+
+	// --- MCP ---
+	"mcpServer/startupStatus/updated": parseMCPServerStartupStatus,
+	"mcpServer/oauthLogin/completed":  parseMCPServerOAuthLoginCompleted,
+
+	// --- Account + model ---
+	"account/login/completed":    parseAccountLoginCompleted,
+	"account/rateLimits/updated": parseAccountRateLimitsUpdated,
+	"account/updated":            parseAccountUpdated,
+	"model/rerouted":             parseModelRerouted,
+	"model/verification":         parseModelVerification,
+
+	// --- System / filesystem / apps ---
+	"command/exec/outputDelta":     parseCommandExecOutputDelta,
+	"process/outputDelta":          parseProcessOutputDelta,
+	"process/exited":               parseProcessExited,
+	"remoteControl/status/changed": parseRemoteControlStatusChanged,
+	"configWarning":                parseConfigWarning,
+	"warning":                      parseWarning,
+	"guardianWarning":              parseGuardianWarning,
+	"deprecationNotice":            parseDeprecationNotice,
+	"fs/changed":                   parseFsChanged,
+	"app/list/updated":             parseAppListUpdated,
+	"serverRequest/resolved":       parseServerRequestResolved,
+
+	// --- Windows platform ---
+	"windows/worldWritableWarning":  parseWindowsWorldWritableWarning,
+	"windowsSandbox/setupCompleted": parseWindowsSandboxSetupCompleted,
+
+	// --- Hooks (v0.2.0 observer; require --enable codex_hooks) ---
+	"hook/started": func(params json.RawMessage) (types.ThreadEvent, error) {
+		return parseHookEvent(params, true)
+	},
+	"hook/completed": func(params json.RawMessage) (types.ThreadEvent, error) {
+		return parseHookEvent(params, false)
+	},
+
+	// --- Errors ---
+	"error": parseErrorEvent,
+}
+
+// rawEventBuilders holds the infallible event constructors — methods whose
+// payload is passed through verbatim (or which carry no payload) and therefore
+// never fail to parse. Keeping them in a no-error table (rather than as
+// always-return-nil closures in eventParsers) keeps each builder honest about
+// having no failure mode.
+var rawEventBuilders = map[string]func(json.RawMessage) types.ThreadEvent{
+	"externalAgentConfig/import/completed": func(params json.RawMessage) types.ThreadEvent {
+		return &types.ExternalAgentConfigImportCompleted{Params: cloneRaw(params)}
+	},
+	"skills/changed": func(_ json.RawMessage) types.ThreadEvent {
+		return &types.SkillsChanged{}
+	},
+	"fuzzyFileSearch/sessionUpdated": func(params json.RawMessage) types.ThreadEvent {
+		return &types.FuzzyFileSearchSessionUpdated{Params: cloneRaw(params)}
+	},
+	"fuzzyFileSearch/sessionCompleted": func(params json.RawMessage) types.ThreadEvent {
+		return &types.FuzzyFileSearchSessionCompleted{Params: cloneRaw(params)}
+	},
+}
+
 // ParseEvent translates a JSON-RPC notification into a typed
 // types.ThreadEvent. Unrecognized methods return a *types.UnknownEvent.
 //
-// Wire methods covered by this parser must stay in sync with the v2
-// schema emitted by `codex app-server generate-json-schema`. The
-// fixture-replay test in this package fails if a method observed on the
-// wire falls through to UnknownEvent — that's the enforcement mechanism.
+// Dispatch is table-driven: eventParsers for the fallible parsers,
+// rawEventBuilders for the infallible passthrough constructors. The default
+// branch below mirrors the former switch default — it extracts whatever
+// thread/turn/item IDs are present so the UnknownEvent still routes correctly
+// downstream.
 func ParseEvent(n jsonrpc.Notification) (types.ThreadEvent, error) {
-	switch n.Method {
-	// --- Thread lifecycle ---
-	case "thread/started":
-		return parseThreadStarted(n.Params)
-	case "thread/archived":
-		return parseSimpleThreadEvent(n.Params, func(id string) types.ThreadEvent {
-			return &types.ThreadArchived{ThreadID: id}
-		})
-	case "thread/unarchived":
-		return parseSimpleThreadEvent(n.Params, func(id string) types.ThreadEvent {
-			return &types.ThreadUnarchived{ThreadID: id}
-		})
-	case "thread/closed":
-		return parseSimpleThreadEvent(n.Params, func(id string) types.ThreadEvent {
-			return &types.ThreadClosed{ThreadID: id}
-		})
-	case "thread/name/updated":
-		return parseThreadNameUpdated(n.Params)
-	case "thread/status/changed":
-		return parseThreadStatusChanged(n.Params)
-	case "thread/settings/updated":
-		return parseThreadSettingsUpdated(n.Params)
-	case "thread/compacted":
-		return parseContextCompacted(n.Params)
-	case "compaction_event": // v0.1.0 forward-compat; real wire is thread/compacted
-		return parseContextCompacted(n.Params)
-	case "thread/tokenUsage/updated":
-		return parseTokenUsageUpdated(n.Params)
-	case "thread/goal/updated":
-		return parseThreadGoalUpdated(n.Params)
-	case "thread/goal/cleared":
-		return parseSimpleThreadEvent(n.Params, func(id string) types.ThreadEvent {
-			return &types.ThreadGoalCleared{ThreadID: id}
-		})
-
-	// --- Turn ---
-	case "turn/started":
-		return parseTurnStarted(n.Params)
-	case "turn/completed":
-		return parseTurnCompleted(n.Params)
-	case "turn/failed": // not in v2 schema; kept for forward-compat
-		return parseTurnFailed(n.Params)
-	case "turn/diff/updated":
-		return parseTurnDiffUpdated(n.Params)
-	case "turn/plan/updated":
-		return parseTurnPlanUpdated(n.Params)
-	case "turn/moderationMetadata":
-		return parseTurnModerationMetadata(n.Params)
-
-	// --- Items ---
-	case "item/started":
-		return parseItemStarted(n.Params)
-	case "item/updated": // not in v2 schema; kept for forward-compat
-		return parseItemUpdated(n.Params)
-	case "item/completed":
-		return parseItemCompleted(n.Params)
-
-	// --- Items: streaming deltas (normalized into *ItemUpdated) ---
-	case "item/agentMessage/delta":
-		return parseFlatDelta(n.Params, "delta", func(s string) types.ItemDelta {
-			return &types.AgentMessageDelta{TextChunk: s}
-		})
-	case "item/commandExecution/outputDelta":
-		return parseFlatDelta(n.Params, "delta", func(s string) types.ItemDelta {
-			return &types.CommandOutputDelta{OutputChunk: s}
-		})
-	case "item/fileChange/outputDelta":
-		return parseFlatDelta(n.Params, "delta", func(s string) types.ItemDelta {
-			return &types.FileChangeOutputDelta{DiffChunk: s}
-		})
-	case "item/fileChange/patchUpdated":
-		return parseFileChangePatchUpdated(n.Params)
-	case "item/plan/delta":
-		return parseFlatDelta(n.Params, "delta", func(s string) types.ItemDelta {
-			return &types.PlanDelta{Chunk: s}
-		})
-	case "item/reasoning/textDelta":
-		return parseReasoningTextDelta(n.Params)
-	case "item/reasoning/summaryTextDelta":
-		return parseReasoningSummaryTextDelta(n.Params)
-	case "item/reasoning/summaryPartAdded":
-		return parseReasoningSummaryPartAdded(n.Params)
-	case "item/mcpToolCall/progress":
-		return parseMCPToolCallProgress(n.Params)
-	case "item/commandExecution/terminalInteraction":
-		return parseTerminalInteraction(n.Params)
-
-	// --- Items: guardian auto-approval review ---
-	case "item/autoApprovalReview/started":
-		return parseGuardianReviewStarted(n.Params)
-	case "item/autoApprovalReview/completed":
-		return parseGuardianReviewCompleted(n.Params)
-
-	// --- Realtime (voice) ---
-	case "thread/realtime/started":
-		return wrapRealtime(n.Params, func(id string, p json.RawMessage) types.ThreadEvent {
-			return &types.ThreadRealtimeStarted{ThreadID: id, Params: p}
-		})
-	case "thread/realtime/closed":
-		return wrapRealtime(n.Params, func(id string, p json.RawMessage) types.ThreadEvent {
-			return &types.ThreadRealtimeClosed{ThreadID: id, Params: p}
-		})
-	case "thread/realtime/error":
-		return wrapRealtime(n.Params, func(id string, p json.RawMessage) types.ThreadEvent {
-			return &types.ThreadRealtimeError{ThreadID: id, Params: p}
-		})
-	case "thread/realtime/itemAdded":
-		return wrapRealtime(n.Params, func(id string, p json.RawMessage) types.ThreadEvent {
-			return &types.ThreadRealtimeItemAdded{ThreadID: id, Params: p}
-		})
-	case "thread/realtime/outputAudio/delta":
-		return wrapRealtime(n.Params, func(id string, p json.RawMessage) types.ThreadEvent {
-			return &types.ThreadRealtimeOutputAudioDelta{ThreadID: id, Params: p}
-		})
-	case "thread/realtime/sdp":
-		return wrapRealtime(n.Params, func(id string, p json.RawMessage) types.ThreadEvent {
-			return &types.ThreadRealtimeSdp{ThreadID: id, Params: p}
-		})
-	case "thread/realtime/transcript/delta":
-		return wrapRealtime(n.Params, func(id string, p json.RawMessage) types.ThreadEvent {
-			return &types.ThreadRealtimeTranscriptDelta{ThreadID: id, Params: p}
-		})
-	case "thread/realtime/transcript/done":
-		return wrapRealtime(n.Params, func(id string, p json.RawMessage) types.ThreadEvent {
-			return &types.ThreadRealtimeTranscriptDone{ThreadID: id, Params: p}
-		})
-
-	// --- MCP ---
-	case "mcpServer/startupStatus/updated":
-		return parseMCPServerStartupStatus(n.Params)
-	case "mcpServer/oauthLogin/completed":
-		return parseMCPServerOAuthLoginCompleted(n.Params)
-
-	// --- Account + model ---
-	case "account/login/completed":
-		return parseAccountLoginCompleted(n.Params)
-	case "account/rateLimits/updated":
-		return parseAccountRateLimitsUpdated(n.Params)
-	case "account/updated":
-		return parseAccountUpdated(n.Params)
-	case "model/rerouted":
-		return parseModelRerouted(n.Params)
-	case "model/verification":
-		return parseModelVerification(n.Params)
-
-	// --- System / filesystem / apps ---
-	case "command/exec/outputDelta":
-		return parseCommandExecOutputDelta(n.Params)
-	case "process/outputDelta":
-		return parseProcessOutputDelta(n.Params)
-	case "process/exited":
-		return parseProcessExited(n.Params)
-	case "remoteControl/status/changed":
-		return parseRemoteControlStatusChanged(n.Params)
-	case "externalAgentConfig/import/completed":
-		return &types.ExternalAgentConfigImportCompleted{Params: cloneRaw(n.Params)}, nil
-	case "configWarning":
-		return parseConfigWarning(n.Params)
-	case "warning":
-		return parseWarning(n.Params)
-	case "guardianWarning":
-		return parseGuardianWarning(n.Params)
-	case "deprecationNotice":
-		return parseDeprecationNotice(n.Params)
-	case "fs/changed":
-		return parseFsChanged(n.Params)
-	case "skills/changed":
-		return &types.SkillsChanged{}, nil
-	case "app/list/updated":
-		return parseAppListUpdated(n.Params)
-	case "serverRequest/resolved":
-		return parseServerRequestResolved(n.Params)
-
-	// --- Windows platform ---
-	case "windows/worldWritableWarning":
-		return parseWindowsWorldWritableWarning(n.Params)
-	case "windowsSandbox/setupCompleted":
-		return parseWindowsSandboxSetupCompleted(n.Params)
-
-	// --- Fuzzy file search ---
-	case "fuzzyFileSearch/sessionUpdated":
-		return &types.FuzzyFileSearchSessionUpdated{Params: cloneRaw(n.Params)}, nil
-	case "fuzzyFileSearch/sessionCompleted":
-		return &types.FuzzyFileSearchSessionCompleted{Params: cloneRaw(n.Params)}, nil
-
-	// --- Hooks (v0.2.0 observer; require --enable codex_hooks) ---
-	case "hook/started":
-		return parseHookEvent(n.Params, true)
-	case "hook/completed":
-		return parseHookEvent(n.Params, false)
-
-	// --- Errors ---
-	case "error":
-		return parseErrorEvent(n.Params)
-
-	default:
-		threadID, turnID, itemID := extractUnknownEventIDs(n.Params)
-		return &types.UnknownEvent{
-			Method:   n.Method,
-			Params:   cloneRaw(n.Params),
-			ThreadID: threadID,
-			TurnID:   turnID,
-			ItemID:   itemID,
-		}, nil
+	if parse, ok := eventParsers[n.Method]; ok {
+		return parse(n.Params)
 	}
+	if build, ok := rawEventBuilders[n.Method]; ok {
+		return build(n.Params), nil
+	}
+	threadID, turnID, itemID := extractUnknownEventIDs(n.Params)
+	return &types.UnknownEvent{
+		Method:   n.Method,
+		Params:   cloneRaw(n.Params),
+		ThreadID: threadID,
+		TurnID:   turnID,
+		ItemID:   itemID,
+	}, nil
 }
 
 // cloneRaw returns an independent copy of raw so callers can retain it
