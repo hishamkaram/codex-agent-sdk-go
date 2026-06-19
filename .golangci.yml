@@ -7,6 +7,10 @@
 # Run: golangci-lint run ./...
 version: "2"
 
+formatters:
+  enable:
+    - gofumpt
+
 run:
   timeout: 5m
   tests: true
