@@ -2,7 +2,7 @@
 # Mirrors agentd's rich linter floor and additionally adds gocyclo/gocognit
 # complexity gates, so the SDK is held to at least the same maintainability
 # bar. Full-strength: the legacy backlog has been burned to zero, so the gate
-# runs against ALL code (no new-from-merge-base ramp) and any over-threshold
+# runs against ALL code (no incremental baseline ramp) and any over-threshold
 # change now fails — drift protection going forward.
 # Run: golangci-lint run ./...
 version: "2"
