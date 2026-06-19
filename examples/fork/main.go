@@ -20,43 +20,50 @@ import (
 )
 
 func main() {
+	if err := run(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func run() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
 	client, err := codex.NewClient(ctx, types.NewCodexOptions())
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
-	if err := client.Connect(ctx); err != nil {
-		log.Fatal(err)
+	if connErr := client.Connect(ctx); connErr != nil {
+		return connErr
 	}
 	defer func() {
-		if err := client.Close(context.Background()); err != nil {
-			log.Printf("close client: %v", err)
+		if closeErr := client.Close(context.Background()); closeErr != nil {
+			log.Printf("close client: %v", closeErr)
 		}
 	}()
 
 	original, err := client.StartThread(ctx, nil)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
-	if _, err := original.Run(ctx, "Let's say my favorite color is blue.", nil); err != nil {
-		log.Fatal(err)
+	if _, runErr := original.Run(ctx, "Let's say my favorite color is blue.", nil); runErr != nil {
+		return runErr
 	}
 
 	branch, fork, err := client.ForkThread(ctx, original.ID(), nil)
 	if err != nil {
 		var rpc *types.RPCError
 		if errors.As(err, &rpc) {
-			log.Fatalf("fork not supported by this codex CLI: %v", rpc)
+			return fmt.Errorf("fork not supported by this codex CLI: %w", rpc)
 		}
-		log.Fatal(err)
+		return err
 	}
 	fmt.Printf("forked %s → %s\n", fork.SourceThreadID, fork.NewThreadID)
 
 	turn, err := branch.Run(ctx, "What did I say my favorite color was?", nil)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	fmt.Println("branch:", turn.FinalResponse)
+	return nil
 }

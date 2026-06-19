@@ -25,15 +25,18 @@ func Query(ctx context.Context, prompt string, opts *types.CodexOptions) (<-chan
 	if err := client.Connect(ctx); err != nil {
 		return nil, err
 	}
-	thread, err := client.StartThread(ctx, nil)
-	if err != nil {
-		_ = client.Close(context.Background())
-		return nil, fmt.Errorf("codex.Query: StartThread: %w", err)
+	thread, startErr := client.StartThread(ctx, nil)
+	if startErr != nil {
+		// Detach cancellation for best-effort cleanup: the parent ctx may
+		// already be canceled (that can be why StartThread failed), but
+		// Close must still tear down the subprocess. Inherit values only.
+		_ = client.Close(context.WithoutCancel(ctx))
+		return nil, fmt.Errorf("codex.Query: StartThread: %w", startErr)
 	}
-	events, err := thread.RunStreamed(ctx, prompt, nil)
-	if err != nil {
-		_ = client.Close(context.Background())
-		return nil, fmt.Errorf("codex.Query: RunStreamed: %w", err)
+	events, runErr := thread.RunStreamed(ctx, prompt, nil)
+	if runErr != nil {
+		_ = client.Close(context.WithoutCancel(ctx))
+		return nil, fmt.Errorf("codex.Query: RunStreamed: %w", runErr)
 	}
 
 	// Wrap the inner channel in a goroutine that forwards events and cleans
@@ -41,7 +44,7 @@ func Query(ctx context.Context, prompt string, opts *types.CodexOptions) (<-chan
 	out := make(chan types.ThreadEvent, ThreadInboxBuffer)
 	go func() {
 		defer close(out)
-		defer func() { _ = client.Close(context.Background()) }()
+		defer func() { _ = client.Close(context.WithoutCancel(ctx)) }()
 		for ev := range events {
 			select {
 			case out <- ev:

@@ -17,6 +17,12 @@ import (
 )
 
 func main() {
+	if err := run(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func run() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
@@ -27,26 +33,26 @@ func main() {
 
 	client, err := codex.NewClient(ctx, opts)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
-	if err := client.Connect(ctx); err != nil {
-		log.Fatal(err)
+	if connErr := client.Connect(ctx); connErr != nil {
+		return connErr
 	}
 	defer func() {
-		if err := client.Close(context.Background()); err != nil {
-			log.Printf("close client: %v", err)
+		if closeErr := client.Close(context.Background()); closeErr != nil {
+			log.Printf("close client: %v", closeErr)
 		}
 	}()
 
 	thread, err := client.StartThread(ctx, nil)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	fmt.Println("thread:", thread.ID())
 
 	events, err := thread.RunStreamed(ctx, "Print exactly: hook demo", nil)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	for ev := range events {
 		switch e := ev.(type) {
@@ -69,4 +75,5 @@ func main() {
 				e.Usage.InputTokens, e.Usage.OutputTokens)
 		}
 	}
+	return nil
 }

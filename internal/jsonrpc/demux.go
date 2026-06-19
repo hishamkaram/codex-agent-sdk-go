@@ -280,26 +280,10 @@ func (d *Demux) readLoop(ctx context.Context) {
 
 		var frame rawFrame
 		if err := json.Unmarshal(line, &frame); err != nil {
-			consecutiveParseErrors++
 			// Emit telemetry AFTER incrementing so the count is the running total.
-			d.observer.OnParseError(consecutiveParseErrors, err)
-			d.logger.Warn("jsonrpc.Demux: malformed inbound frame",
-				zap.Error(err),
-				zap.Uint("consecutive_errors", consecutiveParseErrors),
-				zap.ByteString("line", truncate(line, 512)))
-
-			// Give up after sustained garbage: the subprocess is unrecoverable.
-			// Terminate it authoritatively (transport kills it) and surface a
-			// typed terminal error rather than spinning forever or leaving a
-			// zombie.
-			if consecutiveParseErrors >= d.maxParseErrors {
-				d.logger.Error("jsonrpc.Demux: too many consecutive decode errors, terminating subprocess",
-					zap.Uint("consecutive_errors", consecutiveParseErrors))
-				d.observer.OnParseGiveUp(consecutiveParseErrors)
-				exitErr = fmt.Errorf("jsonrpc.Demux.readLoop: %d consecutive decode errors: %w", consecutiveParseErrors, ErrParseGiveUp)
-				if d.onUnrecoverable != nil {
-					d.onUnrecoverable(exitErr)
-				}
+			consecutiveParseErrors++
+			if giveUpErr := d.recordParseFailure(line, consecutiveParseErrors, err); giveUpErr != nil {
+				exitErr = giveUpErr
 				return
 			}
 			continue
@@ -312,43 +296,81 @@ func (d *Demux) readLoop(ctx context.Context) {
 			d.observer.OnFirstMessage(time.Since(loopStart))
 		}
 
-		switch {
-		case frame.Method != nil && frame.ID != nil:
-			// Server-initiated request.
-			req := ServerRequest{ID: *frame.ID, Method: *frame.Method, Params: frame.Params}
-			if !d.deliverServerRequest(ctx, req) {
-				return
-			}
-
-		case frame.Method != nil:
-			// Notification.
-			note := Notification{Method: *frame.Method, Params: frame.Params}
-			if !d.deliverNotification(ctx, note) {
-				return
-			}
-
-		case frame.ID != nil:
-			// Response to a client-initiated request.
-			resp := Response{ID: *frame.ID, Result: frame.Result, Error: frame.Error}
-			d.mu.Lock()
-			ch, ok := d.pending[*frame.ID]
-			d.mu.Unlock()
-			if !ok {
-				d.logger.Warn("jsonrpc.Demux: unsolicited response",
-					zap.Uint64("id", *frame.ID))
-				continue
-			}
-			// ch is buffered size 1; this never blocks.
-			ch <- resp
-
-		default:
-			// Unclassifiable frame — no id, no method, no result. Either codex
-			// wire-format drift or corruption. Surface as telemetry; not a parse
-			// error (the JSON decoded fine).
-			d.observer.OnUnknownMessage("unclassifiable-frame")
-			d.logger.Warn("jsonrpc.Demux: unclassifiable frame",
-				zap.ByteString("line", truncate(line, 512)))
+		if !d.classifyAndRoute(ctx, frame, line) {
+			return
 		}
+	}
+}
+
+// recordParseFailure emits parse-error telemetry for a malformed inbound frame
+// and decides whether the stream is unrecoverable. It returns a non-nil
+// terminal error once consecutive failures reach maxParseErrors — after firing
+// OnParseGiveUp and onUnrecoverable — so readLoop terminates; otherwise it
+// returns nil and the loop continues. The caller increments consecutive before
+// calling so the count is the running total.
+func (d *Demux) recordParseFailure(line []byte, consecutive uint, err error) error {
+	d.observer.OnParseError(consecutive, err)
+	d.logger.Warn("jsonrpc.Demux: malformed inbound frame",
+		zap.Error(err),
+		zap.Uint("consecutive_errors", consecutive),
+		zap.ByteString("line", truncate(line, 512)))
+
+	// Give up after sustained garbage: the subprocess is unrecoverable.
+	// Terminate it authoritatively (transport kills it) and surface a typed
+	// terminal error rather than spinning forever or leaving a zombie.
+	if consecutive < d.maxParseErrors {
+		return nil
+	}
+	d.logger.Error("jsonrpc.Demux: too many consecutive decode errors, terminating subprocess",
+		zap.Uint("consecutive_errors", consecutive))
+	d.observer.OnParseGiveUp(consecutive)
+	exitErr := fmt.Errorf("jsonrpc.Demux.readLoop: %d consecutive decode errors: %w", consecutive, ErrParseGiveUp)
+	if d.onUnrecoverable != nil {
+		d.onUnrecoverable(exitErr)
+	}
+	return exitErr
+}
+
+// classifyAndRoute dispatches a successfully decoded frame to the correct
+// outbound channel: a server-initiated request, a notification, a response to a
+// pending client request, or an unclassifiable frame (telemetry only). It
+// returns false only when readLoop must exit — i.e. an outbound delivery
+// observed stop or ctx cancellation.
+func (d *Demux) classifyAndRoute(ctx context.Context, frame rawFrame, line []byte) bool {
+	switch {
+	case frame.Method != nil && frame.ID != nil:
+		// Server-initiated request.
+		req := ServerRequest{ID: *frame.ID, Method: *frame.Method, Params: frame.Params}
+		return d.deliverServerRequest(ctx, req)
+
+	case frame.Method != nil:
+		// Notification.
+		note := Notification{Method: *frame.Method, Params: frame.Params}
+		return d.deliverNotification(ctx, note)
+
+	case frame.ID != nil:
+		// Response to a client-initiated request.
+		resp := Response{ID: *frame.ID, Result: frame.Result, Error: frame.Error}
+		d.mu.Lock()
+		ch, ok := d.pending[*frame.ID]
+		d.mu.Unlock()
+		if !ok {
+			d.logger.Warn("jsonrpc.Demux: unsolicited response",
+				zap.Uint64("id", *frame.ID))
+			return true
+		}
+		// ch is buffered size 1; this never blocks.
+		ch <- resp
+		return true
+
+	default:
+		// Unclassifiable frame — no id, no method, no result. Either codex
+		// wire-format drift or corruption. Surface as telemetry; not a parse
+		// error (the JSON decoded fine).
+		d.observer.OnUnknownMessage("unclassifiable-frame")
+		d.logger.Warn("jsonrpc.Demux: unclassifiable frame",
+			zap.ByteString("line", truncate(line, 512)))
+		return true
 	}
 }
 

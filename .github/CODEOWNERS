@@ -1,0 +1,12 @@
+# CODEOWNERS — changes require review from the listed owner.
+# Governance guards (lint, CI) are called out explicitly so a PR that weakens a
+# gate cannot merge without owner review. Requires branch protection "Require
+# review from Code Owners" to be enforcing.
+
+# Default owner for everything in the repo.
+*                       @hishamkaram
+
+# --- Governance guards (never weaken without owner review) ---
+/.github/               @hishamkaram
+/.golangci.yml          @hishamkaram
+/lefthook.yml           @hishamkaram

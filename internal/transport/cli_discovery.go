@@ -34,7 +34,14 @@ type cliDiscoveryFlight struct {
 	err  error
 }
 
-func (c *cliDiscoveryCache) find(discover func() (string, error)) (string, error) {
+// cliDiscoverFunc resolves the codex CLI path or returns an error. It is the
+// callback contract for cliDiscoveryCache.find; the production implementation
+// is findCLIUncached. Declaring it as a named type makes the (string, error)
+// signature the contract rather than an inferred-per-call shape, so callbacks
+// that legitimately never error (e.g. a test stub) are not flagged.
+type cliDiscoverFunc func() (string, error)
+
+func (c *cliDiscoveryCache) find(discover cliDiscoverFunc) (string, error) {
 	c.mu.Lock()
 	if c.path != "" {
 		path := c.path

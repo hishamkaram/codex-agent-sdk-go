@@ -119,8 +119,8 @@ func (c *Client) Connect(ctx context.Context) (err error) {
 	// user-home mode preserves the original backup/restore behavior.
 	extraEnv := append([]string(nil), c.opts.Env...)
 	if c.opts.HookCallback != nil {
-		if err := c.setupHookBridge(&extraEnv); err != nil {
-			return fmt.Errorf("codex.Client.Connect: hook bridge: %w", err)
+		if hookErr := c.setupHookBridge(ctx, &extraEnv); hookErr != nil {
+			return fmt.Errorf("codex.Client.Connect: hook bridge: %w", hookErr)
 		}
 	}
 
@@ -137,8 +137,8 @@ func (c *Client) Connect(ctx context.Context) (err error) {
 		Observer:                  c.opts.ObserverOrNop(),
 		MaxConsecutiveParseErrors: maxParseErrors,
 	})
-	if err := c.tr.Connect(ctx); err != nil {
-		return fmt.Errorf("codex.Client.Connect: transport: %w", err)
+	if connErr := c.tr.Connect(ctx); connErr != nil {
+		return fmt.Errorf("codex.Client.Connect: transport: %w", connErr)
 	}
 	c.demux = c.tr.Demux()
 
@@ -146,11 +146,13 @@ func (c *Client) Connect(ctx context.Context) (err error) {
 	params := buildInitializeParams(c.opts)
 	resp, err := c.demux.Send(ctx, "initialize", params)
 	if err != nil {
-		_ = c.tr.Close(context.Background())
+		// Detach cancellation for best-effort transport teardown; ctx may
+		// already be canceled. Inherit values only.
+		_ = c.tr.Close(context.WithoutCancel(ctx))
 		return fmt.Errorf("codex.Client.Connect: initialize: %w", err)
 	}
 	if resp.Error != nil {
-		_ = c.tr.Close(context.Background())
+		_ = c.tr.Close(context.WithoutCancel(ctx))
 		return types.NewRPCError(resp.Error.Code, resp.Error.Message, resp.Error.Data)
 	}
 	if err := json.Unmarshal(resp.Result, &c.initResult); err != nil {
@@ -160,7 +162,7 @@ func (c *Client) Connect(ctx context.Context) (err error) {
 
 	// Send initialized notification.
 	if err := c.demux.Notify("initialized", nil); err != nil {
-		_ = c.tr.Close(context.Background())
+		_ = c.tr.Close(context.WithoutCancel(ctx))
 		return fmt.Errorf("codex.Client.Connect: initialized: %w", err)
 	}
 
@@ -330,14 +332,14 @@ const hooksJSONTimeoutSeconds = 30
 //
 // On any error after the listener starts, this method tears the listener
 // down so the caller can return cleanly.
-func (c *Client) setupHookBridge(extraEnv *[]string) error {
+func (c *Client) setupHookBridge(ctx context.Context, extraEnv *[]string) error {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return fmt.Errorf("home dir: %w", err)
 	}
 	cacheDir := filepath.Join(home, ".cache", "codex-sdk")
-	if err := os.MkdirAll(cacheDir, 0o700); err != nil {
-		return fmt.Errorf("cache dir: %w", err)
+	if mkErr := os.MkdirAll(cacheDir, 0o700); mkErr != nil {
+		return fmt.Errorf("cache dir: %w", mkErr)
 	}
 	// The hook socket is a private IPC rendezvous handed to the shim via
 	// CODEX_SDK_HOOK_SOCKET; its location is an implementation detail. The
@@ -363,7 +365,7 @@ func (c *Client) setupHookBridge(extraEnv *[]string) error {
 		return err
 	}
 
-	ln, err := hookbridge.New(hookbridge.Config{
+	ln, err := hookbridge.New(ctx, hookbridge.Config{
 		SocketPath: socketPath,
 		Handler:    c.opts.HookCallback,
 		Timeout:    c.opts.HookTimeout,
@@ -526,8 +528,8 @@ func (c *Client) installHooksJSON(home, shimPath string) error {
 		return fmt.Errorf("read existing hooks.json: %w", err)
 	}
 	if hadOriginal {
-		if err := os.WriteFile(backupPath, original, 0o600); err != nil {
-			return fmt.Errorf("write hooks.json backup: %w", err)
+		if writeErr := os.WriteFile(backupPath, original, 0o600); writeErr != nil {
+			return fmt.Errorf("write hooks.json backup: %w", writeErr)
 		}
 		c.hookBackupPath = backupPath
 	}
@@ -568,7 +570,10 @@ func (c *Client) installHooksJSON(home, shimPath string) error {
 func (c *Client) detectConcurrentSDK(codexDir string) error {
 	entries, err := os.ReadDir(codexDir)
 	if err != nil {
-		return nil
+		if os.IsNotExist(err) {
+			return nil // no codex dir means no concurrent SDK backups to detect
+		}
+		return fmt.Errorf("detectConcurrentSDK: read %s: %w", codexDir, err)
 	}
 	prefix := "hooks.json" + hookBackupSuffix
 	myPIDSuffix := fmt.Sprintf("-%d", os.Getpid())
@@ -618,8 +623,8 @@ func (c *Client) recoverStaleBackups(codexDir, hooksPath string) {
 		if e.IsDir() || !strings.HasPrefix(e.Name(), prefix) {
 			continue
 		}
-		info, err := e.Info()
-		if err != nil {
+		info, infoErr := e.Info()
+		if infoErr != nil {
 			continue
 		}
 		if now.Sub(info.ModTime()) < staleBackupAge {
@@ -701,8 +706,8 @@ func (c *Client) restoreUserHooksJSON() {
 
 // readIfExists returns the file's contents if present. If the file does
 // not exist, returns (nil, false, nil). Other I/O errors are propagated.
-func readIfExists(path string) ([]byte, bool, error) {
-	data, err := os.ReadFile(path)
+func readIfExists(path string) (data []byte, exists bool, err error) {
+	data, err = os.ReadFile(path)
 	if err == nil {
 		return data, true, nil
 	}
@@ -861,92 +866,138 @@ func (c *Client) unregisterThread(threadID string) {
 	}
 }
 
+// threadIDExtractors is the ordered set of category extractors consulted by
+// extractThreadIDFromEvent. Each event type is handled by exactly one extractor;
+// the first to report ok wins. Splitting the former single 38-case type switch
+// into category functions keeps each under the cyclomatic gate while preserving
+// the exact recognized-type set (proven by TestExtractThreadIDFromEvent_Oracle).
+var threadIDExtractors = []func(types.ThreadEvent) (string, bool){
+	threadIDFromThreadLifecycleEvent,
+	threadIDFromTurnEvent,
+	threadIDFromItemEvent,
+	threadIDFromRealtimeEvent,
+	threadIDFromMiscEvent,
+}
+
 // extractThreadIDFromEvent returns the ThreadID field of every event type
 // that carries one. Returns "" for events that don't, including global
 // warnings and UnknownEvent values whose payload did not expose a thread ID.
 func extractThreadIDFromEvent(ev types.ThreadEvent) string {
-	switch e := ev.(type) {
-	case *types.ThreadStarted:
-		return e.ThreadID
-	case *types.TurnStarted:
-		return e.ThreadID
-	case *types.TurnCompleted:
-		return e.ThreadID
-	case *types.TurnFailed:
-		return e.ThreadID
-	case *types.ItemStarted:
-		return e.ThreadID
-	case *types.ItemUpdated:
-		return e.ThreadID
-	case *types.ItemCompleted:
-		return e.ThreadID
-	case *types.TokenUsageUpdated:
-		return e.ThreadID
-	case *types.ContextCompacted:
-		return e.ThreadID
-	case *types.HookStarted:
-		return e.ThreadID
-	case *types.HookCompleted:
-		return e.ThreadID
-	case *types.ThreadArchived:
-		return e.ThreadID
-	case *types.ThreadUnarchived:
-		return e.ThreadID
-	case *types.ThreadClosed:
-		return e.ThreadID
-	case *types.ThreadNameUpdated:
-		return e.ThreadID
-	case *types.ThreadStatusChanged:
-		return e.ThreadID
-	case *types.ThreadSettingsUpdated:
-		return e.ThreadID
-	case *types.TurnDiffUpdated:
-		return e.ThreadID
-	case *types.TurnPlanUpdated:
-		return e.ThreadID
-	case *types.TurnModerationMetadata:
-		return e.ThreadID
-	case *types.FileChangePatchUpdated:
-		return e.ThreadID
-	case *types.ThreadGoalUpdated:
-		return e.ThreadID
-	case *types.ThreadGoalCleared:
-		return e.ThreadID
-	case *types.ItemGuardianApprovalReviewStarted:
-		return e.ThreadID
-	case *types.ItemGuardianApprovalReviewCompleted:
-		return e.ThreadID
-	case *types.ModelRerouted:
-		return e.ThreadID
-	case *types.ModelVerification:
-		return e.ThreadID
-	case *types.Warning:
-		if e.ThreadID != nil {
-			return *e.ThreadID
+	for _, extract := range threadIDExtractors {
+		if id, ok := extract(ev); ok {
+			return id
 		}
-		return ""
-	case *types.GuardianWarning:
-		return e.ThreadID
-	case *types.ServerRequestResolved:
-		return e.ThreadID
-	case *types.ThreadRealtimeStarted:
-		return e.ThreadID
-	case *types.ThreadRealtimeClosed:
-		return e.ThreadID
-	case *types.ThreadRealtimeError:
-		return e.ThreadID
-	case *types.ThreadRealtimeItemAdded:
-		return e.ThreadID
-	case *types.ThreadRealtimeOutputAudioDelta:
-		return e.ThreadID
-	case *types.ThreadRealtimeSdp:
-		return e.ThreadID
-	case *types.ThreadRealtimeTranscriptDelta:
-		return e.ThreadID
-	case *types.ThreadRealtimeTranscriptDone:
-		return e.ThreadID
-	case *types.UnknownEvent:
-		return e.ThreadID
 	}
 	return ""
+}
+
+func threadIDFromThreadLifecycleEvent(ev types.ThreadEvent) (string, bool) {
+	switch e := ev.(type) {
+	case *types.ThreadStarted:
+		return e.ThreadID, true
+	case *types.ThreadArchived:
+		return e.ThreadID, true
+	case *types.ThreadUnarchived:
+		return e.ThreadID, true
+	case *types.ThreadClosed:
+		return e.ThreadID, true
+	case *types.ThreadNameUpdated:
+		return e.ThreadID, true
+	case *types.ThreadStatusChanged:
+		return e.ThreadID, true
+	case *types.ThreadSettingsUpdated:
+		return e.ThreadID, true
+	case *types.ThreadGoalUpdated:
+		return e.ThreadID, true
+	case *types.ThreadGoalCleared:
+		return e.ThreadID, true
+	case *types.ContextCompacted:
+		return e.ThreadID, true
+	}
+	return "", false
+}
+
+func threadIDFromTurnEvent(ev types.ThreadEvent) (string, bool) {
+	switch e := ev.(type) {
+	case *types.TurnStarted:
+		return e.ThreadID, true
+	case *types.TurnCompleted:
+		return e.ThreadID, true
+	case *types.TurnFailed:
+		return e.ThreadID, true
+	case *types.TurnDiffUpdated:
+		return e.ThreadID, true
+	case *types.TurnPlanUpdated:
+		return e.ThreadID, true
+	case *types.TurnModerationMetadata:
+		return e.ThreadID, true
+	}
+	return "", false
+}
+
+func threadIDFromItemEvent(ev types.ThreadEvent) (string, bool) {
+	switch e := ev.(type) {
+	case *types.ItemStarted:
+		return e.ThreadID, true
+	case *types.ItemUpdated:
+		return e.ThreadID, true
+	case *types.ItemCompleted:
+		return e.ThreadID, true
+	case *types.FileChangePatchUpdated:
+		return e.ThreadID, true
+	case *types.ItemGuardianApprovalReviewStarted:
+		return e.ThreadID, true
+	case *types.ItemGuardianApprovalReviewCompleted:
+		return e.ThreadID, true
+	}
+	return "", false
+}
+
+func threadIDFromRealtimeEvent(ev types.ThreadEvent) (string, bool) {
+	switch e := ev.(type) {
+	case *types.ThreadRealtimeStarted:
+		return e.ThreadID, true
+	case *types.ThreadRealtimeClosed:
+		return e.ThreadID, true
+	case *types.ThreadRealtimeError:
+		return e.ThreadID, true
+	case *types.ThreadRealtimeItemAdded:
+		return e.ThreadID, true
+	case *types.ThreadRealtimeOutputAudioDelta:
+		return e.ThreadID, true
+	case *types.ThreadRealtimeSdp:
+		return e.ThreadID, true
+	case *types.ThreadRealtimeTranscriptDelta:
+		return e.ThreadID, true
+	case *types.ThreadRealtimeTranscriptDone:
+		return e.ThreadID, true
+	}
+	return "", false
+}
+
+func threadIDFromMiscEvent(ev types.ThreadEvent) (string, bool) {
+	switch e := ev.(type) {
+	case *types.TokenUsageUpdated:
+		return e.ThreadID, true
+	case *types.HookStarted:
+		return e.ThreadID, true
+	case *types.HookCompleted:
+		return e.ThreadID, true
+	case *types.ModelRerouted:
+		return e.ThreadID, true
+	case *types.ModelVerification:
+		return e.ThreadID, true
+	case *types.Warning:
+		if e.ThreadID != nil {
+			return *e.ThreadID, true
+		}
+		return "", true
+	case *types.GuardianWarning:
+		return e.ThreadID, true
+	case *types.ServerRequestResolved:
+		return e.ThreadID, true
+	case *types.UnknownEvent:
+		return e.ThreadID, true
+	}
+	return "", false
 }

@@ -32,26 +32,26 @@ func TestCallSDK_RoundTrip(t *testing.T) {
 	serverDone.Add(1)
 	go func() {
 		defer serverDone.Done()
-		conn, err := ln.Accept()
-		if err != nil {
+		conn, acceptErr := ln.Accept()
+		if acceptErr != nil {
 			return
 		}
 		defer func() { _ = conn.Close() }()
 		// Read one frame.
 		var header [4]byte
-		if _, err := io.ReadFull(conn, header[:]); err != nil {
-			t.Errorf("server read header: %v", err)
+		if _, hdrErr := io.ReadFull(conn, header[:]); hdrErr != nil {
+			t.Errorf("server read header: %v", hdrErr)
 			return
 		}
 		n := binary.BigEndian.Uint32(header[:])
 		body := make([]byte, n)
-		if _, err := io.ReadFull(conn, body); err != nil {
-			t.Errorf("server read body: %v", err)
+		if _, bodyErr := io.ReadFull(conn, body); bodyErr != nil {
+			t.Errorf("server read body: %v", bodyErr)
 			return
 		}
 		var req HookRequest
-		if err := json.Unmarshal(body, &req); err != nil {
-			t.Errorf("server unmarshal: %v", err)
+		if unmarshalErr := json.Unmarshal(body, &req); unmarshalErr != nil {
+			t.Errorf("server unmarshal: %v", unmarshalErr)
 			return
 		}
 		receivedCh <- req

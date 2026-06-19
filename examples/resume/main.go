@@ -21,6 +21,12 @@ import (
 )
 
 func main() {
+	if err := run(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func run() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
@@ -28,14 +34,14 @@ func main() {
 	opts := types.NewCodexOptions().WithCwd(cwd)
 	client, err := codex.NewClient(ctx, opts)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
-	if err := client.Connect(ctx); err != nil {
-		log.Fatal(err)
+	if connErr := client.Connect(ctx); connErr != nil {
+		return connErr
 	}
 	defer func() {
-		if err := client.Close(context.Background()); err != nil {
-			log.Printf("close client: %v", err)
+		if closeErr := client.Close(context.Background()); closeErr != nil {
+			log.Printf("close client: %v", closeErr)
 		}
 	}()
 
@@ -44,13 +50,13 @@ func main() {
 		id := os.Args[1]
 		thread, err = client.ResumeThread(ctx, id, &types.ResumeOptions{Cwd: cwd})
 		if err != nil {
-			log.Fatalf("resume %s: %v", id, err)
+			return fmt.Errorf("resume %s: %w", id, err)
 		}
 		fmt.Println("resumed:", thread.ID())
 	} else {
 		thread, err = client.StartThread(ctx, nil)
 		if err != nil {
-			log.Fatal(err)
+			return err
 		}
 		fmt.Println("started:", thread.ID())
 		fmt.Println("save this id, then re-run with: go run ./examples/resume", thread.ID())
@@ -62,7 +68,8 @@ func main() {
 	}
 	turn, err := thread.Run(ctx, prompt, nil)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	fmt.Println("\n" + turn.FinalResponse)
+	return nil
 }

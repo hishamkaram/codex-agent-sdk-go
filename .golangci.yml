@@ -1,12 +1,15 @@
 # golangci-lint v2 configuration for codex-agent-sdk-go.
 # Mirrors agentd's rich linter floor and additionally adds gocyclo/gocognit
 # complexity gates, so the SDK is held to at least the same maintainability
-# bar. New-code-only: `new-from-merge-base` suppresses
-# pre-existing findings so this floor lands with zero disruption and only gates
-# code added/changed relative to origin/main. Drop the `new-from-merge-base`
-# line in a later ratchet once the legacy backlog is clean.
+# bar. Full-strength: the legacy backlog has been burned to zero, so the gate
+# runs against ALL code (no incremental baseline ramp) and any over-threshold
+# change now fails — drift protection going forward.
 # Run: golangci-lint run ./...
 version: "2"
+
+formatters:
+  enable:
+    - gofumpt
 
 run:
   timeout: 5m
@@ -29,6 +32,7 @@ linters:
     - prealloc
     - unconvert
     - unparam
+    - nolintlint
     - gocyclo
     - gocognit
   settings:
@@ -36,6 +40,10 @@ linters:
       min-complexity: 15
     gocognit:
       min-complexity: 20
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+      allow-unused: false
     govet:
       enable-all: true
       disable:
@@ -59,6 +67,15 @@ linters:
       locale: US
   exclusions:
     rules:
+      # Complexity gates (gocyclo/gocognit) target PRODUCTION code. Table-driven
+      # tests, fixture-replay tests, and JSON round-trip tests are legitimately
+      # long and linear; forcing extraction harms readability with no
+      # maintainability gain. Documented correct-by-design carve-out — test
+      # files are still held to every OTHER linter; only complexity is relaxed.
+      - path: _test\.go
+        linters:
+          - gocyclo
+          - gocognit
       - path: _test\.go
         linters:
           - gocritic
@@ -72,9 +89,3 @@ linters:
       - linters:
           - unparam
         text: "always receives"
-
-# New-code-only ramp: only fail on issues introduced relative to the merge-base
-# with origin/main. Pre-existing findings are suppressed (warn-first). Requires
-# CI checkout with fetch-depth: 0 so the merge-base is available.
-issues:
-  new-from-merge-base: origin/main

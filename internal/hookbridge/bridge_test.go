@@ -71,7 +71,7 @@ func TestListener_PreToolUseDeny(t *testing.T) {
 		}
 		return types.HookDeny{Reason: "not on allowlist"}
 	}
-	ln, err := New(Config{SocketPath: socket, Handler: handler})
+	ln, err := New(context.Background(), Config{SocketPath: socket, Handler: handler})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +111,7 @@ func TestListener_PreToolUseAllowIsSilent(t *testing.T) {
 			UpdatedInput: json.RawMessage(`{"command":"echo rewritten"}`),
 		}
 	}
-	ln, _ := New(Config{SocketPath: socket, Handler: handler})
+	ln, _ := New(context.Background(), Config{SocketPath: socket, Handler: handler})
 	t.Cleanup(func() { _ = ln.Close() })
 
 	resp := dialAndRoundTrip(t, socket,
@@ -136,7 +136,7 @@ func TestListener_PreToolUseAskIsSilent(t *testing.T) {
 	handler := func(ctx context.Context, in types.HookInput) types.HookDecision {
 		return types.HookAsk{Reason: "defer to user"}
 	}
-	ln, _ := New(Config{SocketPath: socket, Handler: handler})
+	ln, _ := New(context.Background(), Config{SocketPath: socket, Handler: handler})
 	t.Cleanup(func() { _ = ln.Close() })
 
 	resp := dialAndRoundTrip(t, socket, `{"hook_event_name":"preToolUse"}`)
@@ -163,7 +163,7 @@ func TestListener_CallbackTimeout(t *testing.T) {
 			return types.HookDeny{Reason: "ctx canceled"}
 		}
 	}
-	ln, _ := New(Config{
+	ln, _ := New(context.Background(), Config{
 		SocketPath: socket,
 		Handler:    handler,
 		Timeout:    50 * time.Millisecond,
@@ -185,7 +185,7 @@ func TestListener_CallbackPanicsFailsOpen(t *testing.T) {
 	handler := func(ctx context.Context, in types.HookInput) types.HookDecision {
 		panic("callback exploded")
 	}
-	ln, _ := New(Config{SocketPath: socket, Handler: handler})
+	ln, _ := New(context.Background(), Config{SocketPath: socket, Handler: handler})
 	t.Cleanup(func() { _ = ln.Close() })
 
 	resp := dialAndRoundTrip(t, socket, `{"hook_event_name":"preToolUse"}`)
@@ -199,7 +199,7 @@ func TestListener_CloseRemovesSocket(t *testing.T) {
 	dir := t.TempDir()
 	socket := filepath.Join(dir, "s.sock")
 
-	ln, _ := New(Config{
+	ln, _ := New(context.Background(), Config{
 		SocketPath: socket,
 		Handler:    types.DefaultAllowHookHandler,
 	})

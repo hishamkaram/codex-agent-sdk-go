@@ -2,6 +2,7 @@ package jsonrpc
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"strings"
 	"sync"
@@ -73,7 +74,7 @@ func TestLineReader_ReadsTwoFrames(t *testing.T) {
 	if err != nil || string(line2) != `{"method":"b","params":{"k":1}}` {
 		t.Fatalf("line2: err=%v line=%q", err, line2)
 	}
-	if _, err := lr.ReadLine(); err != io.EOF {
+	if _, err := lr.ReadLine(); !errors.Is(err, io.EOF) {
 		t.Fatalf("expected io.EOF on third read, got %v", err)
 	}
 }
