@@ -1,0 +1,87 @@
+#!/bin/sh
+
+set -u
+
+START_MARKER="# codebase-memory-mcp-hook-start"
+END_MARKER="# codebase-memory-mcp-hook-end"
+HOOKS="post-commit post-checkout post-merge"
+
+repo_root=$(git rev-parse --show-toplevel 2>/dev/null || true)
+if [ -z "$repo_root" ]; then
+    echo "install-codebase-memory-mcp-hooks: not inside a Git worktree" >&2
+    exit 1
+fi
+
+hooks_dir=$(git -C "$repo_root" rev-parse --git-path hooks)
+mkdir -p "$hooks_dir"
+
+write_block() {
+    hook_name=$1
+    cat <<EOF
+$START_MARKER
+# Refresh local codebase-memory-mcp index; best-effort and background by default.
+if command -v git >/dev/null 2>&1; then
+    _cbm_repo_root=\$(git rev-parse --show-toplevel 2>/dev/null || printf '')
+    if [ -n "\$_cbm_repo_root" ] && [ -x "\$_cbm_repo_root/.githooks/codebase-memory-mcp-update" ]; then
+        "\$_cbm_repo_root/.githooks/codebase-memory-mcp-update" "$hook_name" "\$@"
+    fi
+    unset _cbm_repo_root
+fi
+$END_MARKER
+EOF
+}
+
+strip_existing_block() {
+    hook_path=$1
+    body_path=$2
+
+    if [ ! -f "$hook_path" ]; then
+        : >"$body_path"
+        return 0
+    fi
+
+    awk -v start="$START_MARKER" -v end="$END_MARKER" '
+        $0 == start { skipping = 1; next }
+        $0 == end { skipping = 0; next }
+        skipping != 1 { print }
+    ' "$hook_path" >"$body_path"
+}
+
+install_hook() {
+    hook_name=$1
+    hook_path="$hooks_dir/$hook_name"
+    body_path="$hook_path.body.$$"
+    tmp_path="$hook_path.tmp.$$"
+
+    strip_existing_block "$hook_path" "$body_path"
+
+    first_line=""
+    if IFS= read -r first_line <"$body_path"; then
+        :
+    fi
+
+    if [ "${first_line#\#!}" != "$first_line" ]; then
+        {
+            printf '%s\n' "$first_line"
+            write_block "$hook_name"
+            awk 'NR > 1 { print }' "$body_path"
+        } >"$tmp_path"
+    else
+        {
+            printf '%s\n' '#!/bin/sh'
+            write_block "$hook_name"
+            if [ -s "$body_path" ]; then
+                printf '\n'
+                cat "$body_path"
+            fi
+        } >"$tmp_path"
+    fi
+
+    chmod +x "$tmp_path"
+    mv "$tmp_path" "$hook_path"
+    rm -f "$body_path"
+}
+
+for hook_name in $HOOKS; do
+    install_hook "$hook_name"
+done

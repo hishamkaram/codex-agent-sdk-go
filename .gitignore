@@ -39,3 +39,6 @@ graphify-out/cost.json
 graphify-out/cache/
 graphify-out/.rebuild.lock
 graphify-out/.pending_changes
+
+# codebase-memory-mcp local artifacts
+.codebase-memory/
