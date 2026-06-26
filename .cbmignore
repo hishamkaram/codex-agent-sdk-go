@@ -1,2 +1,3 @@
-# Graphify generated graph artifacts
+# Generated knowledge graph artifacts
 graphify-out/
+.codebase-memory/

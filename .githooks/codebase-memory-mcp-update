@@ -1,0 +1,86 @@
+#!/bin/sh
+
+event=${1:-manual}
+if [ "$#" -gt 0 ]; then
+    shift
+fi
+
+if [ "${CBM_SKIP_HOOK:-0}" = "1" ] || [ "${CODEBASE_MEMORY_SKIP_HOOK:-0}" = "1" ]; then
+    exit 0
+fi
+
+if [ "$event" = "post-checkout" ] && [ "${3:-0}" != "1" ]; then
+    exit 0
+fi
+
+cbm_bin=$(command -v codebase-memory-mcp 2>/dev/null || true)
+if [ -z "$cbm_bin" ]; then
+    exit 0
+fi
+
+repo_root=$(git rev-parse --show-toplevel 2>/dev/null || true)
+if [ -z "$repo_root" ]; then
+    exit 0
+fi
+
+cache_home=${CBM_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}}
+log_dir="$cache_home/codebase-memory-mcp-hooks"
+if ! mkdir -p "$log_dir" 2>/dev/null; then
+    exit 0
+fi
+
+repo_id=$(printf '%s' "$repo_root" | sed 's#[^A-Za-z0-9_.-]#_#g')
+log_file="$log_dir/$repo_id.log"
+
+git_dir=$(git -C "$repo_root" rev-parse --git-common-dir 2>/dev/null || true)
+if [ -z "$git_dir" ]; then
+    exit 0
+fi
+case "$git_dir" in
+    /*) ;;
+    *) git_dir="$repo_root/$git_dir" ;;
+esac
+lock_dir="$git_dir/codebase-memory-mcp-index.lock"
+
+timestamp() {
+    date -u '+%Y-%m-%dT%H:%M:%SZ'
+}
+
+run_index() {
+    if ! mkdir "$lock_dir" 2>/dev/null; then
+        printf '%s [%s] skip: index already running for %s\n' "$(timestamp)" "$event" "$repo_root" >>"$log_file"
+        return 0
+    fi
+    trap 'rmdir "$lock_dir" 2>/dev/null' EXIT HUP INT TERM
+
+    repo_json=$(printf '%s' "$repo_root" | sed 's/\\/\\\\/g; s/"/\\"/g')
+    payload='{"repo_path":"'"$repo_json"'","mode":"fast","persistence":false}'
+
+    if [ "${CBM_HOOK_FOREGROUND:-0}" = "1" ]; then
+        printf '[codebase-memory hook] indexing %s (log: %s)\n' "$repo_root" "$log_file"
+    fi
+
+    printf '%s [%s] start: %s\n' "$(timestamp)" "$event" "$repo_root" >>"$log_file"
+    if "$cbm_bin" cli index_repository "$payload" >>"$log_file" 2>&1; then
+        printf '%s [%s] done: %s\n' "$(timestamp)" "$event" "$repo_root" >>"$log_file"
+        if [ "${CBM_HOOK_FOREGROUND:-0}" = "1" ]; then
+            printf '[codebase-memory hook] done\n'
+        fi
+        return 0
+    else
+        status=$?
+        printf '%s [%s] failed(%s): %s\n' "$(timestamp)" "$event" "$status" "$repo_root" >>"$log_file"
+        if [ "${CBM_HOOK_FOREGROUND:-0}" = "1" ]; then
+            printf '[codebase-memory hook] failed with status %s\n' "$status" >&2
+        fi
+        return "$status"
+    fi
+}
+
+if [ "${CBM_HOOK_FOREGROUND:-0}" = "1" ]; then
+    run_index
+    exit $?
+fi
+
+(run_index) >/dev/null 2>&1 &
+exit 0
