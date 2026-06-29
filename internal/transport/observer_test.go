@@ -161,6 +161,43 @@ func TestAppServer_Health_Lifecycle(t *testing.T) {
 	}
 }
 
+// TestAppServer_DemuxSurvivesConnectContextCancel proves Connect's ctx is only
+// for the connect attempt. The demux read loop is a transport-lifetime task and
+// must continue delivering app-server frames until Close.
+func TestAppServer_DemuxSurvivesConnectContextCancel(t *testing.T) {
+	t.Parallel()
+
+	helper := writeAppServerHelper(t,
+		"while IFS= read -r _line; do printf '{\"method\":\"ready\",\"params\":{}}\\n'; done\nexit 0")
+	app := NewAppServer(AppServerConfig{CLIPath: helper})
+	ctx, cancel := context.WithCancel(context.Background())
+	if err := app.Connect(ctx); err != nil {
+		cancel()
+		t.Fatalf("Connect: %v", err)
+	}
+	cancel()
+	t.Cleanup(func() {
+		closeCtx, closeCancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer closeCancel()
+		_ = app.Close(closeCtx)
+	})
+
+	if err := app.Demux().Notify("ping", nil); err != nil {
+		t.Fatalf("Notify: %v", err)
+	}
+	select {
+	case note, ok := <-app.Demux().Notifications():
+		if !ok {
+			t.Fatal("notifications channel closed after connect context cancellation")
+		}
+		if note.Method != "ready" {
+			t.Fatalf("note.Method = %q, want ready", note.Method)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for notification after connect context cancellation")
+	}
+}
+
 // TestAppServer_ParseGiveUpTerminatesSubprocess proves the reliability fix at the
 // transport boundary: a helper that streams garbage trips the demux give-up,
 // which kills the subprocess (no zombie), emits OnParseGiveUp, surfaces the

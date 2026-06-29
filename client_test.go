@@ -142,7 +142,7 @@ func TestClient_CloseDuringConnectCancelsHungInitialize(t *testing.T) {
 if [ "$1" = "--version" ]; then echo "codex 0.130.0"; exit 0; fi
 if [ "$1" = "app-server" ]; then shift; fi
 printf started > %q
-while IFS= read -r line; do sleep 5; done
+while IFS= read -r line; do :; done
 `, marker)
 	if err := os.WriteFile(helper, []byte(script), 0o755); err != nil {
 		t.Fatalf("write helper: %v", err)
