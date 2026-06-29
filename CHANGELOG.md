@@ -4,6 +4,12 @@ All notable changes to the Codex Agent SDK for Go are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- Reorganized public client dispatch, hook bridge, thread ID helpers, event
+  parser, and subprocess transport internals into smaller files for
+  maintainability. This is intended as a backward-compatible source-layout
+  change with no public API behavior change.
+
 ### Added
 - Workspace release-decision gate coverage. Public API and behavior changes now
   require changelog evidence or an explicit `no-release-needed` decision before
