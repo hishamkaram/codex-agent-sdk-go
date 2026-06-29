@@ -3,6 +3,7 @@ package codex
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"strings"
 	"sync"
@@ -102,6 +103,35 @@ func (s *mockCodexServer) close() {
 	_ = s.clientIn.Close()
 }
 
+type blockingFrameWriter struct {
+	writeEntered chan struct{}
+	releaseWrite chan struct{}
+	enterOnce    sync.Once
+	releaseOnce  sync.Once
+}
+
+func newBlockingFrameWriter() *blockingFrameWriter {
+	return &blockingFrameWriter{
+		writeEntered: make(chan struct{}),
+		releaseWrite: make(chan struct{}),
+	}
+}
+
+func (w *blockingFrameWriter) Write(_ []byte) (int, error) {
+	w.enterOnce.Do(func() { close(w.writeEntered) })
+	<-w.releaseWrite
+	return 0, errors.New("blocking frame writer released")
+}
+
+func (w *blockingFrameWriter) Close() error {
+	w.release()
+	return nil
+}
+
+func (w *blockingFrameWriter) release() {
+	w.releaseOnce.Do(func() { close(w.releaseWrite) })
+}
+
 // setupMockClient wires a Client to a mockCodexServer without spawning a
 // real subprocess. Returns a ready Client and the server. Runs Connect
 // through by injecting an initialize-response handler.
@@ -123,9 +153,11 @@ func setupMockClient(t *testing.T, opts *types.CodexOptions, handleRequest func(
 		threads: make(map[string]*Thread),
 	}
 	c.connected.Store(true)
-	c.dispatcherCtx, c.dispatcherCancel = context.WithCancel(context.Background())
+	dispatcherCtx, dispatcherCancel := context.WithCancel(context.Background())
+	c.dispatcherCtx = dispatcherCtx
+	c.dispatcherCancel = dispatcherCancel
 	c.dispatcherDone = make(chan struct{})
-	go c.dispatch()
+	go c.dispatch(dispatcherCtx, demux, c.dispatcherDone)
 
 	t.Cleanup(func() {
 		_ = c.Close(context.Background())
@@ -232,6 +264,54 @@ func TestClient_StartThreadAndRun_HappyPath(t *testing.T) {
 	}
 	if !saw.turnStarted || !saw.itemStarted || !saw.itemUpdated || !saw.itemCompleted || !saw.turnCompleted {
 		t.Fatalf("missing events: %+v", saw)
+	}
+}
+
+func TestClient_CloseClosesActiveRunStreamed(t *testing.T) {
+	t.Parallel()
+
+	c, _ := setupMockClient(t, types.NewCodexOptions(), func(req jsonrpc.Request) jsonrpc.Response {
+		switch req.Method {
+		case "thread/start":
+			return jsonrpc.Response{
+				ID:     req.ID,
+				Result: json.RawMessage(`{"thread":{"id":"T-close"}}`),
+			}
+		case "turn/start":
+			return jsonrpc.Response{
+				ID:     req.ID,
+				Result: json.RawMessage(`{"turn":{"id":"U-close"}}`),
+			}
+		}
+		return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{}`)}
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	thread, err := c.StartThread(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, err := thread.RunStreamed(ctx, "hi", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Close(context.Background()); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	select {
+	case _, ok := <-events:
+		if ok {
+			t.Fatal("RunStreamed channel stayed open after Close")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("RunStreamed channel did not close after Close")
+	}
+
+	if _, err := thread.RunStreamed(ctx, "again", nil); !errors.Is(err, types.ErrThreadClosed) {
+		t.Fatalf("RunStreamed after Close error = %v, want ErrThreadClosed", err)
 	}
 }
 
@@ -413,6 +493,128 @@ func TestClient_ApprovalCallback_RoundTrip(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("approval response never reached the server")
+	}
+}
+
+func TestClient_CloseWhileApprovalCallbackReentersHealth(t *testing.T) {
+	t.Parallel()
+
+	enteredApproval := make(chan struct{})
+	allowApprovalReturn := make(chan struct{})
+	var clientRef *Client
+	opts := types.NewCodexOptions().
+		WithApprovalCallback(func(ctx context.Context, req types.ApprovalRequest) types.ApprovalDecision {
+			close(enteredApproval)
+			_ = clientRef.Health()
+			select {
+			case <-allowApprovalReturn:
+			case <-ctx.Done():
+			}
+			return types.ApprovalDeny{Reason: "closing"}
+		})
+
+	c, srv := setupMockClient(t, opts, func(req jsonrpc.Request) jsonrpc.Response {
+		return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{}`)}
+	})
+	clientRef = c
+
+	srv.push(map[string]any{
+		"id":     999,
+		"method": "item/commandExecution/requestApproval",
+		"params": map[string]any{"command": "touch file", "reason": "test"},
+	})
+
+	select {
+	case <-enteredApproval:
+	case <-time.After(2 * time.Second):
+		t.Fatal("approval callback did not fire")
+	}
+
+	closeDone := make(chan error, 1)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		closeDone <- c.Close(ctx)
+	}()
+
+	select {
+	case err := <-closeDone:
+		if err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		close(allowApprovalReturn)
+		t.Fatal("Close hung while approval callback re-entered Health")
+	}
+}
+
+func TestClient_CloseUnblocksApprovalResponseWrite(t *testing.T) {
+	t.Parallel()
+
+	srv := newMockCodexServer()
+	writer := newBlockingFrameWriter()
+	logger := sdklog.NewLoggerFromZap(nil)
+	demux := jsonrpc.NewDemux(
+		jsonrpc.NewLineReader(srv.serverIn),
+		jsonrpc.NewLineWriter(writer),
+		logger,
+	)
+	demux.Run(context.Background())
+
+	enteredApproval := make(chan struct{})
+	var enteredOnce sync.Once
+	opts := types.NewCodexOptions().
+		WithApprovalCallback(func(ctx context.Context, req types.ApprovalRequest) types.ApprovalDecision {
+			enteredOnce.Do(func() { close(enteredApproval) })
+			return types.ApprovalDeny{Reason: "closing"}
+		})
+
+	c := &Client{
+		opts:    opts,
+		logger:  logger,
+		demux:   demux,
+		threads: make(map[string]*Thread),
+	}
+	c.connected.Store(true)
+	dispatcherCtx, dispatcherCancel := context.WithCancel(context.Background())
+	c.dispatcherCtx = dispatcherCtx
+	c.dispatcherCancel = dispatcherCancel
+	c.dispatcherDone = make(chan struct{})
+	go c.dispatch(dispatcherCtx, demux, c.dispatcherDone)
+
+	t.Cleanup(func() {
+		writer.release()
+		dispatcherCancel()
+		_ = demux.Close()
+		srv.close()
+		select {
+		case <-c.dispatcherDone:
+		case <-time.After(2 * time.Second):
+			t.Fatal("dispatcher did not exit during cleanup")
+		}
+	})
+
+	srv.push(map[string]any{
+		"id":     999,
+		"method": "item/commandExecution/requestApproval",
+		"params": map[string]any{"command": "touch file", "reason": "test"},
+	})
+
+	select {
+	case <-enteredApproval:
+	case <-time.After(2 * time.Second):
+		t.Fatal("approval callback did not fire")
+	}
+	select {
+	case <-writer.writeEntered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("approval response write did not start")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := c.Close(ctx); err != nil {
+		t.Fatalf("Close: %v", err)
 	}
 }
 

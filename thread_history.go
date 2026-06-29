@@ -12,8 +12,11 @@ import (
 // ReadThread returns persisted Codex thread state through app-server
 // thread/read. It does not resume the thread and does not start a turn.
 func (c *Client) ReadThread(ctx context.Context, threadID string, opts *types.ThreadReadOptions) (*types.ThreadReadResult, error) {
-	if !c.connected.Load() || c.closed.Load() {
-		return nil, fmt.Errorf("codex.Client.ReadThread: client not connected or already closed")
+	if c.closed.Load() {
+		return nil, fmt.Errorf("codex.Client.ReadThread: %w", types.ErrClientClosed)
+	}
+	if !c.connected.Load() {
+		return nil, fmt.Errorf("codex.Client.ReadThread: %w", types.ErrClientNotConnected)
 	}
 	if strings.TrimSpace(threadID) == "" {
 		return nil, types.NewThreadHistoryError(types.ThreadHistoryInvalidThreadID, threadID, "thread id must not be empty", nil)
@@ -59,8 +62,11 @@ func (c *Client) ListThreads(ctx context.Context) ([]types.ThreadInfo, error) {
 
 // ListThreadsPage returns a page of persisted thread metadata via thread/list.
 func (c *Client) ListThreadsPage(ctx context.Context, opts *types.ThreadListOptions) (*types.ThreadListPage, error) {
-	if !c.connected.Load() || c.closed.Load() {
-		return nil, fmt.Errorf("codex.Client.ListThreadsPage: client not connected or already closed")
+	if c.closed.Load() {
+		return nil, fmt.Errorf("codex.Client.ListThreadsPage: %w", types.ErrClientClosed)
+	}
+	if !c.connected.Load() {
+		return nil, fmt.Errorf("codex.Client.ListThreadsPage: %w", types.ErrClientNotConnected)
 	}
 	params := buildThreadListParams(opts)
 	resp, err := c.demux.Send(ctx, "thread/list", params)

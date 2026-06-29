@@ -239,11 +239,11 @@ func (c *Client) GetAuthStatus(ctx context.Context) (*types.AuthStatus, error) {
 // experimentalApi capability" → *types.FeatureNotEnabledError).
 // Otherwise the generic *types.RPCError is returned.
 func (c *Client) sendRaw(ctx context.Context, callerName, method string, params any) (json.RawMessage, error) {
-	if !c.connected.Load() {
-		return nil, fmt.Errorf("codex.Client.%s: not connected", callerName)
-	}
 	if c.closed.Load() {
-		return nil, fmt.Errorf("codex.Client.%s: client closed", callerName)
+		return nil, fmt.Errorf("codex.Client.%s: %w", callerName, types.ErrClientClosed)
+	}
+	if !c.connected.Load() {
+		return nil, fmt.Errorf("codex.Client.%s: %w", callerName, types.ErrClientNotConnected)
 	}
 	resp, err := c.demux.Send(ctx, method, params)
 	if err != nil {

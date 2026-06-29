@@ -3,16 +3,12 @@ package codex
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/hishamkaram/codex-agent-sdk-go/internal/events"
 	"github.com/hishamkaram/codex-agent-sdk-go/internal/hookbridge"
 	"github.com/hishamkaram/codex-agent-sdk-go/internal/jsonrpc"
 	sdklog "github.com/hishamkaram/codex-agent-sdk-go/internal/log"
@@ -39,6 +35,11 @@ type Client struct {
 	mu             sync.Mutex
 	threads        map[string]*Thread
 	latestThreadID string
+
+	lifecycleMu    sync.Mutex
+	connectStarted atomic.Bool
+	connectCancel  context.CancelFunc
+	connectToken   *struct{}
 
 	// Dispatcher lifecycle.
 	dispatcherCtx    context.Context
@@ -100,26 +101,28 @@ func NewClient(ctx context.Context, opts *types.CodexOptions) (*Client, error) {
 // Calling Connect more than once returns an error — create a new Client
 // for a new session.
 func (c *Client) Connect(ctx context.Context) (err error) {
-	if !c.connected.CompareAndSwap(false, true) {
-		return fmt.Errorf("codex.Client.Connect: already connected")
+	connectCtx, connectCancel, connectToken, err := c.beginConnect(ctx)
+	if err != nil {
+		return err
 	}
-	if c.closed.Load() {
-		return fmt.Errorf("codex.Client.Connect: client is closed")
-	}
+	defer c.clearConnectCancel(connectCancel, connectToken)
 
-	// Emit connect telemetry once the full handshake completes. The Client holds
-	// no mutex across the Connect body (connected/closed are atomics), so this
-	// deferred emission never runs under a lock. err is the named return, so the
-	// closure observes the terminal outcome.
+	// Emit connect telemetry once the full handshake completes. err is the named
+	// return, so the closure observes the terminal outcome.
 	connectStart := time.Now()
 	defer func() { c.opts.ObserverOrNop().OnConnect(time.Since(connectStart), err) }()
+	defer func() {
+		if err != nil {
+			c.closeHookBridge()
+		}
+	}()
 
 	// Hook-bridge auto-wiring is end-to-end. By default, HookCallback uses an
 	// isolated CODEX_HOME containing SDK-generated hooks.json. Opt-in
 	// user-home mode preserves the original backup/restore behavior.
 	extraEnv := append([]string(nil), c.opts.Env...)
 	if c.opts.HookCallback != nil {
-		if hookErr := c.setupHookBridge(ctx, &extraEnv); hookErr != nil {
+		if hookErr := c.setupHookBridge(connectCtx, &extraEnv); hookErr != nil {
 			return fmt.Errorf("codex.Client.Connect: hook bridge: %w", hookErr)
 		}
 	}
@@ -128,7 +131,7 @@ func (c *Client) Connect(ctx context.Context) (err error) {
 	if c.opts.MaxConsecutiveParseErrors != nil {
 		maxParseErrors = *c.opts.MaxConsecutiveParseErrors
 	}
-	c.tr = transport.NewAppServer(transport.AppServerConfig{
+	tr := transport.NewAppServer(transport.AppServerConfig{
 		CLIPath:                   c.opts.CLIPath,
 		ExtraArgs:                 c.opts.ExtraArgs,
 		Env:                       extraEnv,
@@ -137,22 +140,26 @@ func (c *Client) Connect(ctx context.Context) (err error) {
 		Observer:                  c.opts.ObserverOrNop(),
 		MaxConsecutiveParseErrors: maxParseErrors,
 	})
-	if connErr := c.tr.Connect(ctx); connErr != nil {
+	if connErr := tr.Connect(connectCtx); connErr != nil {
 		return fmt.Errorf("codex.Client.Connect: transport: %w", connErr)
 	}
-	c.demux = c.tr.Demux()
+	demux := tr.Demux()
+	if publishErr := c.publishConnectingTransport(tr, demux); publishErr != nil {
+		_ = tr.Close(context.WithoutCancel(ctx))
+		return publishErr
+	}
 
 	// Send initialize.
 	params := buildInitializeParams(c.opts)
-	resp, err := c.demux.Send(ctx, "initialize", params)
+	resp, err := demux.Send(connectCtx, "initialize", params)
 	if err != nil {
 		// Detach cancellation for best-effort transport teardown; ctx may
 		// already be canceled. Inherit values only.
-		_ = c.tr.Close(context.WithoutCancel(ctx))
+		_ = tr.Close(context.WithoutCancel(ctx))
 		return fmt.Errorf("codex.Client.Connect: initialize: %w", err)
 	}
 	if resp.Error != nil {
-		_ = c.tr.Close(context.WithoutCancel(ctx))
+		_ = tr.Close(context.WithoutCancel(ctx))
 		return types.NewRPCError(resp.Error.Code, resp.Error.Message, resp.Error.Data)
 	}
 	if err := json.Unmarshal(resp.Result, &c.initResult); err != nil {
@@ -161,19 +168,91 @@ func (c *Client) Connect(ctx context.Context) (err error) {
 	}
 
 	// Send initialized notification.
-	if err := c.demux.Notify("initialized", nil); err != nil {
-		_ = c.tr.Close(context.WithoutCancel(ctx))
+	if err := demux.Notify("initialized", nil); err != nil {
+		_ = tr.Close(context.WithoutCancel(ctx))
 		return fmt.Errorf("codex.Client.Connect: initialized: %w", err)
 	}
 
-	// Start dispatcher.
-	c.dispatcherCtx, c.dispatcherCancel = context.WithCancel(context.Background())
-	c.dispatcherDone = make(chan struct{})
-	go c.dispatch()
+	dispatcherCtx, dispatcherCancel := context.WithCancel(context.WithoutCancel(ctx))
+	if err := c.startDispatcher(dispatcherCtx, dispatcherCancel, demux); err != nil {
+		dispatcherCancel()
+		_ = tr.Close(context.WithoutCancel(ctx))
+		return err
+	}
 
 	c.logger.Debug("codex client connected",
 		zap.String("user_agent", c.initResult.UserAgent),
 		zap.String("codex_home", c.initResult.CodexHome))
+	return nil
+}
+
+func (c *Client) beginConnect(ctx context.Context) (
+	context.Context,
+	context.CancelFunc,
+	*struct{},
+	error,
+) {
+	connectCtx, connectCancel := context.WithCancel(ctx)
+	connectToken := &struct{}{}
+	c.lifecycleMu.Lock()
+	defer c.lifecycleMu.Unlock()
+
+	if c.closed.Load() {
+		connectCancel()
+		return nil, nil, nil, fmt.Errorf("codex.Client.Connect: %w", types.ErrClientClosed)
+	}
+	if c.connected.Load() {
+		connectCancel()
+		return nil, nil, nil, fmt.Errorf("codex.Client.Connect: %w", types.ErrClientAlreadyConnected)
+	}
+	if !c.connectStarted.CompareAndSwap(false, true) {
+		connectCancel()
+		return nil, nil, nil, fmt.Errorf("codex.Client.Connect: %w", types.ErrClientAlreadyConnected)
+	}
+	c.connectCancel = connectCancel
+	c.connectToken = connectToken
+	return connectCtx, connectCancel, connectToken, nil
+}
+
+func (c *Client) clearConnectCancel(cancel context.CancelFunc, token *struct{}) {
+	if cancel == nil {
+		return
+	}
+	cancel()
+	c.lifecycleMu.Lock()
+	if c.connectToken == token {
+		c.connectCancel = nil
+		c.connectToken = nil
+	}
+	c.lifecycleMu.Unlock()
+}
+
+func (c *Client) publishConnectingTransport(tr *transport.AppServer, demux *jsonrpc.Demux) error {
+	c.lifecycleMu.Lock()
+	defer c.lifecycleMu.Unlock()
+	if c.closed.Load() {
+		return fmt.Errorf("codex.Client.Connect: %w", types.ErrClientClosed)
+	}
+	c.tr = tr
+	c.demux = demux
+	return nil
+}
+
+func (c *Client) startDispatcher(
+	dispatcherCtx context.Context,
+	dispatcherCancel context.CancelFunc,
+	demux *jsonrpc.Demux,
+) error {
+	c.lifecycleMu.Lock()
+	defer c.lifecycleMu.Unlock()
+	if c.closed.Load() {
+		return fmt.Errorf("codex.Client.Connect: %w", types.ErrClientClosed)
+	}
+	c.dispatcherCtx = dispatcherCtx
+	c.dispatcherCancel = dispatcherCancel
+	c.dispatcherDone = make(chan struct{})
+	go c.dispatch(dispatcherCtx, demux, c.dispatcherDone)
+	c.connected.Store(true)
 	return nil
 }
 
@@ -204,6 +283,8 @@ func (c *Client) InitializeResult() InitializeResult { return c.initResult }
 // subprocess directly on worktree switch so Close's graceful-exit ladder
 // doesn't have to wait.
 func (c *Client) ProcessID() int {
+	c.lifecycleMu.Lock()
+	defer c.lifecycleMu.Unlock()
 	if c.tr == nil {
 		return 0
 	}
@@ -220,6 +301,8 @@ func (c *Client) Health() types.TransportHealth {
 	// the narrow Transport interface for non-health callers. The nil check comes
 	// first — a typed-nil *AppServer still satisfies the interface, and its
 	// Health() would dereference a nil receiver's mutex.
+	c.lifecycleMu.Lock()
+	defer c.lifecycleMu.Unlock()
 	if c.tr == nil {
 		return types.TransportHealth{}
 	}
@@ -252,14 +335,25 @@ func (c *Client) SessionID() string {
 // terminates the subprocess with the 3-stage graceful-shutdown ladder.
 // Safe to call multiple times.
 func (c *Client) Close(ctx context.Context) error {
+	if ctx == nil {
+		if c.closed.Load() {
+			return nil
+		}
+		return fmt.Errorf("codex.Client.Close: context is required")
+	}
 	if !c.closed.CompareAndSwap(false, true) {
 		return nil
 	}
-	if c.dispatcherCancel != nil {
-		c.dispatcherCancel()
+
+	connectCancel, dispatcherCancel, dispatcherDone, demux, tr := c.closeSnapshot()
+	if connectCancel != nil {
+		connectCancel()
 	}
-	if c.dispatcherDone != nil {
-		<-c.dispatcherDone
+	if dispatcherCancel != nil {
+		dispatcherCancel()
+	}
+	if demux != nil {
+		_ = demux.Close()
 	}
 
 	c.mu.Lock()
@@ -271,733 +365,40 @@ func (c *Client) Close(ctx context.Context) error {
 	c.mu.Unlock()
 
 	var trErr error
-	if c.tr != nil {
-		trErr = c.tr.Close(ctx)
+	if tr != nil {
+		trErr = tr.Close(ctx)
 	}
+	var waitErr error
+	if dispatcherDone != nil {
+		select {
+		case <-dispatcherDone:
+		case <-ctx.Done():
+			waitErr = fmt.Errorf("codex.Client.Close: waiting for dispatcher: %w", ctx.Err())
+		}
+	}
+	c.lifecycleMu.Lock()
+	c.connected.Store(false)
+	c.connectStarted.Store(false)
+	c.connectCancel = nil
+	c.connectToken = nil
+	c.dispatcherCancel = nil
+	c.demux = nil
+	c.tr = nil
+	c.lifecycleMu.Unlock()
 	// Tear down the hook bridge AFTER the transport is stopped so no
 	// in-flight hook subprocess can still dial the socket.
-	if c.hookListener != nil {
-		_ = c.hookListener.Close()
-	}
-	// Restore the user's original ~/.codex/hooks.json (or remove the
-	// SDK-written file when no original existed). Logged but never
-	// fatal — Close must remain best-effort.
-	c.restoreUserHooksJSON()
-	if c.hookCodexHome != "" {
-		if err := os.RemoveAll(c.hookCodexHome); err != nil {
-			c.logger.Warn("removing isolated CODEX_HOME failed",
-				zap.String("codex_home", c.hookCodexHome), zap.Error(err))
-		}
-		c.hookCodexHome = ""
-	}
-	c.cleanupHookSocketDir()
-	return trErr
+	c.closeHookBridge()
+	return errors.Join(trErr, waitErr)
 }
 
-// cleanupHookSocketDir removes the private 0700 directory that hosted a
-// relocated hook socket, if one was created. Safe to call when none was (no-op)
-// and idempotent. Best-effort: a failure is logged, never fatal.
-func (c *Client) cleanupHookSocketDir() {
-	if c.hookSocketDir == "" {
-		return
-	}
-	if err := os.RemoveAll(c.hookSocketDir); err != nil {
-		c.logger.Warn("removing hook socket dir failed",
-			zap.String("dir", c.hookSocketDir), zap.Error(err))
-	}
-	c.hookSocketDir = ""
-}
-
-// hookBackupSuffix identifies SDK-written backup files of the user's
-// hooks.json. The PID suffix lets stale-recovery detect crashed prior
-// runs without colliding with a live concurrent SDK instance.
-const hookBackupSuffix = ".sdk-backup"
-
-// staleBackupAge is the age threshold past which a leftover backup file
-// is treated as evidence of a crashed prior run rather than a live
-// concurrent SDK instance.
-const staleBackupAge = 60 * time.Second
-
-// hooksJSONTimeoutSeconds is the per-hook timeout written into the
-// generated hooks.json. MUST exceed c.opts.HookTimeout — the SDK's
-// listener kills the callback first; codex's own timeout is the
-// outer bound.
-const hooksJSONTimeoutSeconds = 30
-
-// setupHookBridge starts the Unix socket listener, resolves the shim
-// binary, and installs generated hooks.json so codex actually invokes
-// the shim. Wires the listener path through CODEX_SDK_HOOK_SOCKET so
-// the shim can dial back. Default mode uses an isolated CODEX_HOME;
-// user-home mode backs up ~/.codex/hooks.json and restores it on Close.
-//
-// On any error after the listener starts, this method tears the listener
-// down so the caller can return cleanly.
-func (c *Client) setupHookBridge(ctx context.Context, extraEnv *[]string) error {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return fmt.Errorf("home dir: %w", err)
-	}
-	cacheDir := filepath.Join(home, ".cache", "codex-sdk")
-	if mkErr := os.MkdirAll(cacheDir, 0o700); mkErr != nil {
-		return fmt.Errorf("cache dir: %w", mkErr)
-	}
-	// The hook socket is a private IPC rendezvous handed to the shim via
-	// CODEX_SDK_HOOK_SOCKET; its location is an implementation detail. The
-	// preferred path under $HOME/.cache can overflow the AF_UNIX sun_path
-	// limit (~108 bytes) on a deep $HOME or a long CI tempdir, where bind()
-	// returns a confusing EINVAL. relocateHookSocketUnderPrivateDir creates a
-	// fresh 0700 directory under the fallback base and returns a short socket
-	// path inside it so the bind succeeds and the socket stays owner-private.
-	preferredSocket := filepath.Join(cacheDir, fmt.Sprintf("hook-%d.sock", os.Getpid()))
-	socketPath, socketDir := relocateHookSocketUnderPrivateDir(preferredSocket, hookSocketFallbackDir())
-	c.hookSocketDir = socketDir
-	// If anything below fails, remove the relocation dir (when we created one).
-	// On success it persists and Close removes it alongside the listener.
-	hookBridgeReady := false
-	defer func() {
-		if !hookBridgeReady {
-			c.cleanupHookSocketDir()
-		}
-	}()
-
-	shimPath, err := resolveShimPath(c.opts.ShimPath)
-	if err != nil {
-		return err
-	}
-
-	ln, err := hookbridge.New(ctx, hookbridge.Config{
-		SocketPath: socketPath,
-		Handler:    c.opts.HookCallback,
-		Timeout:    c.opts.HookTimeout,
-		Logger:     c.logger,
-	})
-	if err != nil {
-		return err
-	}
-	c.hookListener = ln
-
-	mode := c.opts.HookConfigMode
-	if mode == "" {
-		mode = types.HookConfigModeIsolated
-	}
-	switch mode {
-	case types.HookConfigModeIsolated:
-		codexHome, err := os.MkdirTemp("", "codex-sdk-home-*")
-		if err != nil {
-			_ = ln.Close()
-			c.hookListener = nil
-			return fmt.Errorf("isolated CODEX_HOME: %w", err)
-		}
-		c.hookCodexHome = codexHome
-		if err := c.installIsolatedHooksJSON(codexHome, shimPath); err != nil {
-			_ = os.RemoveAll(codexHome)
-			c.hookCodexHome = ""
-			_ = ln.Close()
-			c.hookListener = nil
-			return err
-		}
-		*extraEnv = append(*extraEnv, "CODEX_HOME="+codexHome)
-	case types.HookConfigModeUserHome:
-		if err := c.installHooksJSON(home, shimPath); err != nil {
-			_ = ln.Close()
-			c.hookListener = nil
-			return err
-		}
-	default:
-		_ = ln.Close()
-		c.hookListener = nil
-		return fmt.Errorf("unsupported hook config mode %q", mode)
-	}
-
-	*extraEnv = append(*extraEnv, "CODEX_SDK_HOOK_SOCKET="+socketPath)
-	c.logger.Info("hook bridge ready",
-		zap.String("shim", shimPath),
-		zap.String("hooks_json", c.hookHooksJSONPath),
-		zap.String("socket", socketPath),
-		zap.Bool("backed_up_user_config", c.hookHadUserConfig))
-	hookBridgeReady = true
-	return nil
-}
-
-// maxUnixSocketLen is a conservative cross-platform budget for an AF_UNIX
-// socket path. Linux caps sockaddr_un.sun_path at 108 bytes (107 usable
-// before the NUL terminator); macOS/BSD cap it at 104 (103 usable). Using the
-// smaller bound guarantees a path chosen here binds on every supported
-// platform.
-const maxUnixSocketLen = 103
-
-// relocateHookSocketUnderPrivateDir handles the case where the preferred hook
-// socket path overflows the AF_UNIX sun_path budget. It creates a fresh 0700
-// directory under base (os.MkdirTemp always uses mode 0700 and a collision-free
-// random name) and returns a short socket path inside it, plus that directory so
-// the caller can remove it on Close.
-//
-// The 0700 parent is the authoritative access gate and is what makes the
-// relocation safe: it closes the window between net.Listen (which creates the
-// socket at the process umask — commonly group-connectable) and the listener's
-// chmod, during which a socket placed directly in a world-writable $TMPDIR would
-// be connectable by other local users. That is unacceptable for a channel that
-// carries tool-approval (allow/deny) decisions. The preferred path already lives
-// under the 0700 ~/.cache/codex-sdk directory; this gives the fallback the same
-// guarantee atomically at creation rather than relying on the post-bind chmod.
-//
-// When preferred already fits, it is returned unchanged with an empty dir (no
-// relocation, nothing to clean up). If even the relocated path would overflow
-// sun_path, the temp dir is removed and preferred is returned unchanged so bind
-// surfaces the platform error as before rather than leaking a directory.
-func relocateHookSocketUnderPrivateDir(preferred, base string) (socketPath, dir string) {
-	if len(preferred) <= maxUnixSocketLen {
-		return preferred, ""
-	}
-	d, err := os.MkdirTemp(base, "cxh-")
-	if err != nil {
-		return preferred, ""
-	}
-	relocated := filepath.Join(d, "h.sock")
-	if len(relocated) > maxUnixSocketLen {
-		_ = os.RemoveAll(d)
-		return preferred, ""
-	}
-	return relocated, d
-}
-
-// hookSocketFallbackDir returns the base directory under which a relocated hook
-// socket's private 0700 directory is created when the preferred path under
-// $HOME/.cache would overflow the AF_UNIX sun_path limit. It prefers
-// $XDG_RUNTIME_DIR — the per-user, 0700, short-path runtime directory provided
-// for exactly this purpose on Linux — and falls back to os.TempDir(). On macOS
-// os.TempDir() is already a per-user private directory; on Linux it is the
-// world-writable /tmp, which is why the relocated socket is never placed there
-// directly but inside a freshly-created 0700 subdirectory (see
-// relocateHookSocketUnderPrivateDir). A set-but-stale XDG_RUNTIME_DIR (not an
-// existing directory) is ignored so bind never fails on a dead path.
-func hookSocketFallbackDir() string {
-	if dir := os.Getenv("XDG_RUNTIME_DIR"); dir != "" {
-		if info, err := os.Stat(dir); err == nil && info.IsDir() {
-			return dir
-		}
-	}
-	return os.TempDir()
-}
-
-func (c *Client) installIsolatedHooksJSON(codexHome, shimPath string) error {
-	if err := os.MkdirAll(codexHome, 0o700); err != nil {
-		return fmt.Errorf("ensure isolated CODEX_HOME: %w", err)
-	}
-	hooksPath := filepath.Join(codexHome, "hooks.json")
-	hooksJSON, err := hookbridge.GenerateHooksJSON(shimPath, hooksJSONTimeoutSeconds)
-	if err != nil {
-		return fmt.Errorf("generate hooks.json: %w", err)
-	}
-	if err := os.WriteFile(hooksPath, hooksJSON, 0o600); err != nil {
-		return fmt.Errorf("write isolated hooks.json: %w", err)
-	}
-	c.hookHooksJSONPath = hooksPath
-	c.hookHadUserConfig = false
-	return nil
-}
-
-// installHooksJSON ensures ~/.codex/hooks.json points at the shim. If
-// the user already has a hooks.json, it's copied byte-for-byte to a
-// PID-suffixed backup that restoreUserHooksJSON consults on Close.
-//
-// Stale-recovery: if a backup exists from a crashed prior run
-// (>staleBackupAge old), this method restores it before installing the
-// generated config so the user's data is never lost across crashes.
-//
-// Concurrent-SDK detection: if a fresh (<staleBackupAge) backup exists
-// from a different PID, returns an error rather than silently chaining
-// backups (which would corrupt the user's original on Close). v0.3.0
-// chose refuse-with-error over last-writer-wins to avoid silent data
-// loss; merge-mode is on the v0.3.1 roadmap.
-func (c *Client) installHooksJSON(home, shimPath string) error {
-	codexDir := filepath.Join(home, ".codex")
-	if err := os.MkdirAll(codexDir, 0o700); err != nil {
-		return fmt.Errorf("ensure codex dir: %w", err)
-	}
-	hooksPath := filepath.Join(codexDir, "hooks.json")
-	backupPath := filepath.Join(codexDir, fmt.Sprintf("hooks.json%s-%d", hookBackupSuffix, os.Getpid()))
-
-	c.recoverStaleBackups(codexDir, hooksPath)
-	if err := c.detectConcurrentSDK(codexDir); err != nil {
-		return err
-	}
-
-	original, hadOriginal, err := readIfExists(hooksPath)
-	if err != nil {
-		return fmt.Errorf("read existing hooks.json: %w", err)
-	}
-	if hadOriginal {
-		if writeErr := os.WriteFile(backupPath, original, 0o600); writeErr != nil {
-			return fmt.Errorf("write hooks.json backup: %w", writeErr)
-		}
-		c.hookBackupPath = backupPath
-	}
-
-	hooksJSON, err := hookbridge.GenerateHooksJSON(shimPath, hooksJSONTimeoutSeconds)
-	if err != nil {
-		// Roll back the backup we just wrote so we don't leave debris.
-		if hadOriginal {
-			_ = os.Remove(backupPath)
-			c.hookBackupPath = ""
-		}
-		return fmt.Errorf("generate hooks.json: %w", err)
-	}
-	if err := os.WriteFile(hooksPath, hooksJSON, 0o600); err != nil {
-		if hadOriginal {
-			_ = os.Remove(backupPath)
-			c.hookBackupPath = ""
-		}
-		return fmt.Errorf("write hooks.json: %w", err)
-	}
-
-	c.hookHooksJSONPath = hooksPath
-	c.hookHadUserConfig = hadOriginal
-	if hadOriginal {
-		c.logger.Warn("overwrote ~/.codex/hooks.json for SDK lifetime; original backed up and will be restored on Close",
-			zap.String("backup", backupPath))
-	}
-	return nil
-}
-
-// detectConcurrentSDK refuses to install hooks.json when a fresh
-// (<staleBackupAge) backup file from a different PID exists in
-// codexDir. Such a file means another live SDK Client is currently
-// managing this hooks.json — chaining a second install would corrupt
-// the user's original on Close because each Close restores from its own
-// backup, and the LAST Close would write back the previous SDK's
-// generated config instead of the user's true original.
-func (c *Client) detectConcurrentSDK(codexDir string) error {
-	entries, err := os.ReadDir(codexDir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil // no codex dir means no concurrent SDK backups to detect
-		}
-		return fmt.Errorf("detectConcurrentSDK: read %s: %w", codexDir, err)
-	}
-	prefix := "hooks.json" + hookBackupSuffix
-	myPIDSuffix := fmt.Sprintf("-%d", os.Getpid())
-	now := time.Now()
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasPrefix(e.Name(), prefix) {
-			continue
-		}
-		if strings.HasSuffix(e.Name(), myPIDSuffix) {
-			continue // same PID — re-Connect within one process is its own bug; let it fail downstream
-		}
-		info, err := e.Info()
-		if err != nil {
-			continue
-		}
-		if now.Sub(info.ModTime()) >= staleBackupAge {
-			continue // stale — recoverStaleBackups already handled
-		}
-		return fmt.Errorf(
-			"concurrent codex SDK Client detected (fresh backup at %s); "+
-				"v0.3.0 supports only one HookCallback-enabled Client per machine — "+
-				"close the other Client first or run without WithHookCallback",
-			filepath.Join(codexDir, e.Name()))
-	}
-	return nil
-}
-
-// recoverStaleBackups looks for SDK backup files older than
-// staleBackupAge in codexDir. A backup that old means a prior SDK run
-// crashed before Close could restore. Restore the oldest such backup
-// over hooks.json (so the user's original survives the crash) and then
-// remove all stale backups. Live concurrent SDK runs (whose backups are
-// fresher than staleBackupAge) are left alone.
-func (c *Client) recoverStaleBackups(codexDir, hooksPath string) {
-	entries, err := os.ReadDir(codexDir)
-	if err != nil {
-		return
-	}
-	prefix := "hooks.json" + hookBackupSuffix
-	now := time.Now()
-	type candidate struct {
-		path  string
-		mtime time.Time
-	}
-	var stale []candidate
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasPrefix(e.Name(), prefix) {
-			continue
-		}
-		info, infoErr := e.Info()
-		if infoErr != nil {
-			continue
-		}
-		if now.Sub(info.ModTime()) < staleBackupAge {
-			continue
-		}
-		stale = append(stale, candidate{
-			path:  filepath.Join(codexDir, e.Name()),
-			mtime: info.ModTime(),
-		})
-	}
-	if len(stale) == 0 {
-		return
-	}
-	// Restore the OLDEST stale backup — that's the one most likely to be
-	// the user's true original (newer ones may themselves be SDK-written
-	// configs that another crashed run backed up).
-	oldest := stale[0]
-	for _, s := range stale[1:] {
-		if s.mtime.Before(oldest.mtime) {
-			oldest = s
-		}
-	}
-	data, err := os.ReadFile(oldest.path)
-	if err != nil {
-		c.logger.Warn("stale hooks.json backup found but unreadable; leaving in place",
-			zap.String("path", oldest.path), zap.Error(err))
-		return
-	}
-	if err := os.WriteFile(hooksPath, data, 0o600); err != nil {
-		c.logger.Warn("stale hooks.json backup found but restore failed",
-			zap.String("path", oldest.path), zap.Error(err))
-		return
-	}
-	c.logger.Warn("recovered hooks.json from stale SDK backup (prior SDK run crashed before Close)",
-		zap.String("backup", oldest.path),
-		zap.Duration("age", now.Sub(oldest.mtime)))
-	for _, s := range stale {
-		_ = os.Remove(s.path)
-	}
-}
-
-// restoreUserHooksJSON is the Close-time inverse of installHooksJSON.
-// If a backup exists, it's renamed back over hooks.json byte-for-byte.
-// If no backup exists (user had no hooks.json before Connect), the
-// SDK-written hooks.json is removed. Best-effort — failures are logged
-// but never propagated.
-func (c *Client) restoreUserHooksJSON() {
-	if c.hookHooksJSONPath == "" {
-		return
-	}
-	if c.hookBackupPath != "" {
-		// Read backup, write back over hooks.json. We use read+write
-		// (not rename) so a same-mountpoint guarantee isn't required.
-		data, err := os.ReadFile(c.hookBackupPath)
-		if err != nil {
-			c.logger.Warn("hooks.json backup unreadable; leaving SDK-written config in place",
-				zap.String("backup", c.hookBackupPath), zap.Error(err))
-			return
-		}
-		if err := os.WriteFile(c.hookHooksJSONPath, data, 0o600); err != nil {
-			c.logger.Warn("hooks.json restore failed; backup retained",
-				zap.String("backup", c.hookBackupPath), zap.Error(err))
-			return
-		}
-		_ = os.Remove(c.hookBackupPath)
-		c.logger.Debug("restored user hooks.json from backup",
-			zap.String("hooks_json", c.hookHooksJSONPath))
-		return
-	}
-	// No prior config — remove what we wrote.
-	if err := os.Remove(c.hookHooksJSONPath); err != nil && !os.IsNotExist(err) {
-		c.logger.Warn("removing SDK-written hooks.json failed",
-			zap.String("hooks_json", c.hookHooksJSONPath), zap.Error(err))
-		return
-	}
-	c.logger.Debug("removed SDK-written hooks.json (no prior user config)",
-		zap.String("hooks_json", c.hookHooksJSONPath))
-}
-
-// readIfExists returns the file's contents if present. If the file does
-// not exist, returns (nil, false, nil). Other I/O errors are propagated.
-func readIfExists(path string) (data []byte, exists bool, err error) {
-	data, err = os.ReadFile(path)
-	if err == nil {
-		return data, true, nil
-	}
-	if os.IsNotExist(err) {
-		return nil, false, nil
-	}
-	return nil, false, err
-}
-
-// resolveShimPath finds the codex-sdk-hook-shim binary. Order:
-//  1. explicit ShimPath option
-//  2. exec.LookPath (PATH)
-//  3. $GOPATH/bin, $HOME/go/bin, ./.bin
-func resolveShimPath(explicit string) (string, error) {
-	if explicit != "" {
-		if _, err := os.Stat(explicit); err != nil {
-			return "", fmt.Errorf("shim at %q: %w", explicit, err)
-		}
-		abs, err := filepath.Abs(explicit)
-		if err != nil {
-			return "", err
-		}
-		return abs, nil
-	}
-	if p, err := exec.LookPath("codex-sdk-hook-shim"); err == nil {
-		return p, nil
-	}
-	// Fall-back search locations.
-	var roots []string
-	if gp := os.Getenv("GOPATH"); gp != "" {
-		roots = append(roots, filepath.Join(gp, "bin"))
-	}
-	if home, err := os.UserHomeDir(); err == nil {
-		roots = append(roots, filepath.Join(home, "go", "bin"))
-	}
-	if cwd, err := os.Getwd(); err == nil {
-		roots = append(roots, filepath.Join(cwd, ".bin"))
-	}
-	for _, root := range roots {
-		candidate := filepath.Join(root, "codex-sdk-hook-shim")
-		if _, err := os.Stat(candidate); err == nil {
-			return candidate, nil
-		}
-	}
-	return "", fmt.Errorf("codex-sdk-hook-shim not found on PATH, $GOPATH/bin, $HOME/go/bin, or ./.bin (install: go install github.com/hishamkaram/codex-agent-sdk-go/cmd/codex-sdk-hook-shim@latest)")
-}
-
-// dispatch runs the event-routing goroutine. Reads notifications and
-// server-initiated requests from the demux and fans them out.
-func (c *Client) dispatch() {
-	defer close(c.dispatcherDone)
-	for {
-		select {
-		case <-c.dispatcherCtx.Done():
-			return
-		case note, ok := <-c.demux.Notifications():
-			if !ok {
-				return
-			}
-			c.handleNotification(note)
-		case sreq, ok := <-c.demux.ServerRequests():
-			if !ok {
-				return
-			}
-			c.handleServerRequest(sreq)
-		}
-	}
-}
-
-func (c *Client) handleNotification(n jsonrpc.Notification) {
-	ev, err := events.ParseEvent(n)
-	if err != nil {
-		c.logger.Warn("parse event failed",
-			zap.String("method", n.Method),
-			zap.Error(err))
-		return
-	}
-	// An UnknownEvent means codex emitted a notification method the SDK does not
-	// recognize — wire-format drift ahead of the SDK. Surface it as telemetry so
-	// drift is observable, not silent. (The demux already classifies frame-shape
-	// drift; this catches method-name drift one layer up.)
-	if _, ok := ev.(*types.UnknownEvent); ok {
-		c.opts.ObserverOrNop().OnUnknownMessage(n.Method)
-	}
-	threadID := extractThreadIDFromEvent(ev)
-	if threadID == "" {
-		// Global events — configWarning, account/rateLimits/updated, etc.
-		// Logged at debug; clients that want them must expose a hook in v1.1.
-		c.logger.Debug("unroutable event (no thread_id)",
-			zap.String("method", ev.EventMethod()))
-		return
-	}
-	c.mu.Lock()
-	t := c.threads[threadID]
-	c.mu.Unlock()
-	if t == nil {
-		// Thread may not be registered yet (event arrived before
-		// StartThread stored the Thread). Ignore — the spike transcript
-		// showed mcpServer/startupStatus/updated arriving before thread/
-		// started which we don't route anyway.
-		return
-	}
-	t.deliverEvent(ev)
-}
-
-func (c *Client) handleServerRequest(sreq jsonrpc.ServerRequest) {
-	req, err := events.ParseApprovalRequest(sreq.Method, sreq.Params)
-	if err != nil {
-		c.logger.Warn("parse server-request failed",
-			zap.String("method", sreq.Method),
-			zap.Error(err))
-		_ = c.demux.RespondServerRequest(sreq.ID, nil, &jsonrpc.RPCError{
-			Code:    -32000,
-			Message: "client parse error: " + err.Error(),
-		})
-		return
-	}
-	cb := c.opts.ApprovalCallback
-	if cb == nil {
-		cb = types.DefaultDenyApprovalCallback
-	}
-	// Use dispatcherCtx so callbacks get canceled on Close.
-	decision := cb(c.dispatcherCtx, req)
-	result := events.EncodeApprovalDecision(decision)
-	if err := c.demux.RespondServerRequest(sreq.ID, result, nil); err != nil {
-		c.logger.Warn("approval response write failed",
-			zap.String("method", sreq.Method),
-			zap.Error(err))
-	}
-}
-
-// registerThread stores a Thread in the client's routing table. The caller
-// must own the thread's ID (i.e., thread/start or thread/resume succeeded).
-// Also records the thread ID as the latest for SessionID().
-func (c *Client) registerThread(t *Thread) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.threads != nil {
-		c.threads[t.id] = t
-		c.latestThreadID = t.id
-	}
-}
-
-// unregisterThread removes a Thread from routing. Called when the thread
-// is archived or the caller drops it. Clears latestThreadID when the
-// removed thread was the most recent so SessionID() reverts to "" for
-// single-thread callers.
-func (c *Client) unregisterThread(threadID string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.threads != nil {
-		delete(c.threads, threadID)
-	}
-	if c.latestThreadID == threadID {
-		c.latestThreadID = ""
-	}
-}
-
-// threadIDExtractors is the ordered set of category extractors consulted by
-// extractThreadIDFromEvent. Each event type is handled by exactly one extractor;
-// the first to report ok wins. Splitting the former single 38-case type switch
-// into category functions keeps each under the cyclomatic gate while preserving
-// the exact recognized-type set (proven by TestExtractThreadIDFromEvent_Oracle).
-var threadIDExtractors = []func(types.ThreadEvent) (string, bool){
-	threadIDFromThreadLifecycleEvent,
-	threadIDFromTurnEvent,
-	threadIDFromItemEvent,
-	threadIDFromRealtimeEvent,
-	threadIDFromMiscEvent,
-}
-
-// extractThreadIDFromEvent returns the ThreadID field of every event type
-// that carries one. Returns "" for events that don't, including global
-// warnings and UnknownEvent values whose payload did not expose a thread ID.
-func extractThreadIDFromEvent(ev types.ThreadEvent) string {
-	for _, extract := range threadIDExtractors {
-		if id, ok := extract(ev); ok {
-			return id
-		}
-	}
-	return ""
-}
-
-func threadIDFromThreadLifecycleEvent(ev types.ThreadEvent) (string, bool) {
-	switch e := ev.(type) {
-	case *types.ThreadStarted:
-		return e.ThreadID, true
-	case *types.ThreadArchived:
-		return e.ThreadID, true
-	case *types.ThreadUnarchived:
-		return e.ThreadID, true
-	case *types.ThreadClosed:
-		return e.ThreadID, true
-	case *types.ThreadNameUpdated:
-		return e.ThreadID, true
-	case *types.ThreadStatusChanged:
-		return e.ThreadID, true
-	case *types.ThreadSettingsUpdated:
-		return e.ThreadID, true
-	case *types.ThreadGoalUpdated:
-		return e.ThreadID, true
-	case *types.ThreadGoalCleared:
-		return e.ThreadID, true
-	case *types.ContextCompacted:
-		return e.ThreadID, true
-	}
-	return "", false
-}
-
-func threadIDFromTurnEvent(ev types.ThreadEvent) (string, bool) {
-	switch e := ev.(type) {
-	case *types.TurnStarted:
-		return e.ThreadID, true
-	case *types.TurnCompleted:
-		return e.ThreadID, true
-	case *types.TurnFailed:
-		return e.ThreadID, true
-	case *types.TurnDiffUpdated:
-		return e.ThreadID, true
-	case *types.TurnPlanUpdated:
-		return e.ThreadID, true
-	case *types.TurnModerationMetadata:
-		return e.ThreadID, true
-	}
-	return "", false
-}
-
-func threadIDFromItemEvent(ev types.ThreadEvent) (string, bool) {
-	switch e := ev.(type) {
-	case *types.ItemStarted:
-		return e.ThreadID, true
-	case *types.ItemUpdated:
-		return e.ThreadID, true
-	case *types.ItemCompleted:
-		return e.ThreadID, true
-	case *types.FileChangePatchUpdated:
-		return e.ThreadID, true
-	case *types.ItemGuardianApprovalReviewStarted:
-		return e.ThreadID, true
-	case *types.ItemGuardianApprovalReviewCompleted:
-		return e.ThreadID, true
-	}
-	return "", false
-}
-
-func threadIDFromRealtimeEvent(ev types.ThreadEvent) (string, bool) {
-	switch e := ev.(type) {
-	case *types.ThreadRealtimeStarted:
-		return e.ThreadID, true
-	case *types.ThreadRealtimeClosed:
-		return e.ThreadID, true
-	case *types.ThreadRealtimeError:
-		return e.ThreadID, true
-	case *types.ThreadRealtimeItemAdded:
-		return e.ThreadID, true
-	case *types.ThreadRealtimeOutputAudioDelta:
-		return e.ThreadID, true
-	case *types.ThreadRealtimeSdp:
-		return e.ThreadID, true
-	case *types.ThreadRealtimeTranscriptDelta:
-		return e.ThreadID, true
-	case *types.ThreadRealtimeTranscriptDone:
-		return e.ThreadID, true
-	}
-	return "", false
-}
-
-func threadIDFromMiscEvent(ev types.ThreadEvent) (string, bool) {
-	switch e := ev.(type) {
-	case *types.TokenUsageUpdated:
-		return e.ThreadID, true
-	case *types.HookStarted:
-		return e.ThreadID, true
-	case *types.HookCompleted:
-		return e.ThreadID, true
-	case *types.ModelRerouted:
-		return e.ThreadID, true
-	case *types.ModelVerification:
-		return e.ThreadID, true
-	case *types.Warning:
-		if e.ThreadID != nil {
-			return *e.ThreadID, true
-		}
-		return "", true
-	case *types.GuardianWarning:
-		return e.ThreadID, true
-	case *types.ServerRequestResolved:
-		return e.ThreadID, true
-	case *types.UnknownEvent:
-		return e.ThreadID, true
-	}
-	return "", false
+func (c *Client) closeSnapshot() (
+	connectCancel context.CancelFunc,
+	dispatcherCancel context.CancelFunc,
+	dispatcherDone chan struct{},
+	demux *jsonrpc.Demux,
+	tr *transport.AppServer,
+) {
+	c.lifecycleMu.Lock()
+	defer c.lifecycleMu.Unlock()
+	return c.connectCancel, c.dispatcherCancel, c.dispatcherDone, c.demux, c.tr
 }
