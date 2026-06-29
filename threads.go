@@ -42,8 +42,10 @@ type Thread struct {
 	cwd string
 
 	turnMu sync.Mutex
-	inbox  chan types.ThreadEvent
-	done   chan struct{}
+	// eventMu serializes dispatcher delivery against close-time channel teardown.
+	eventMu sync.RWMutex
+	inbox   chan types.ThreadEvent
+	done    chan struct{}
 
 	closed atomic.Bool
 
@@ -83,6 +85,8 @@ func (t *Thread) ID() string { return t.id }
 // the event normally. The tee is non-blocking (select-default) — a
 // caller that forgot to Wait does not stall the dispatcher.
 func (t *Thread) deliverEvent(ev types.ThreadEvent) {
+	t.eventMu.RLock()
+	defer t.eventMu.RUnlock()
 	if t.closed.Load() {
 		return
 	}
@@ -119,6 +123,8 @@ func (t *Thread) deliverEvent(ev types.ThreadEvent) {
 // Signals any pending Compact.Wait by closing the subscription
 // channel — Wait observes the close via the zero-value receive.
 func (t *Thread) markClosed() {
+	t.eventMu.Lock()
+	defer t.eventMu.Unlock()
 	if !t.closed.CompareAndSwap(false, true) {
 		return // already closed
 	}

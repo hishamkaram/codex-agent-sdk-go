@@ -79,6 +79,62 @@ func TestClient_CloseNilContextDoesNotClose(t *testing.T) {
 	}
 }
 
+func TestClient_CloseWaitsForDispatcherBeforeClosingCompactSubscription(t *testing.T) {
+	t.Parallel()
+	c, _ := NewClient(context.Background(), types.NewCodexOptions())
+	thread := newThread(c, "T-close")
+	sub := make(chan *types.ContextCompacted, 1)
+	subPtr := &sub
+	thread.compactSub.Store(subPtr)
+	c.threads[thread.ID()] = thread
+	dispatcherDone := make(chan struct{})
+	c.dispatcherDone = dispatcherDone
+
+	closeDone := make(chan error, 1)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	go func() {
+		closeDone <- c.Close(ctx)
+	}()
+
+	select {
+	case err := <-closeDone:
+		t.Fatalf("Close returned before dispatcher stopped: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	if thread.closed.Load() {
+		t.Fatal("thread closed before dispatcher stopped")
+	}
+	select {
+	case _, ok := <-sub:
+		if !ok {
+			t.Fatal("compact subscription closed before dispatcher stopped")
+		}
+	default:
+	}
+
+	close(dispatcherDone)
+	select {
+	case err := <-closeDone:
+		if err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Close hung after dispatcher stopped")
+	}
+	if !thread.closed.Load() {
+		t.Fatal("thread not closed after dispatcher stopped")
+	}
+	select {
+	case _, ok := <-sub:
+		if ok {
+			t.Fatal("compact subscription still open after thread close")
+		}
+	default:
+		t.Fatal("compact subscription was not closed")
+	}
+}
+
 func TestClient_CloseDuringConnectCancelsHungInitialize(t *testing.T) {
 	marker := filepath.Join(t.TempDir(), "started")
 	helper := filepath.Join(t.TempDir(), "codex-helper")

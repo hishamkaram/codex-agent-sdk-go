@@ -356,6 +356,15 @@ func (c *Client) Close(ctx context.Context) error {
 		_ = demux.Close()
 	}
 
+	var waitErr error
+	if dispatcherDone != nil {
+		select {
+		case <-dispatcherDone:
+		case <-ctx.Done():
+			waitErr = fmt.Errorf("codex.Client.Close: waiting for dispatcher: %w", ctx.Err())
+		}
+	}
+
 	c.mu.Lock()
 	for _, t := range c.threads {
 		t.markClosed()
@@ -367,14 +376,6 @@ func (c *Client) Close(ctx context.Context) error {
 	var trErr error
 	if tr != nil {
 		trErr = tr.Close(ctx)
-	}
-	var waitErr error
-	if dispatcherDone != nil {
-		select {
-		case <-dispatcherDone:
-		case <-ctx.Done():
-			waitErr = fmt.Errorf("codex.Client.Close: waiting for dispatcher: %w", ctx.Err())
-		}
 	}
 	c.lifecycleMu.Lock()
 	c.connected.Store(false)
