@@ -5,8 +5,8 @@
     "semantic_hash": ""
   },
   "client.go": {
-    "mtime": 1782693633.8460774,
-    "ast_hash": "2b17a5c6e084b53a4ca0e6b4e83c802a",
+    "mtime": 1782717874.9780288,
+    "ast_hash": "a5b3ab4d77a25ccad558082c3f8c8e6c",
     "semantic_hash": ""
   },
   "client_accessors_test.go": {
@@ -60,8 +60,8 @@
     "semantic_hash": ""
   },
   "client_test.go": {
-    "mtime": 1782693535.7201512,
-    "ast_hash": "a46f2fa9a51a7fffafc5165c37c966d5",
+    "mtime": 1782717894.0118144,
+    "ast_hash": "4cfbf4809a93b748732cfc093c5c3240",
     "semantic_hash": ""
   },
   "client_thread_id_oracle_test.go": {
@@ -1775,8 +1775,8 @@
     "semantic_hash": ""
   },
   "threads.go": {
-    "mtime": 1782693584.1656222,
-    "ast_hash": "743e22e74785b5182e7d535debdcfb11",
+    "mtime": 1782717868.7520988,
+    "ast_hash": "ae542950affd1dbb7d2a187f3bd83208",
     "semantic_hash": ""
   },
   "threads_commands.go": {
