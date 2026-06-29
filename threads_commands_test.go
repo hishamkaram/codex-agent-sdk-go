@@ -241,6 +241,28 @@ func TestCompactResult_WaitCtxCancel(t *testing.T) {
 	}
 }
 
+func TestCompactResult_WaitSuccessDetaches(t *testing.T) {
+	t.Parallel()
+	ch := make(chan *types.ContextCompacted, 1)
+	chPtr := &ch
+	th := &Thread{id: "test"}
+	th.compactSub.Store(chPtr)
+	r := &CompactResult{ThreadID: "test", thread: th, chPtr: chPtr}
+	want := &types.ContextCompacted{ThreadID: "test"}
+	ch <- want
+
+	got, err := r.Wait(context.Background())
+	if err != nil {
+		t.Fatalf("Wait: %v", err)
+	}
+	if got != want {
+		t.Fatalf("Wait event = %p, want %p", got, want)
+	}
+	if th.compactSub.Load() != nil {
+		t.Fatal("successful Wait did not detach subscription")
+	}
+}
+
 func TestCompactResult_WaitClosedThread(t *testing.T) {
 	t.Parallel()
 	ch := make(chan *types.ContextCompacted, 1)

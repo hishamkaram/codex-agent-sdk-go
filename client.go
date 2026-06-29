@@ -47,6 +47,7 @@ type Client struct {
 	dispatcherDone   chan struct{}
 
 	// Hook bridge — populated only when HookCallback is registered.
+	hookBridgeMu sync.Mutex
 	hookListener *hookbridge.Listener
 	// hookHooksJSONPath is the absolute path to the user's
 	// ~/.codex/hooks.json that the SDK overwrote during Connect.
@@ -383,7 +384,6 @@ func (c *Client) Close(ctx context.Context) error {
 	c.connectCancel = nil
 	c.connectToken = nil
 	c.dispatcherCancel = nil
-	c.demux = nil
 	c.tr = nil
 	c.lifecycleMu.Unlock()
 	// Tear down the hook bridge AFTER the transport is stopped so no

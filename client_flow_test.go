@@ -267,6 +267,26 @@ func TestClient_StartThreadAndRun_HappyPath(t *testing.T) {
 	}
 }
 
+func TestClient_CloseLeavesDemuxStableForConcurrentCallers(t *testing.T) {
+	t.Parallel()
+
+	c, srv := setupMockClient(t, types.NewCodexOptions(), func(req jsonrpc.Request) jsonrpc.Response {
+		return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{"data":[]}`)}
+	})
+	_ = srv
+	originalDemux := c.demux
+	if originalDemux == nil {
+		t.Fatal("mock client demux is nil before Close")
+	}
+
+	if err := c.Close(context.Background()); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if c.demux != originalDemux {
+		t.Fatal("Close changed c.demux; concurrent public send paths require a stable pointer")
+	}
+}
+
 func TestClient_CloseClosesActiveRunStreamed(t *testing.T) {
 	t.Parallel()
 

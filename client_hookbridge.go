@@ -46,6 +46,9 @@ const maxUnixSocketLen = 103
 // On any error after the listener starts, this method tears the listener
 // down so the caller can return cleanly.
 func (c *Client) setupHookBridge(ctx context.Context, extraEnv *[]string) error {
+	c.hookBridgeMu.Lock()
+	defer c.hookBridgeMu.Unlock()
+
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return fmt.Errorf("home dir: %w", err)
@@ -133,21 +136,44 @@ func (c *Client) setupHookBridge(ctx context.Context, extraEnv *[]string) error 
 }
 
 func (c *Client) closeHookBridge() {
-	if c.hookListener != nil {
-		_ = c.hookListener.Close()
+	listener, hooksPath, backupPath, codexHome, socketDir := c.takeHookBridgeForClose()
+	if listener != nil {
+		_ = listener.Close()
 	}
 	// Restore the user's original ~/.codex/hooks.json (or remove the
 	// SDK-written file when no original existed). Logged but never
 	// fatal — Close must remain best-effort.
-	c.restoreUserHooksJSON()
-	if c.hookCodexHome != "" {
-		if err := os.RemoveAll(c.hookCodexHome); err != nil {
+	c.restoreUserHooksJSONPath(hooksPath, backupPath)
+	if codexHome != "" {
+		if err := os.RemoveAll(codexHome); err != nil {
 			c.logger.Warn("removing isolated CODEX_HOME failed",
-				zap.String("codex_home", c.hookCodexHome), zap.Error(err))
+				zap.String("codex_home", codexHome), zap.Error(err))
 		}
-		c.hookCodexHome = ""
 	}
-	c.cleanupHookSocketDir()
+	c.removeHookSocketDir(socketDir)
+}
+
+func (c *Client) takeHookBridgeForClose() (
+	listener *hookbridge.Listener,
+	hooksPath string,
+	backupPath string,
+	codexHome string,
+	socketDir string,
+) {
+	c.hookBridgeMu.Lock()
+	defer c.hookBridgeMu.Unlock()
+	listener = c.hookListener
+	hooksPath = c.hookHooksJSONPath
+	backupPath = c.hookBackupPath
+	codexHome = c.hookCodexHome
+	socketDir = c.hookSocketDir
+	c.hookListener = nil
+	c.hookHooksJSONPath = ""
+	c.hookBackupPath = ""
+	c.hookCodexHome = ""
+	c.hookSocketDir = ""
+	c.hookHadUserConfig = false
+	return listener, hooksPath, backupPath, codexHome, socketDir
 }
 
 // cleanupHookSocketDir removes the private 0700 directory that hosted a
@@ -157,11 +183,18 @@ func (c *Client) cleanupHookSocketDir() {
 	if c.hookSocketDir == "" {
 		return
 	}
-	if err := os.RemoveAll(c.hookSocketDir); err != nil {
-		c.logger.Warn("removing hook socket dir failed",
-			zap.String("dir", c.hookSocketDir), zap.Error(err))
-	}
+	c.removeHookSocketDir(c.hookSocketDir)
 	c.hookSocketDir = ""
+}
+
+func (c *Client) removeHookSocketDir(socketDir string) {
+	if socketDir == "" {
+		return
+	}
+	if err := os.RemoveAll(socketDir); err != nil {
+		c.logger.Warn("removing hook socket dir failed",
+			zap.String("dir", socketDir), zap.Error(err))
+	}
 }
 
 // relocateHookSocketUnderPrivateDir handles the case where the preferred hook
@@ -410,36 +443,40 @@ func (c *Client) recoverStaleBackups(codexDir, hooksPath string) {
 // SDK-written hooks.json is removed. Best-effort — failures are logged
 // but never propagated.
 func (c *Client) restoreUserHooksJSON() {
-	if c.hookHooksJSONPath == "" {
+	c.restoreUserHooksJSONPath(c.hookHooksJSONPath, c.hookBackupPath)
+}
+
+func (c *Client) restoreUserHooksJSONPath(hooksPath, backupPath string) {
+	if hooksPath == "" {
 		return
 	}
-	if c.hookBackupPath != "" {
+	if backupPath != "" {
 		// Read backup, write back over hooks.json. We use read+write
 		// (not rename) so a same-mountpoint guarantee isn't required.
-		data, err := os.ReadFile(c.hookBackupPath)
+		data, err := os.ReadFile(backupPath)
 		if err != nil {
 			c.logger.Warn("hooks.json backup unreadable; leaving SDK-written config in place",
-				zap.String("backup", c.hookBackupPath), zap.Error(err))
+				zap.String("backup", backupPath), zap.Error(err))
 			return
 		}
-		if err := os.WriteFile(c.hookHooksJSONPath, data, 0o600); err != nil {
+		if err := os.WriteFile(hooksPath, data, 0o600); err != nil {
 			c.logger.Warn("hooks.json restore failed; backup retained",
-				zap.String("backup", c.hookBackupPath), zap.Error(err))
+				zap.String("backup", backupPath), zap.Error(err))
 			return
 		}
-		_ = os.Remove(c.hookBackupPath)
+		_ = os.Remove(backupPath)
 		c.logger.Debug("restored user hooks.json from backup",
-			zap.String("hooks_json", c.hookHooksJSONPath))
+			zap.String("hooks_json", hooksPath))
 		return
 	}
 	// No prior config — remove what we wrote.
-	if err := os.Remove(c.hookHooksJSONPath); err != nil && !os.IsNotExist(err) {
+	if err := os.Remove(hooksPath); err != nil && !os.IsNotExist(err) {
 		c.logger.Warn("removing SDK-written hooks.json failed",
-			zap.String("hooks_json", c.hookHooksJSONPath), zap.Error(err))
+			zap.String("hooks_json", hooksPath), zap.Error(err))
 		return
 	}
 	c.logger.Debug("removed SDK-written hooks.json (no prior user config)",
-		zap.String("hooks_json", c.hookHooksJSONPath))
+		zap.String("hooks_json", hooksPath))
 }
 
 // readIfExists returns the file's contents if present. If the file does
