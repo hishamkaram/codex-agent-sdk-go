@@ -7,6 +7,20 @@ import (
 	"fmt"
 )
 
+var (
+	// ErrClientAlreadyConnected is wrapped when a Client cannot start a second
+	// app-server lifecycle.
+	ErrClientAlreadyConnected = errors.New("codex: client already connected")
+	// ErrClientClosed is wrapped when a Client operation is attempted after
+	// Close begins.
+	ErrClientClosed = errors.New("codex: client closed")
+	// ErrClientNotConnected is wrapped when an operation requires Connect first.
+	ErrClientNotConnected = errors.New("codex: client not connected")
+	// ErrThreadClosed is wrapped when a Thread operation is attempted after the
+	// owning client closed or the thread was otherwise retired.
+	ErrThreadClosed = errors.New("codex: thread closed")
+)
+
 // CLINotFoundError is returned when the codex CLI binary cannot be located or
 // does not meet the SDK's minimum version requirement.
 type CLINotFoundError struct {
