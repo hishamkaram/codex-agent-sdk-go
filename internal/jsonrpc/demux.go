@@ -239,6 +239,7 @@ func (d *Demux) Close() error {
 			delete(d.pending, id)
 		}
 		d.mu.Unlock()
+		_ = d.writer.Close()
 		close(d.stopped)
 	})
 	return nil
