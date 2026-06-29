@@ -156,11 +156,11 @@ func (c *Client) Connect(ctx context.Context) (err error) {
 	if err != nil {
 		// Detach cancellation for best-effort transport teardown; ctx may
 		// already be canceled. Inherit values only.
-		_ = tr.Close(context.WithoutCancel(ctx))
+		c.closeTransportAfterConnectError(ctx, tr)
 		return fmt.Errorf("codex.Client.Connect: initialize: %w", err)
 	}
 	if resp.Error != nil {
-		_ = tr.Close(context.WithoutCancel(ctx))
+		c.closeTransportAfterConnectError(ctx, tr)
 		return types.NewRPCError(resp.Error.Code, resp.Error.Message, resp.Error.Data)
 	}
 	if err := json.Unmarshal(resp.Result, &c.initResult); err != nil {
@@ -170,14 +170,14 @@ func (c *Client) Connect(ctx context.Context) (err error) {
 
 	// Send initialized notification.
 	if err := demux.Notify("initialized", nil); err != nil {
-		_ = tr.Close(context.WithoutCancel(ctx))
+		c.closeTransportAfterConnectError(ctx, tr)
 		return fmt.Errorf("codex.Client.Connect: initialized: %w", err)
 	}
 
 	dispatcherCtx, dispatcherCancel := context.WithCancel(context.WithoutCancel(ctx))
 	if err := c.startDispatcher(dispatcherCtx, dispatcherCancel, demux); err != nil {
 		dispatcherCancel()
-		_ = tr.Close(context.WithoutCancel(ctx))
+		c.closeTransportAfterConnectError(ctx, tr)
 		return err
 	}
 
@@ -255,6 +255,13 @@ func (c *Client) startDispatcher(
 	go c.dispatch(dispatcherCtx, demux, c.dispatcherDone)
 	c.connected.Store(true)
 	return nil
+}
+
+func (c *Client) closeTransportAfterConnectError(ctx context.Context, tr *transport.AppServer) {
+	if c.closed.Load() {
+		return
+	}
+	_ = tr.Close(context.WithoutCancel(ctx))
 }
 
 func buildInitializeParams(opts *types.CodexOptions) map[string]any {

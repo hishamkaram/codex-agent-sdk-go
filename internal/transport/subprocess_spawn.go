@@ -54,7 +54,13 @@ func (t *AppServer) logCLIVersion(ctx context.Context, cliPath string) {
 func (t *AppServer) spawnWithRetry(ctx context.Context, cliPath string, args []string) (*spawnedProc, error) {
 	const maxSpawnAttempts = 5
 	for attempt := 1; ; attempt++ {
-		cmd := exec.CommandContext(ctx, cliPath, args...)
+		if err := ctx.Err(); err != nil {
+			return nil, types.NewCLIConnectionError(fmt.Sprintf("spawn %q", cliPath), err)
+		}
+		// The subprocess lifetime is owned by AppServer.Close, not by the
+		// connect-attempt context. Client.Connect cancels that context after a
+		// successful handshake; tying exec.Cmd to it kills the live app-server.
+		cmd := exec.Command(cliPath, args...)
 		cmd.Env = buildEnv(t.cfg.Env)
 
 		stdin, pipeErr := cmd.StdinPipe()

@@ -167,7 +167,10 @@ func (t *AppServer) doConnect(ctx context.Context) error {
 	// Observer is invoked AFTER unlock so it can never block under the mutex.
 	go t.watchExit(proc.cmd, stderrDone)
 
-	demux.Run(ctx)
+	// The demux read loop is tied to the transport lifetime, not the connect
+	// attempt. Client.Connect cancels its connect context after a successful
+	// handshake; Close stops the loop by closing the demux.
+	demux.Run(context.WithoutCancel(ctx))
 
 	t.logger.Debug("codex app-server spawned",
 		zap.String("cli", cliPath),

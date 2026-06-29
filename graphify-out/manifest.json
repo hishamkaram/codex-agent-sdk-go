@@ -5,8 +5,8 @@
     "semantic_hash": ""
   },
   "client.go": {
-    "mtime": 1782729011.0455532,
-    "ast_hash": "6a023f2a73883821a859d70c3ceb74b5",
+    "mtime": 1782747774.7354436,
+    "ast_hash": "9d002d5b286c58d0509e76f36dd22b6b",
     "semantic_hash": ""
   },
   "client_accessors_test.go": {
@@ -60,8 +60,8 @@
     "semantic_hash": ""
   },
   "client_test.go": {
-    "mtime": 1782717894.0118144,
-    "ast_hash": "4cfbf4809a93b748732cfc093c5c3240",
+    "mtime": 1782747810.727022,
+    "ast_hash": "3846f84432017564602db84f70465808",
     "semantic_hash": ""
   },
   "client_thread_id_oracle_test.go": {
@@ -1605,8 +1605,8 @@
     "semantic_hash": ""
   },
   "internal/transport/observer_test.go": {
-    "mtime": 1780153753.6422884,
-    "ast_hash": "b55960eeba01496179e644ced255d564",
+    "mtime": 1782747587.310645,
+    "ast_hash": "f2a98f7cb5d343dd36749d36a7e8afd5",
     "semantic_hash": ""
   },
   "internal/transport/stderr_drain_test.go": {
@@ -1615,8 +1615,8 @@
     "semantic_hash": ""
   },
   "internal/transport/subprocess_appserver.go": {
-    "mtime": 1782665300.6344965,
-    "ast_hash": "04e68afb62fb0ef7ed048b0d593b1011",
+    "mtime": 1782747598.8165097,
+    "ast_hash": "3fcc037cda0f18392d38c32528d47c8e",
     "semantic_hash": ""
   },
   "internal/transport/subprocess_appserver_test.go": {
@@ -2090,8 +2090,8 @@
     "semantic_hash": ""
   },
   "internal/transport/subprocess_spawn.go": {
-    "mtime": 1782700010.7304013,
-    "ast_hash": "34bb1a34957d012e294dca4c50e8c52c",
+    "mtime": 1782747626.82918,
+    "ast_hash": "f63fa8ed9ee56310a7c01dab2ab143f4",
     "semantic_hash": ""
   },
   "tests/integration_commands_config_test.go": {
