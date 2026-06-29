@@ -41,11 +41,9 @@ func (r *CompactResult) Wait(ctx context.Context) (*types.ContextCompacted, erro
 	if r == nil {
 		return nil, fmt.Errorf("codex.CompactResult.Wait: nil result")
 	}
+	defer r.detach()
 	select {
 	case <-ctx.Done():
-		// Detach the subscription so the Thread doesn't try to send
-		// on a channel the caller will never drain.
-		r.detach()
 		return nil, fmt.Errorf("codex.CompactResult.Wait: %w", ctx.Err())
 	case ev, ok := <-*r.chPtr:
 		if !ok {

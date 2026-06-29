@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -262,5 +263,41 @@ func TestSetupHookBridge_DefaultIsolatedCODEXHome(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(codexHome, "hooks.json")); err != nil {
 		t.Fatalf("isolated hooks.json missing: %v", err)
+	}
+}
+
+func TestClient_CloseHookBridgeConcurrentIsRaceFree(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	shim := filepath.Join(t.TempDir(), "codex-sdk-hook-shim")
+	if err := os.WriteFile(shim, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatalf("write shim: %v", err)
+	}
+	c := newTestClient(t)
+	c.opts = types.NewCodexOptions().
+		WithShimPath(shim).
+		WithHookCallback(types.DefaultAllowHookHandler)
+	var env []string
+	if err := c.setupHookBridge(context.Background(), &env); err != nil {
+		t.Fatalf("setupHookBridge: %v", err)
+	}
+
+	const workers = 8
+	var wg sync.WaitGroup
+	wg.Add(workers)
+	for i := 0; i < workers; i++ {
+		go func() {
+			defer wg.Done()
+			c.closeHookBridge()
+		}()
+	}
+	wg.Wait()
+
+	if c.hookListener != nil {
+		t.Fatal("hook listener was not cleared")
+	}
+	if c.hookCodexHome != "" || c.hookSocketDir != "" || c.hookHooksJSONPath != "" {
+		t.Fatalf("hook bridge paths were not cleared: codexHome=%q socketDir=%q hooksPath=%q",
+			c.hookCodexHome, c.hookSocketDir, c.hookHooksJSONPath)
 	}
 }

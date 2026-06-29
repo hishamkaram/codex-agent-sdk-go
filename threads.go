@@ -42,7 +42,10 @@ type Thread struct {
 	cwd string
 
 	turnMu sync.Mutex
-	inbox  chan types.ThreadEvent
+	// eventMu serializes dispatcher delivery against close-time channel teardown.
+	eventMu sync.RWMutex
+	inbox   chan types.ThreadEvent
+	done    chan struct{}
 
 	closed atomic.Bool
 
@@ -64,6 +67,7 @@ func newThread(c *Client, id string) *Thread {
 		client: c,
 		id:     id,
 		inbox:  make(chan types.ThreadEvent, ThreadInboxBuffer),
+		done:   make(chan struct{}),
 	}
 	t.activeTurnID.Store("")
 	return t
@@ -81,6 +85,8 @@ func (t *Thread) ID() string { return t.id }
 // the event normally. The tee is non-blocking (select-default) — a
 // caller that forgot to Wait does not stall the dispatcher.
 func (t *Thread) deliverEvent(ev types.ThreadEvent) {
+	t.eventMu.RLock()
+	defer t.eventMu.RUnlock()
 	if t.closed.Load() {
 		return
 	}
@@ -117,8 +123,13 @@ func (t *Thread) deliverEvent(ev types.ThreadEvent) {
 // Signals any pending Compact.Wait by closing the subscription
 // channel — Wait observes the close via the zero-value receive.
 func (t *Thread) markClosed() {
+	t.eventMu.Lock()
+	defer t.eventMu.Unlock()
 	if !t.closed.CompareAndSwap(false, true) {
 		return // already closed
+	}
+	if t.done != nil {
+		close(t.done)
 	}
 	if sub := t.compactSub.Swap(nil); sub != nil {
 		close(*sub)
@@ -129,7 +140,7 @@ func (t *Thread) markClosed() {
 // to the server. Safe to call from any goroutine.
 func (t *Thread) Interrupt(ctx context.Context) error {
 	if t.closed.Load() {
-		return fmt.Errorf("codex.Thread.Interrupt: thread closed")
+		return fmt.Errorf("codex.Thread.Interrupt: %w", types.ErrThreadClosed)
 	}
 	tid, _ := t.activeTurnID.Load().(string)
 	if tid == "" {
@@ -167,7 +178,7 @@ func (t *Thread) clearActiveTurnID(turnID string) {
 // its internal goroutine releases the lock.
 func (t *Thread) RunStreamed(ctx context.Context, prompt string, opts *types.RunOptions) (<-chan types.ThreadEvent, error) {
 	if t.closed.Load() {
-		return nil, fmt.Errorf("codex.Thread.RunStreamed: thread closed")
+		return nil, fmt.Errorf("codex.Thread.RunStreamed: %w", types.ErrThreadClosed)
 	}
 
 	t.turnMu.Lock()
@@ -221,6 +232,8 @@ func (t *Thread) streamLoop(ctx context.Context, expectedTurnID string, out chan
 		select {
 		case <-ctx.Done():
 			return
+		case <-t.done:
+			return
 		case ev, ok := <-t.inbox:
 			if !ok {
 				return
@@ -229,6 +242,8 @@ func (t *Thread) streamLoop(ctx context.Context, expectedTurnID string, out chan
 			select {
 			case out <- ev:
 			case <-ctx.Done():
+				return
+			case <-t.done:
 				return
 			}
 			// Detect turn terminus. If we don't yet know the turnID from
@@ -386,8 +401,11 @@ func buildTurnInput(prompt string, opts *types.RunOptions) ([]map[string]any, er
 // StartThread sends thread/start and returns a new Thread. The thread is
 // registered in the client's routing table.
 func (c *Client) StartThread(ctx context.Context, opts *types.ThreadOptions) (*Thread, error) {
-	if !c.connected.Load() || c.closed.Load() {
-		return nil, fmt.Errorf("codex.Client.StartThread: client not connected or already closed")
+	if c.closed.Load() {
+		return nil, fmt.Errorf("codex.Client.StartThread: %w", types.ErrClientClosed)
+	}
+	if !c.connected.Load() {
+		return nil, fmt.Errorf("codex.Client.StartThread: %w", types.ErrClientNotConnected)
 	}
 	params := buildThreadStartParams(c.opts, opts)
 	resp, err := c.demux.Send(ctx, "thread/start", params)
@@ -410,8 +428,11 @@ func (c *Client) StartThread(ctx context.Context, opts *types.ThreadOptions) (*T
 // ResumeThread sends thread/resume with optional cwd override and returns
 // a new Thread handle for the resumed conversation.
 func (c *Client) ResumeThread(ctx context.Context, threadID string, opts *types.ResumeOptions) (*Thread, error) {
-	if !c.connected.Load() || c.closed.Load() {
-		return nil, fmt.Errorf("codex.Client.ResumeThread: client not connected or already closed")
+	if c.closed.Load() {
+		return nil, fmt.Errorf("codex.Client.ResumeThread: %w", types.ErrClientClosed)
+	}
+	if !c.connected.Load() {
+		return nil, fmt.Errorf("codex.Client.ResumeThread: %w", types.ErrClientNotConnected)
 	}
 	if threadID == "" {
 		return nil, fmt.Errorf("codex.Client.ResumeThread: threadID must not be empty")
@@ -462,8 +483,11 @@ func (t *Thread) Cwd() string { return t.cwd }
 // unaffected. Uses "thread/fork" — if the server doesn't expose this verb
 // in the current CLI version, the error is returned as-is.
 func (c *Client) ForkThread(ctx context.Context, sourceThreadID string, opts *types.ThreadOptions) (*Thread, *types.ForkResult, error) {
-	if !c.connected.Load() || c.closed.Load() {
-		return nil, nil, fmt.Errorf("codex.Client.ForkThread: client not connected or already closed")
+	if c.closed.Load() {
+		return nil, nil, fmt.Errorf("codex.Client.ForkThread: %w", types.ErrClientClosed)
+	}
+	if !c.connected.Load() {
+		return nil, nil, fmt.Errorf("codex.Client.ForkThread: %w", types.ErrClientNotConnected)
 	}
 	if sourceThreadID == "" {
 		return nil, nil, fmt.Errorf("codex.Client.ForkThread: sourceThreadID must not be empty")
@@ -490,8 +514,11 @@ func (c *Client) ForkThread(ctx context.Context, sourceThreadID string, opts *ty
 // ArchiveThread marks a thread as archived on the server and unregisters
 // it locally.
 func (c *Client) ArchiveThread(ctx context.Context, threadID string) error {
-	if !c.connected.Load() || c.closed.Load() {
-		return fmt.Errorf("codex.Client.ArchiveThread: client not connected or already closed")
+	if c.closed.Load() {
+		return fmt.Errorf("codex.Client.ArchiveThread: %w", types.ErrClientClosed)
+	}
+	if !c.connected.Load() {
+		return fmt.Errorf("codex.Client.ArchiveThread: %w", types.ErrClientNotConnected)
 	}
 	resp, err := c.demux.Send(ctx, "thread/archive", map[string]any{"threadId": threadID})
 	if err != nil {

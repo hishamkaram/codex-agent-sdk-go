@@ -18,14 +18,21 @@ const MinReadBufferSize = 2 * 1024 * 1024
 // mutex. This is the single point that enforces the "frames may never
 // interleave on stdin" invariant documented in CLAUDE.md.
 type LineWriter struct {
-	mu sync.Mutex
-	w  io.Writer
+	mu        sync.Mutex
+	w         io.Writer
+	closer    io.Closer
+	closeOnce sync.Once
+	closeErr  error
 }
 
 // NewLineWriter wraps w. The writer is not buffered; every WriteLine call
 // writes the full frame atomically.
 func NewLineWriter(w io.Writer) *LineWriter {
-	return &LineWriter{w: w}
+	lw := &LineWriter{w: w}
+	if closer, ok := w.(io.Closer); ok {
+		lw.closer = closer
+	}
+	return lw
 }
 
 // WriteFrame marshals v as JSON, appends a newline, and writes the result
@@ -51,6 +58,19 @@ func (lw *LineWriter) WriteFrame(v any) error {
 		line = line[n:]
 	}
 	return nil
+}
+
+// Close closes the underlying writer when it is closeable. It intentionally does
+// not take the write mutex: Close must be able to unblock a goroutine currently
+// stuck inside the underlying Write call during shutdown.
+func (lw *LineWriter) Close() error {
+	if lw == nil || lw.closer == nil {
+		return nil
+	}
+	lw.closeOnce.Do(func() {
+		lw.closeErr = lw.closer.Close()
+	})
+	return lw.closeErr
 }
 
 // LineReader reads newline-terminated JSON frames from the underlying reader
