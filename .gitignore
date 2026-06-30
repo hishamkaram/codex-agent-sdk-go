@@ -34,7 +34,8 @@ scratch/
 .codex
 .codex/
 
-# Graphify local/cache artifacts
+# Graphify local generated state
+/graphify-out/
 graphify-out/cost.json
 graphify-out/cache/
 graphify-out/.rebuild.lock
