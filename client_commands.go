@@ -399,6 +399,18 @@ func (c *Client) SetModel(ctx context.Context, model string) error {
 	return err
 }
 
+// SetReasoningEffort is sugar for
+// `WriteConfigValue("model_reasoning_effort", effort, MergeReplace)`.
+// Valid effort values are model-dependent; discover them from
+// ModelInfo.SupportedReasoningEfforts instead of hard-coding support.
+func (c *Client) SetReasoningEffort(ctx context.Context, effort string) error {
+	if effort == "" {
+		return fmt.Errorf("codex.Client.SetReasoningEffort: effort must not be empty")
+	}
+	_, err := c.WriteConfigValue(ctx, "model_reasoning_effort", effort, types.MergeReplace)
+	return err
+}
+
 // SetApprovalPolicy is sugar for
 // `WriteConfigValue("approval_policy", encodedPolicy, MergeReplace)`.
 // Use to change codex's approval stance mid-session (e.g., switch from

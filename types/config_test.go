@@ -10,6 +10,7 @@ func TestConfigUnmarshal_ApprovalPolicyGranularObject(t *testing.T) {
 
 	raw := []byte(`{
 		"model": "gpt-5.4",
+		"model_reasoning_effort": "xhigh",
 		"approval_policy": {
 			"granular": {
 				"mcp_elicitations": true,
@@ -26,8 +27,14 @@ func TestConfigUnmarshal_ApprovalPolicyGranularObject(t *testing.T) {
 	if cfg.ApprovalPolicy == nil || *cfg.ApprovalPolicy != string(ApprovalGranular) {
 		t.Fatalf("ApprovalPolicy = %v, want granular", cfg.ApprovalPolicy)
 	}
+	if cfg.ModelReasoningEffort == nil || *cfg.ModelReasoningEffort != "xhigh" {
+		t.Fatalf("ModelReasoningEffort = %v, want xhigh", cfg.ModelReasoningEffort)
+	}
 	if cfg.Raw == nil {
 		t.Fatal("Raw is nil")
+	}
+	if _, ok := cfg.Raw["model_reasoning_effort"]; !ok {
+		t.Fatal("Raw missing model_reasoning_effort")
 	}
 	var preserved map[string]json.RawMessage
 	if err := json.Unmarshal(cfg.Raw["approval_policy"], &preserved); err != nil {

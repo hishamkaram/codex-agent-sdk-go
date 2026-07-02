@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hishamkaram/codex-agent-sdk-go/internal/jsonrpc"
 	"github.com/hishamkaram/codex-agent-sdk-go/types"
 )
 
@@ -180,6 +181,11 @@ func TestClientCommands_MutatingInputValidation(t *testing.T) {
 			"model must not be empty",
 		},
 		{
+			"SetReasoningEffort empty",
+			func() error { return c.SetReasoningEffort(context.Background(), "") },
+			"effort must not be empty",
+		},
+		{
 			"SetApprovalPolicy empty",
 			func() error { return c.SetApprovalPolicy(context.Background(), "") },
 			"policy must not be empty",
@@ -218,6 +224,38 @@ func TestClientCommands_MutatingInputValidation(t *testing.T) {
 	}
 }
 
+func TestClientSetReasoningEffort_WritesModelReasoningEffortKey(t *testing.T) {
+	t.Parallel()
+
+	requests := make(chan jsonrpc.Request, 1)
+	c, _ := setupMockClient(t, types.NewCodexOptions(), func(req jsonrpc.Request) jsonrpc.Response {
+		if req.Method == "config/value/write" {
+			requests <- req
+			return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{"status":"ok"}`)}
+		}
+		return jsonrpc.Response{ID: req.ID, Error: &jsonrpc.RPCError{Code: -32601, Message: "unexpected method"}}
+	})
+
+	if err := c.SetReasoningEffort(context.Background(), "xhigh"); err != nil {
+		t.Fatalf("SetReasoningEffort: %v", err)
+	}
+
+	req := <-requests
+	var params map[string]interface{}
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		t.Fatalf("unmarshal params: %v", err)
+	}
+	if params["keyPath"] != "model_reasoning_effort" {
+		t.Fatalf("keyPath = %q, want model_reasoning_effort", params["keyPath"])
+	}
+	if params["mergeStrategy"] != string(types.MergeReplace) {
+		t.Fatalf("mergeStrategy = %q, want replace", params["mergeStrategy"])
+	}
+	if params["value"] != "xhigh" {
+		t.Fatalf("value = %q, want xhigh", params["value"])
+	}
+}
+
 func TestClientCommands_MutatingNotConnected(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -231,6 +269,9 @@ func TestClientCommands_MutatingNotConnected(t *testing.T) {
 		{"WriteConfigBatch", func(c *Client) error {
 			_, err := c.WriteConfigBatch(context.Background(), []types.ConfigEntry{{KeyPath: "model", Value: "x"}})
 			return err
+		}},
+		{"SetReasoningEffort", func(c *Client) error {
+			return c.SetReasoningEffort(context.Background(), "xhigh")
 		}},
 		{"SetExperimentalFeature", func(c *Client) error {
 			return c.SetExperimentalFeature(context.Background(), "shell_tool", true)
