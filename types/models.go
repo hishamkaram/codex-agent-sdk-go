@@ -63,8 +63,8 @@ type ModelInfo struct {
 // ReasoningEffortInfo describes one reasoning-effort tier on a model.
 type ReasoningEffortInfo struct {
 	// ReasoningEffort is the canonical value to set via
-	// WriteConfigValue("reasoning.effort", ...). Observed: "low",
-	// "medium", "high", "xhigh".
+	// WriteConfigValue("model_reasoning_effort", ...). Observed:
+	// "minimal", "low", "medium", "high", "xhigh".
 	ReasoningEffort string `json:"reasoningEffort"`
 	// Description is the user-facing label shown next to the value.
 	Description string `json:"description,omitempty"`

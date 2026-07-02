@@ -36,13 +36,14 @@ type ConfigReadResult struct {
 type Config struct {
 	// Curated subset — the most commonly touched fields. All are
 	// pointers to distinguish "unset" from "set to zero value".
-	Model              *string         `json:"model,omitempty"`
-	ApprovalPolicy     *string         `json:"approval_policy,omitempty"`
-	Sandbox            *string         `json:"sandbox,omitempty"`
-	DefaultPermissions json.RawMessage `json:"default_permissions,omitempty"`
-	Features           map[string]bool `json:"features,omitempty"`
-	ApprovalsReviewer  *string         `json:"approvals_reviewer,omitempty"`
-	History            json.RawMessage `json:"history,omitempty"`
+	Model                *string         `json:"model,omitempty"`
+	ModelReasoningEffort *string         `json:"model_reasoning_effort,omitempty"`
+	ApprovalPolicy       *string         `json:"approval_policy,omitempty"`
+	Sandbox              *string         `json:"sandbox,omitempty"`
+	DefaultPermissions   json.RawMessage `json:"default_permissions,omitempty"`
+	Features             map[string]bool `json:"features,omitempty"`
+	ApprovalsReviewer    *string         `json:"approvals_reviewer,omitempty"`
+	History              json.RawMessage `json:"history,omitempty"`
 
 	// Marketplaces and apps are surfaced because slash commands /apps
 	// and /plugins drive off them.
@@ -60,14 +61,15 @@ type Config struct {
 // config payload for forward-compatible callers.
 func (c *Config) UnmarshalJSON(data []byte) error {
 	var aux struct {
-		Model              *string                    `json:"model,omitempty"`
-		Sandbox            *string                    `json:"sandbox,omitempty"`
-		DefaultPermissions json.RawMessage            `json:"default_permissions,omitempty"`
-		Features           map[string]bool            `json:"features,omitempty"`
-		ApprovalsReviewer  *string                    `json:"approvals_reviewer,omitempty"`
-		History            json.RawMessage            `json:"history,omitempty"`
-		Marketplaces       map[string]json.RawMessage `json:"marketplaces,omitempty"`
-		Apps               json.RawMessage            `json:"apps,omitempty"`
+		Model                *string                    `json:"model,omitempty"`
+		ModelReasoningEffort *string                    `json:"model_reasoning_effort,omitempty"`
+		Sandbox              *string                    `json:"sandbox,omitempty"`
+		DefaultPermissions   json.RawMessage            `json:"default_permissions,omitempty"`
+		Features             map[string]bool            `json:"features,omitempty"`
+		ApprovalsReviewer    *string                    `json:"approvals_reviewer,omitempty"`
+		History              json.RawMessage            `json:"history,omitempty"`
+		Marketplaces         map[string]json.RawMessage `json:"marketplaces,omitempty"`
+		Apps                 json.RawMessage            `json:"apps,omitempty"`
 	}
 	if err := json.Unmarshal(data, &aux); err != nil {
 		return err
@@ -78,15 +80,16 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 	}
 
 	*c = Config{
-		Model:              aux.Model,
-		Sandbox:            aux.Sandbox,
-		DefaultPermissions: aux.DefaultPermissions,
-		Features:           aux.Features,
-		ApprovalsReviewer:  aux.ApprovalsReviewer,
-		History:            aux.History,
-		Marketplaces:       aux.Marketplaces,
-		Apps:               aux.Apps,
-		Raw:                raw,
+		Model:                aux.Model,
+		ModelReasoningEffort: aux.ModelReasoningEffort,
+		Sandbox:              aux.Sandbox,
+		DefaultPermissions:   aux.DefaultPermissions,
+		Features:             aux.Features,
+		ApprovalsReviewer:    aux.ApprovalsReviewer,
+		History:              aux.History,
+		Marketplaces:         aux.Marketplaces,
+		Apps:                 aux.Apps,
+		Raw:                  raw,
 	}
 
 	if approvalRaw, ok := raw["approval_policy"]; ok {
