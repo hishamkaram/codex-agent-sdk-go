@@ -4,6 +4,9 @@ All notable changes to the Codex Agent SDK for Go are documented in this file.
 
 ## [Unreleased]
 
+- Expose the CLI-resolved thread model through `Thread.Model()`, including
+  account defaults selected when `thread/start` omits a model override.
+
 ### Changed
 - Reorganized public client dispatch, hook bridge, thread ID helpers, event
   parser, and subprocess transport internals into smaller files for
