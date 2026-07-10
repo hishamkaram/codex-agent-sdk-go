@@ -57,9 +57,7 @@ else
   echo 'codex-cli 9.1.0'
 fi
 `
-	if err := os.WriteFile(script, []byte(contents), 0o700); err != nil {
-		t.Fatalf("write fake CLI: %v", err)
-	}
+	writeFakeRuntimeControlsCLI(t, script, contents)
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
 	defer cancel()
 
@@ -89,9 +87,7 @@ else
   echo 'codex-cli 9.1.0'
 fi
 `
-	if err := os.WriteFile(script, []byte(contents), 0o700); err != nil {
-		t.Fatalf("write fake CLI: %v", err)
-	}
+	writeFakeRuntimeControlsCLI(t, script, contents)
 
 	controls, err := DiscoverRuntimeControls(
 		context.Background(),
@@ -117,9 +113,7 @@ else
   echo 'codex-cli 9.1.0'
 fi
 `
-	if err := os.WriteFile(script, []byte(contents), 0o700); err != nil {
-		t.Fatalf("write fake CLI: %v", err)
-	}
+	writeFakeRuntimeControlsCLI(t, script, contents)
 	requirements := &types.ConfigRequirements{
 		AllowedApprovalPolicies: []types.ApprovalPolicyRequirement{
 			types.NewApprovalPolicyRequirement("future-policy"),
@@ -136,11 +130,192 @@ fi
 	}
 }
 
+func TestDiscoverRuntimeControlsClassifiesUnsupportedCLI(t *testing.T) {
+	t.Parallel()
+
+	script := filepath.Join(t.TempDir(), "codex")
+	contents := `#!/bin/sh
+if [ "$1" = "--help" ]; then
+  printf '%s\n' 'legacy codex help without runtime controls'
+else
+  echo 'codex-cli 0.1.0'
+fi
+`
+	writeFakeRuntimeControlsCLI(t, script, contents)
+
+	_, err := DiscoverRuntimeControls(
+		context.Background(),
+		types.NewCodexOptions().WithCLIPath(script),
+		nil,
+	)
+	if !errors.Is(err, ErrRuntimeControlsUnsupported) {
+		t.Fatalf("DiscoverRuntimeControls() error = %v, want ErrRuntimeControlsUnsupported", err)
+	}
+}
+
+func TestDiscoverRuntimeControlsClassifiesMissingExperimentalSchema(t *testing.T) {
+	t.Parallel()
+
+	script := filepath.Join(t.TempDir(), "codex")
+	contents := `#!/bin/sh
+if [ "$1" = "app-server" ] && [ "$2" = "generate-json-schema" ] && [ "$3" = "--help" ]; then
+  printf '%s\n' 'Usage: codex app-server generate-json-schema' '  --experimental' '  --out <DIR>'
+  exit 0
+fi
+if [ "$1" = "app-server" ]; then
+  while [ "$#" -gt 0 ]; do
+    if [ "$1" = "--out" ]; then
+      out="$2"
+      break
+    fi
+    shift
+  done
+  mkdir -p "$out/v2"
+  printf '%s\n' '{"definitions":{}}' > "$out/v2/ThreadStartParams.json"
+  exit 0
+fi
+if [ "$1" = "--help" ]; then
+  printf '%s\n' '-s, --sandbox <SANDBOX_MODE>' '  [possible values: read-only]' '-a, --ask-for-approval <APPROVAL_POLICY>' '  - on-request: ask' '-h, --help'
+else
+  echo 'codex-cli 9.1.0'
+fi
+`
+	writeFakeRuntimeControlsCLI(t, script, contents)
+
+	_, err := DiscoverRuntimeControls(
+		context.Background(),
+		types.NewCodexOptions().WithCLIPath(script).WithExperimentalAPI(true),
+		nil,
+	)
+	if !errors.Is(err, ErrRuntimeControlsUnsupported) {
+		t.Fatalf("DiscoverRuntimeControls() error = %v, want ErrRuntimeControlsUnsupported", err)
+	}
+}
+
+func TestDiscoverRuntimeControlsClassifiesMissingExperimentalSchemaOption(t *testing.T) {
+	t.Parallel()
+
+	script := filepath.Join(t.TempDir(), "codex")
+	contents := `#!/bin/sh
+if [ "$1" = "app-server" ] && [ "$2" = "generate-json-schema" ] && [ "$3" = "--help" ]; then
+  printf '%s\n' 'Usage: codex app-server generate-json-schema' '  --out <DIR>'
+  exit 0
+fi
+if [ "$1" = "app-server" ]; then
+  exit 99
+fi
+if [ "$1" = "--help" ]; then
+  printf '%s\n' '-s, --sandbox <SANDBOX_MODE>' '  [possible values: read-only]' '-a, --ask-for-approval <APPROVAL_POLICY>' '  - on-request: ask' '-h, --help'
+else
+  echo 'codex-cli 9.1.0'
+fi
+`
+	writeFakeRuntimeControlsCLI(t, script, contents)
+
+	_, err := DiscoverRuntimeControls(
+		context.Background(),
+		types.NewCodexOptions().WithCLIPath(script).WithExperimentalAPI(true),
+		nil,
+	)
+	if !errors.Is(err, ErrRuntimeControlsUnsupported) {
+		t.Fatalf("DiscoverRuntimeControls() error = %v, want ErrRuntimeControlsUnsupported", err)
+	}
+}
+
+func TestDiscoverRuntimeControlsClassifiesMissingExperimentalSchemaCommand(t *testing.T) {
+	t.Parallel()
+
+	script := filepath.Join(t.TempDir(), "codex")
+	contents := `#!/bin/sh
+if [ "$1" = "app-server" ] && [ "$2" = "generate-json-schema" ] && [ "$3" = "--help" ]; then
+  echo "error: unexpected argument 'generate-json-schema' found" >&2
+  exit 2
+fi
+if [ "$1" = "--help" ]; then
+  printf '%s\n' '-s, --sandbox <SANDBOX_MODE>' '  [possible values: read-only]' '-a, --ask-for-approval <APPROVAL_POLICY>' '  - on-request: ask' '-h, --help'
+else
+  echo 'codex-cli 0.50.0'
+fi
+`
+	writeFakeRuntimeControlsCLI(t, script, contents)
+
+	_, err := DiscoverRuntimeControls(
+		context.Background(),
+		types.NewCodexOptions().WithCLIPath(script).WithExperimentalAPI(true),
+		nil,
+	)
+	if !errors.Is(err, ErrRuntimeControlsUnsupported) {
+		t.Fatalf("DiscoverRuntimeControls() error = %v, want ErrRuntimeControlsUnsupported", err)
+	}
+}
+
+func TestDiscoverRuntimeControlsClassifiesUnrecognizedExperimentalSchemaCommand(t *testing.T) {
+	t.Parallel()
+
+	script := filepath.Join(t.TempDir(), "codex")
+	contents := `#!/bin/sh
+if [ "$1" = "app-server" ] && [ "$2" = "generate-json-schema" ] && [ "$3" = "--help" ]; then
+  echo "error: unrecognized subcommand 'generate-json-schema'" >&2
+  exit 2
+fi
+if [ "$1" = "--help" ]; then
+  printf '%s\n' '-s, --sandbox <SANDBOX_MODE>' '  [possible values: read-only]' '-a, --ask-for-approval <APPROVAL_POLICY>' '  - on-request: ask' '-h, --help'
+else
+  echo 'codex-cli 0.40.0'
+fi
+`
+	writeFakeRuntimeControlsCLI(t, script, contents)
+
+	_, err := DiscoverRuntimeControls(
+		context.Background(),
+		types.NewCodexOptions().WithCLIPath(script).WithExperimentalAPI(true),
+		nil,
+	)
+	if !errors.Is(err, ErrRuntimeControlsUnsupported) {
+		t.Fatalf("DiscoverRuntimeControls() error = %v, want ErrRuntimeControlsUnsupported", err)
+	}
+}
+
+func TestDiscoverRuntimeControlsPreservesTransientSchemaFailure(t *testing.T) {
+	t.Parallel()
+
+	script := filepath.Join(t.TempDir(), "codex")
+	contents := `#!/bin/sh
+if [ "$1" = "app-server" ] && [ "$2" = "generate-json-schema" ] && [ "$3" = "--help" ]; then
+  printf '%s\n' 'Usage: codex app-server generate-json-schema' '  --experimental' '  --out <DIR>'
+  exit 0
+fi
+if [ "$1" = "app-server" ]; then
+  echo 'temporary schema service failure' >&2
+  exit 75
+fi
+if [ "$1" = "--help" ]; then
+  printf '%s\n' '-s, --sandbox <SANDBOX_MODE>' '  [possible values: read-only]' '-a, --ask-for-approval <APPROVAL_POLICY>' '  - on-request: ask' '-h, --help'
+else
+  echo 'codex-cli 9.1.0'
+fi
+`
+	writeFakeRuntimeControlsCLI(t, script, contents)
+
+	_, err := DiscoverRuntimeControls(
+		context.Background(),
+		types.NewCodexOptions().WithCLIPath(script).WithExperimentalAPI(true),
+		nil,
+	)
+	if err == nil || errors.Is(err, ErrRuntimeControlsUnsupported) {
+		t.Fatalf("DiscoverRuntimeControls() error = %v, want retryable non-unsupported failure", err)
+	}
+}
+
 func TestDiscoverRuntimeControlsIncludesSchemaProvenGranularApproval(t *testing.T) {
 	t.Parallel()
 
 	script := filepath.Join(t.TempDir(), "codex")
 	contents := `#!/bin/sh
+if [ "$1" = "app-server" ] && [ "$2" = "generate-json-schema" ] && [ "$3" = "--help" ]; then
+  printf '%s\n' 'Usage: codex app-server generate-json-schema' '  --experimental' '  --out <DIR>'
+  exit 0
+fi
 if [ "$1" = "app-server" ]; then
   while [ "$#" -gt 0 ]; do
     if [ "$1" = "--out" ]; then
@@ -161,9 +336,7 @@ else
   echo 'codex-cli 9.1.0'
 fi
 `
-	if err := os.WriteFile(script, []byte(contents), 0o700); err != nil {
-		t.Fatalf("write fake CLI: %v", err)
-	}
+	writeFakeRuntimeControlsCLI(t, script, contents)
 	requirements := &types.ConfigRequirements{
 		AllowedApprovalPolicies: []types.ApprovalPolicyRequirement{{
 			ProviderValue: "granular",
@@ -251,4 +424,18 @@ func TestRuntimeControlsRejectIncompatibleManagedGranularSettings(t *testing.T) 
 
 func granularSettings(value types.GranularApprovalSettings) *types.GranularApprovalSettings {
 	return &value
+}
+
+func writeFakeRuntimeControlsCLI(t *testing.T, path, contents string) {
+	t.Helper()
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, []byte(contents), 0o700); err != nil {
+		t.Fatalf("write fake CLI: %v", err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		t.Fatalf("publish fake CLI: %v", err)
+	}
+	// Local file-indexing hooks may briefly reopen a new executable for write.
+	// Let that observer finish before the test asks the kernel to execute it.
+	time.Sleep(20 * time.Millisecond)
 }

@@ -3,6 +3,7 @@ package codex
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -403,6 +404,30 @@ func TestClassifyRPCError_GenericRPCError(t *testing.T) {
 	}
 	if types.IsFeatureNotEnabledError(err) {
 		t.Errorf("must NOT classify as FeatureNotEnabledError")
+	}
+}
+
+func TestClassifyRPCError_ConfigRequirementsUnsupported(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		code    int
+		message string
+	}{
+		{name: "method not found", code: -32601, message: "method not found"},
+		{name: "legacy invalid request", code: -32600, message: "Invalid request"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := classifyRPCError("configRequirements/read", &jsonrpcRPCError{
+				Code: tt.code, Message: tt.message,
+			})
+			if !errors.Is(err, ErrRuntimeControlsUnsupported) {
+				t.Fatalf("classifyRPCError() = %v, want ErrRuntimeControlsUnsupported", err)
+			}
+		})
 	}
 }
 

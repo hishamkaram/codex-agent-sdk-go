@@ -280,6 +280,10 @@ func classifyRPCError(method string, e *jsonrpcRPCError) error {
 	if e == nil {
 		return nil
 	}
+	legacyUnsupported := e.Code == -32600 && e.Message == "Invalid request"
+	if method == "configRequirements/read" && (e.Code == -32601 || legacyUnsupported) {
+		return fmt.Errorf("codex.Client.ReadConfigRequirements: %w", ErrRuntimeControlsUnsupported)
+	}
 	if strings.Contains(e.Message, "requires experimentalApi capability") {
 		return types.NewFeatureNotEnabledError("experimentalApi", method, e.Message)
 	}

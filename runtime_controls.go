@@ -3,6 +3,7 @@ package codex
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"regexp"
@@ -14,6 +15,10 @@ import (
 )
 
 var approvalChoiceRE = regexp.MustCompile(`^\s*-\s+([a-z][a-z0-9-]*):`)
+
+// ErrRuntimeControlsUnsupported is wrapped when the installed CLI cannot
+// advertise the approval and sandbox controls required for safe SDK use.
+var ErrRuntimeControlsUnsupported = errors.New("codex: runtime control discovery unsupported")
 
 // DiscoverRuntimeControls reads the installed CLI's help and intersects the
 // advertised values with optional provider-managed requirements.
@@ -53,7 +58,10 @@ func DiscoverRuntimeControls(
 	help := stdout.String() + "\n" + stderr.String()
 	approvals, sandboxes := parseRuntimeControls(help)
 	if len(approvals) == 0 || len(sandboxes) == 0 {
-		return types.RuntimeControlCapabilities{}, fmt.Errorf("codex.DiscoverRuntimeControls: installed CLI did not advertise runtime controls")
+		return types.RuntimeControlCapabilities{}, fmt.Errorf(
+			"codex.DiscoverRuntimeControls: installed CLI did not advertise runtime controls: %w",
+			ErrRuntimeControlsUnsupported,
+		)
 	}
 	if options.ExperimentalAPI {
 		experimentalApprovals, discoveryErr := discoverExperimentalApprovalPolicies(
