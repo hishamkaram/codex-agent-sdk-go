@@ -23,9 +23,9 @@ const (
 // ApprovalPolicy controls when the codex server asks the client (via
 // server-initiated approval requests) before running an action.
 //
-// Values MUST match the server's accepted set. As of CLI 0.121.0 the
-// server rejects anything outside the 5 constants below with a JSON-RPC
-// "unknown variant" error on thread/start.
+// Values MUST match the server's accepted set. Use DiscoverRuntimeControls to
+// determine which values the installed CLI accepts in the active capability
+// configuration.
 type ApprovalPolicy string
 
 const (

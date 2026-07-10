@@ -4,6 +4,9 @@ All notable changes to the Codex Agent SDK for Go are documented in this file.
 
 ## [Unreleased]
 
+- Expose the CLI-resolved thread model through `Thread.Model()`, including
+  account defaults selected when `thread/start` omits a model override.
+
 ### Changed
 - Reorganized public client dispatch, hook bridge, thread ID helpers, event
   parser, and subprocess transport internals into smaller files for
@@ -11,6 +14,12 @@ All notable changes to the Codex Agent SDK for Go are documented in this file.
   change with no public API behavior change.
 
 ### Added
+- `DiscoverRuntimeControls()` reads approval and sandbox values from the
+  installed Codex CLI and intersects them with `configRequirements/read`.
+- `Client.ReadConfigRequirements()` exposes provider-managed runtime
+  constraints without hardcoding CLI-owned values.
+- `ErrRuntimeControlsUnsupported` lets callers distinguish an older CLI that
+  cannot advertise safe runtime controls from transient discovery failures.
 - Workspace release-decision gate coverage. Public API and behavior changes now
   require changelog evidence or an explicit `no-release-needed` decision before
   the workspace release compatibility gate passes.

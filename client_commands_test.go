@@ -3,6 +3,7 @@ package codex
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -114,6 +115,10 @@ func TestClientCommands_NotConnected(t *testing.T) {
 		call func(*Client) error
 	}{
 		{"ReadConfig", func(c *Client) error { _, err := c.ReadConfig(context.Background()); return err }},
+		{"ReadConfigRequirements", func(c *Client) error {
+			_, err := c.ReadConfigRequirements(context.Background())
+			return err
+		}},
 		{"ListModels", func(c *Client) error { _, err := c.ListModels(context.Background()); return err }},
 		{"ListExperimentalFeatures", func(c *Client) error {
 			_, err := c.ListExperimentalFeatures(context.Background())
@@ -148,6 +153,26 @@ func TestClientCommands_NotConnected(t *testing.T) {
 				t.Errorf("error %q must include caller name %q", err, tt.name)
 			}
 		})
+	}
+}
+
+func TestReadConfigRequirementsOmitsParams(t *testing.T) {
+	t.Parallel()
+
+	requests := make(chan jsonrpc.Request, 1)
+	c, _ := setupMockClient(t, types.NewCodexOptions(), func(req jsonrpc.Request) jsonrpc.Response {
+		if req.Method == "configRequirements/read" {
+			requests <- req
+			return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{"requirements":null}`)}
+		}
+		return jsonrpc.Response{ID: req.ID, Error: &jsonrpc.RPCError{Code: -32601, Message: "unexpected method"}}
+	})
+
+	if _, err := c.ReadConfigRequirements(context.Background()); err != nil {
+		t.Fatalf("ReadConfigRequirements: %v", err)
+	}
+	if req := <-requests; len(req.Params) != 0 {
+		t.Fatalf("params = %s, want omitted", req.Params)
 	}
 }
 
@@ -379,6 +404,30 @@ func TestClassifyRPCError_GenericRPCError(t *testing.T) {
 	}
 	if types.IsFeatureNotEnabledError(err) {
 		t.Errorf("must NOT classify as FeatureNotEnabledError")
+	}
+}
+
+func TestClassifyRPCError_ConfigRequirementsUnsupported(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		code    int
+		message string
+	}{
+		{name: "method not found", code: -32601, message: "method not found"},
+		{name: "legacy invalid request", code: -32600, message: "Invalid request"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := classifyRPCError("configRequirements/read", &jsonrpcRPCError{
+				Code: tt.code, Message: tt.message,
+			})
+			if !errors.Is(err, ErrRuntimeControlsUnsupported) {
+				t.Fatalf("classifyRPCError() = %v, want ErrRuntimeControlsUnsupported", err)
+			}
+		})
 	}
 }
 

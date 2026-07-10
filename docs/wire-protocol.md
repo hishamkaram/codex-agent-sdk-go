@@ -35,10 +35,10 @@ field names preferred in this order: flat > nested.
 |---|---|---|---|
 | `initialize` | `{clientInfo:{name,version,title?},capabilities:{experimentalApi,optOutNotificationMethods?}}` | `{userAgent,codexHome,platformFamily,platformOs}` | `Client.Connect` |
 | `initialized` (notification) | none | — | `Client.Connect` |
-| `thread/start` | `{cwd?,model?,sandbox?,approvalPolicy?}` | `{thread:{id,…}}` | `Client.StartThread` |
-| `thread/resume` | `{threadId,cwd?}` | `{thread:{id,…}}` | `Client.ResumeThread` |
+| `thread/start` | `{cwd?,model?,sandbox?,approvalPolicy?}` | `{thread:{id,…},model}` | `Client.StartThread` |
+| `thread/resume` | `{threadId,cwd?}` | `{thread:{id,…},model}` | `Client.ResumeThread` |
 | `thread/list` | `{}` | `{threads:[…]}` | `Client.ListThreads` |
-| `thread/fork` | `{sourceThreadId,…}` | `{thread:{id,…}}` | `Client.ForkThread` |
+| `thread/fork` | `{sourceThreadId,…}` | `{thread:{id,…},model}` | `Client.ForkThread` |
 | `thread/archive` | `{threadId}` | `{}` | `Client.ArchiveThread` |
 | `turn/start` | `{threadId,input:[{type:"text"|"localImage",…}],outputSchema?,collaborationMode?}` | `{turn:{id,…}}` | `Thread.RunStreamed` |
 | `turn/interrupt` | `{threadId,turnId}` | `{}` | `Thread.Interrupt` |

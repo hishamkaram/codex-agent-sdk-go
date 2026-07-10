@@ -34,6 +34,9 @@ var ErrNoActiveTurn = errors.New("codex: no active turn")
 type Thread struct {
 	client *Client
 	id     string
+	// model is the effective model returned by thread/start, thread/resume, or
+	// thread/fork. It reflects the CLI-resolved default when callers omit one.
+	model string
 	// cwd is the working directory the thread was started with.
 	// Populated by StartThread / ResumeThread / ForkThread from
 	// ThreadOptions.Cwd (falls back to Client.opts.DefaultCwd).
@@ -75,6 +78,10 @@ func newThread(c *Client, id string) *Thread {
 
 // ID returns the server-assigned thread identifier.
 func (t *Thread) ID() string { return t.id }
+
+// Model returns the effective model selected by the Codex app-server for this
+// thread. Empty means the connected CLI did not report one.
+func (t *Thread) Model() string { return t.model }
 
 // deliverEvent pushes an event to the thread's inbox. Called from the
 // Client's dispatcher goroutine. Never blocks — drops events if the inbox
@@ -420,6 +427,7 @@ func (c *Client) StartThread(ctx context.Context, opts *types.ThreadOptions) (*T
 		return nil, err
 	}
 	t := newThread(c, id)
+	t.model = extractThreadModel(resp.Result)
 	t.cwd = resolveCwd(c, opts)
 	c.registerThread(t)
 	return t, nil
@@ -456,6 +464,7 @@ func (c *Client) ResumeThread(ctx context.Context, threadID string, opts *types.
 		id = threadID
 	}
 	t := newThread(c, id)
+	t.model = extractThreadModel(resp.Result)
 	if cwd == "" {
 		cwd = c.opts.DefaultCwd
 	}
@@ -506,6 +515,7 @@ func (c *Client) ForkThread(ctx context.Context, sourceThreadID string, opts *ty
 		return nil, nil, err
 	}
 	t := newThread(c, newID)
+	t.model = extractThreadModel(resp.Result)
 	t.cwd = resolveCwd(c, opts)
 	c.registerThread(t)
 	return t, &types.ForkResult{SourceThreadID: sourceThreadID, NewThreadID: newID}, nil
@@ -601,6 +611,16 @@ func extractThreadID(result json.RawMessage) (string, error) {
 		return shape.Thread.ID, nil
 	}
 	return "", types.NewMessageParseError("thread response missing thread id", string(result))
+}
+
+func extractThreadModel(result json.RawMessage) string {
+	var shape struct {
+		Model string `json:"model"`
+	}
+	if err := json.Unmarshal(result, &shape); err != nil {
+		return ""
+	}
+	return shape.Model
 }
 
 // Compile-time check that Thread exposes the stdlib-expected surface.

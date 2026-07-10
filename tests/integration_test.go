@@ -115,7 +115,10 @@ func TestIntegration_ConnectAndArchive(t *testing.T) {
 	if thread.ID() == "" {
 		t.Fatal("thread ID empty after StartThread")
 	}
-	t.Logf("thread: %s", thread.ID())
+	if thread.Model() == "" {
+		t.Fatal("thread model empty after StartThread")
+	}
+	t.Logf("thread: %s model: %s", thread.ID(), thread.Model())
 
 	if err := client.ArchiveThread(ctx, thread.ID()); err != nil {
 		// Some CLI versions don't expose thread/archive as a plain RPC;

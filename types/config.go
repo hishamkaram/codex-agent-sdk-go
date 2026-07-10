@@ -143,7 +143,7 @@ const (
 //
 // Wire shape (verified against codex 0.121.0 schema):
 //
-//	{"keyPath": "model", "mergeStrategy": "replace", "value": "gpt-5.4"}
+//	{"keyPath": "model", "mergeStrategy": "replace", "value": "<discovered-model-id>"}
 type ConfigEntry struct {
 	// KeyPath is a dotted path into config.toml. Top-level examples:
 	// "model", "approval_policy", "sandbox". Nested:

@@ -66,6 +66,20 @@ func (c *Client) ReadConfig(ctx context.Context) (*types.Config, error) {
 	return &result.Config, nil
 }
 
+// ReadConfigRequirements returns provider-managed runtime constraints. A nil
+// result means no requirements are configured.
+func (c *Client) ReadConfigRequirements(ctx context.Context) (*types.ConfigRequirements, error) {
+	resp, err := c.sendRaw(ctx, "ReadConfigRequirements", "configRequirements/read", nil)
+	if err != nil {
+		return nil, err
+	}
+	var result types.ConfigRequirementsReadResult
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("codex.Client.ReadConfigRequirements: decode response: %w", err)
+	}
+	return result.Requirements, nil
+}
+
 // ListModels returns every model the authenticated principal can
 // route turns to. Each ModelInfo includes capabilities, supported
 // reasoning effort tiers, and any pending upgrade redirects.
@@ -265,6 +279,10 @@ func (c *Client) sendRaw(ctx context.Context, callerName, method string, params 
 func classifyRPCError(method string, e *jsonrpcRPCError) error {
 	if e == nil {
 		return nil
+	}
+	legacyUnsupported := e.Code == -32600 && e.Message == "Invalid request"
+	if method == "configRequirements/read" && (e.Code == -32601 || legacyUnsupported) {
+		return fmt.Errorf("codex.Client.ReadConfigRequirements: %w", ErrRuntimeControlsUnsupported)
 	}
 	if strings.Contains(e.Message, "requires experimentalApi capability") {
 		return types.NewFeatureNotEnabledError("experimentalApi", method, e.Message)

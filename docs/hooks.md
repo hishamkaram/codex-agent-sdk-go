@@ -145,7 +145,7 @@ Notes on what each decision actually does under codex 0.121.0:
 |---|---|---|
 | `HookEventName` | every event | Normalized from PascalCase wire form to camelCase constants (e.g. `HookPreToolUse`). |
 | `SessionID`, `TurnID`, `TranscriptPath`, `Cwd` | every event | Routing context. |
-| `Model` | every event | e.g. `"gpt-5.4"`. |
+| `Model` | every event | Model identifier reported by the CLI. |
 | `PermissionMode` | every event | `"bypassPermissions"`, `"untrusted"`, etc. |
 | `ToolName`, `ToolInput`, `ToolUseID` | preToolUse, postToolUse | `ToolInput`/`ToolResult` are raw JSON. |
 | `ToolResult` | postToolUse | Raw JSON. |

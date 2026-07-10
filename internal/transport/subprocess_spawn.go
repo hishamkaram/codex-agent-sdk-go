@@ -61,7 +61,7 @@ func (t *AppServer) spawnWithRetry(ctx context.Context, cliPath string, args []s
 		// connect-attempt context. Client.Connect cancels that context after a
 		// successful handshake; tying exec.Cmd to it kills the live app-server.
 		cmd := exec.Command(cliPath, args...)
-		cmd.Env = buildEnv(t.cfg.Env)
+		cmd.Env = BuildRuntimeEnvironment(t.cfg.Env)
 
 		stdin, pipeErr := cmd.StdinPipe()
 		if pipeErr != nil {
@@ -100,8 +100,10 @@ func (t *AppServer) spawnWithRetry(ctx context.Context, cliPath string, args []s
 	}
 }
 
-// buildEnv overlays keyEqVals on os.Environ. An entry "KEY=" unsets KEY.
-func buildEnv(keyEqVals []string) []string {
+// BuildRuntimeEnvironment overlays keyEqVals on os.Environ. An entry "KEY="
+// unsets KEY. CLI probes and the app-server subprocess must use this same
+// environment contract.
+func BuildRuntimeEnvironment(keyEqVals []string) []string {
 	if len(keyEqVals) == 0 {
 		return os.Environ()
 	}
