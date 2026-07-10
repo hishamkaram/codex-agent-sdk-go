@@ -72,7 +72,6 @@ import (
 func main() {
 	ctx := context.Background()
 	opts := types.NewCodexOptions().
-		WithModel("gpt-5.4").
 		WithSandbox(types.SandboxReadOnly).
 		WithApprovalPolicy(types.ApprovalOnRequest)
 

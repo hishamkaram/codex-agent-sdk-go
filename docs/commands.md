@@ -44,7 +44,9 @@ models, _ := client.ListModels(ctx)
 for _, m := range models {
     if m.IsDefault { fmt.Println("default:", m.ID) }
 }
-_ = client.SetModel(ctx, "gpt-5.4")
+if len(models) > 0 {
+    _ = client.SetModel(ctx, models[0].ID)
+}
 ```
 
 ### `/permissions` → `Client.SetApprovalPolicy`

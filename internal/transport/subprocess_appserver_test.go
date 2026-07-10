@@ -43,7 +43,7 @@ func TestSplitKV(t *testing.T) {
 
 func TestBuildEnv_AddsAndOverrides(t *testing.T) {
 	t.Parallel()
-	env := buildEnv([]string{"CODEX_TEST_KEY=abc123", "PATH=/override"})
+	env := BuildRuntimeEnvironment([]string{"CODEX_TEST_KEY=abc123", "PATH=/override"})
 	joined := strings.Join(env, "\n")
 	if !strings.Contains(joined, "CODEX_TEST_KEY=abc123") {
 		t.Fatal("expected CODEX_TEST_KEY override to be present")
@@ -73,7 +73,7 @@ func TestBuildEnv_AddsAndOverrides(t *testing.T) {
 
 func TestBuildEnv_EmptyValueUnsets(t *testing.T) {
 	t.Parallel()
-	env := buildEnv([]string{"PATH="})
+	env := BuildRuntimeEnvironment([]string{"PATH="})
 	for _, e := range env {
 		if strings.HasPrefix(e, "PATH=") {
 			t.Fatalf("PATH should be unset, still have: %q", e)

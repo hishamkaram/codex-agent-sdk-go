@@ -16,9 +16,8 @@ type ModelListResult struct {
 // ModelInfo describes one model the codex app-server is willing to
 // route turns to.
 type ModelInfo struct {
-	// ID is the canonical model identifier (e.g., "gpt-5.4",
-	// "gpt-5.2-codex"). Use this when calling SetModel or
-	// WriteConfigValue("model", id).
+	// ID is the canonical model identifier reported by the app server.
+	// Use this when calling SetModel or WriteConfigValue("model", id).
 	ID string `json:"id"`
 	// Model is a duplicate of ID in codex 0.121.0; preserved for
 	// forward-compat in case codex de-duplicates them.

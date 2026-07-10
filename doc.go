@@ -6,7 +6,7 @@
 // 1. Query function for simple, one-shot interactions:
 //
 //	ctx := context.Background()
-//	opts := types.NewCodexOptions().WithModel("gpt-5.4")
+//	opts := types.NewCodexOptions()
 //	events, err := Query(ctx, "Summarize the repo", opts)
 //	if err != nil {
 //	    log.Fatal(err)

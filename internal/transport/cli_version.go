@@ -69,19 +69,42 @@ func ProbeCLIVersion(cliPath string) (SemVer, error) {
 	return probeCLIVersionCtx(context.Background(), cliPath)
 }
 
+// ProbeCLIVersionContext probes the CLI using the caller's context and runtime
+// environment overlay.
+func ProbeCLIVersionContext(
+	ctx context.Context,
+	cliPath string,
+	env []string,
+) (SemVer, error) {
+	return probeCLIVersionWithEnvironment(ctx, cliPath, env)
+}
+
 // probeCLIVersionCtx is the context-threading core of ProbeCLIVersion. The
 // 5s probe timeout is layered onto the caller's parent ctx so connect-time
 // cancellation (e.g. the Connect context being canceled) aborts the probe
 // instead of leaving it to run to the full timeout.
 func probeCLIVersionCtx(parent context.Context, cliPath string) (SemVer, error) {
+	return probeCLIVersionWithEnvironment(parent, cliPath, nil)
+}
+
+func probeCLIVersionWithEnvironment(
+	parent context.Context,
+	cliPath string,
+	env []string,
+) (SemVer, error) {
 	ctx, cancel := context.WithTimeout(parent, 5*time.Second)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, cliPath, "--version")
+	cmd.WaitDelay = 100 * time.Millisecond
+	cmd.Env = BuildRuntimeEnvironment(env)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return SemVer{}, fmt.Errorf("transport.ProbeCLIVersion: %w", ctxErr)
+		}
 		return SemVer{}, fmt.Errorf("transport.ProbeCLIVersion: run %q --version: %w (stderr=%q)",
 			cliPath, err, stderr.String())
 	}
