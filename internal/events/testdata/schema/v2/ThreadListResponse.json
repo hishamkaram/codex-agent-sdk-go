@@ -61,6 +61,7 @@
           "type": "string",
           "enum": [
             "contextWindowExceeded",
+            "sessionBudgetExceeded",
             "usageLimitExceeded",
             "serverOverloaded",
             "cyberPolicy",
@@ -484,6 +485,50 @@
         "original"
       ]
     },
+    "LegacyAppPathString": {
+      "type": "string"
+    },
+    "McpToolCallAppContext": {
+      "type": "object",
+      "required": [
+        "connectorId"
+      ],
+      "properties": {
+        "actionName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "appName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "connectorId": {
+          "type": "string"
+        },
+        "linkId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "resourceUri": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "templateId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
     "McpToolCallError": {
       "type": "object",
       "required": [
@@ -703,6 +748,14 @@
         }
       ]
     },
+    "SubAgentActivityKind": {
+      "type": "string",
+      "enum": [
+        "started",
+        "interacted",
+        "interrupted"
+      ]
+    },
     "SubAgentSource": {
       "oneOf": [
         {
@@ -854,6 +907,11 @@
           "description": "Whether the thread is ephemeral and should not be materialized on disk.",
           "type": "boolean"
         },
+        "updatedAt": {
+          "description": "Unix timestamp (in seconds) when the thread was last updated.",
+          "type": "integer",
+          "format": "int64"
+        },
         "forkedFromId": {
           "description": "Source thread id when this thread was created by forking another thread.",
           "type": [
@@ -872,7 +930,15 @@
             }
           ]
         },
+        "turns": {
+          "description": "Only populated on `thread/resume`, `thread/rollback`, `thread/fork`, and `thread/read` (when `includeTurns` is true) responses. For all other responses and notifications returning a Thread, the turns field will be an empty list.",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Turn"
+          }
+        },
         "id": {
+          "description": "Identifier for this thread. Codex-generated thread IDs are UUIDv7.",
           "type": "string"
         },
         "modelProvider": {
@@ -904,6 +970,14 @@
           "description": "Usually the first user message in the thread, if available.",
           "type": "string"
         },
+        "recencyAt": {
+          "description": "Unix timestamp (in seconds) used for thread recency ordering.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int64"
+        },
         "sessionId": {
           "description": "Session id shared by threads that belong to the same session tree.",
           "type": "string"
@@ -934,18 +1008,6 @@
               "type": "null"
             }
           ]
-        },
-        "turns": {
-          "description": "Only populated on `thread/resume`, `thread/rollback`, `thread/fork`, and `thread/read` (when `includeTurns` is true) responses. For all other responses and notifications returning a Thread, the turns field will be an empty list.",
-          "type": "array",
-          "items": {
-            "$ref": "#/definitions/Turn"
-          }
-        },
-        "updatedAt": {
-          "description": "Unix timestamp (in seconds) when the thread was last updated.",
-          "type": "integer",
-          "format": "int64"
         }
       }
     },
@@ -954,6 +1016,17 @@
       "enum": [
         "waitingOnApproval",
         "waitingOnUserInput"
+      ]
+    },
+    "ThreadExtra": {
+      "description": "Extra app-server data for a thread.",
+      "type": "object"
+    },
+    "ThreadHistoryMode": {
+      "type": "string",
+      "enum": [
+        "legacy",
+        "paginated"
       ]
     },
     "ThreadId": {
@@ -1159,7 +1232,7 @@
               "description": "The command's working directory.",
               "allOf": [
                 {
-                  "$ref": "#/definitions/AbsolutePathBuf"
+                  "$ref": "#/definitions/LegacyAppPathString"
                 }
               ]
             },
@@ -1252,6 +1325,16 @@
             "type"
           ],
           "properties": {
+            "appContext": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/McpToolCallAppContext"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "arguments": true,
             "durationMs": {
               "description": "The duration of the MCP tool call in milliseconds.",
@@ -1275,6 +1358,7 @@
               "type": "string"
             },
             "mcpAppResourceUri": {
+              "description": "Deprecated: use `appContext.resourceUri` instead.",
               "type": [
                 "string",
                 "null"
@@ -1462,6 +1546,38 @@
         {
           "type": "object",
           "required": [
+            "agentPath",
+            "agentThreadId",
+            "id",
+            "kind",
+            "type"
+          ],
+          "properties": {
+            "agentPath": {
+              "type": "string"
+            },
+            "agentThreadId": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "$ref": "#/definitions/SubAgentActivityKind"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "subAgentActivity"
+              ],
+              "title": "SubAgentActivityThreadItemType"
+            }
+          },
+          "title": "SubAgentActivityThreadItem"
+        },
+        {
+          "type": "object",
+          "required": [
             "id",
             "query",
             "type"
@@ -1505,7 +1621,7 @@
               "type": "string"
             },
             "path": {
-              "$ref": "#/definitions/AbsolutePathBuf"
+              "$ref": "#/definitions/LegacyAppPathString"
             },
             "type": {
               "type": "string",
@@ -1516,6 +1632,32 @@
             }
           },
           "title": "ImageViewThreadItem"
+        },
+        {
+          "type": "object",
+          "required": [
+            "durationMs",
+            "id",
+            "type"
+          ],
+          "properties": {
+            "durationMs": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0.0
+            },
+            "id": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "sleep"
+              ],
+              "title": "SleepThreadItemType"
+            }
+          },
+          "title": "SleepThreadItem"
         },
         {
           "type": "object",
@@ -1632,12 +1774,7 @@
       ]
     },
     "ThreadSource": {
-      "type": "string",
-      "enum": [
-        "user",
-        "subagent",
-        "memory_consolidation"
-      ]
+      "type": "string"
     },
     "ThreadStatus": {
       "oneOf": [
@@ -1750,6 +1887,7 @@
           ]
         },
         "id": {
+          "description": "Identifier for this turn. Codex-generated turn IDs are UUIDv7.",
           "type": "string"
         },
         "items": {

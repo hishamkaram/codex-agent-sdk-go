@@ -16,30 +16,40 @@ func wrapRealtime(raw json.RawMessage, build func(threadID string, params json.R
 
 func parseMCPServerStartupStatus(raw json.RawMessage) (types.ThreadEvent, error) {
 	var env struct {
-		Name   string          `json:"name"`
-		Status json.RawMessage `json:"status"`
-		Error  *string         `json:"error"`
+		ThreadID      *string         `json:"threadId"`
+		Name          string          `json:"name"`
+		Status        json.RawMessage `json:"status"`
+		Error         *string         `json:"error"`
+		FailureReason *string         `json:"failureReason"`
 	}
 	if err := unmarshalTo(raw, &env); err != nil {
 		return nil, err
 	}
 	return &types.MCPServerStartupStatusUpdated{
-		Name:   env.Name,
-		Status: cloneRaw(env.Status),
-		Error:  env.Error,
+		ThreadID:      env.ThreadID,
+		Name:          env.Name,
+		Status:        cloneRaw(env.Status),
+		Error:         env.Error,
+		FailureReason: env.FailureReason,
 	}, nil
 }
 
 func parseMCPServerOAuthLoginCompleted(raw json.RawMessage) (types.ThreadEvent, error) {
 	var env struct {
-		Name    string  `json:"name"`
-		Success bool    `json:"success"`
-		Error   *string `json:"error"`
+		ThreadID *string `json:"threadId"`
+		Name     string  `json:"name"`
+		Success  bool    `json:"success"`
+		Error    *string `json:"error"`
 	}
 	if err := unmarshalTo(raw, &env); err != nil {
 		return nil, err
 	}
-	return &types.MCPServerOAuthLoginCompleted{Name: env.Name, Success: env.Success, Error: env.Error}, nil
+	return &types.MCPServerOAuthLoginCompleted{
+		ThreadID: env.ThreadID,
+		Name:     env.Name,
+		Success:  env.Success,
+		Error:    env.Error,
+	}, nil
 }
 
 func parseAccountLoginCompleted(raw json.RawMessage) (types.ThreadEvent, error) {
@@ -111,6 +121,30 @@ func parseModelVerification(raw json.RawMessage) (types.ThreadEvent, error) {
 	}, nil
 }
 
+func parseModelSafetyBufferingUpdated(raw json.RawMessage) (types.ThreadEvent, error) {
+	var env struct {
+		ThreadID        string   `json:"threadId"`
+		TurnID          string   `json:"turnId"`
+		Model           string   `json:"model"`
+		Reasons         []string `json:"reasons"`
+		ShowBufferingUI bool     `json:"showBufferingUi"`
+		UseCases        []string `json:"useCases"`
+		FasterModel     *string  `json:"fasterModel"`
+	}
+	if err := unmarshalTo(raw, &env); err != nil {
+		return nil, err
+	}
+	return &types.ModelSafetyBufferingUpdated{
+		ThreadID:        env.ThreadID,
+		TurnID:          env.TurnID,
+		Model:           env.Model,
+		Reasons:         env.Reasons,
+		ShowBufferingUI: env.ShowBufferingUI,
+		UseCases:        env.UseCases,
+		FasterModel:     env.FasterModel,
+	}, nil
+}
+
 func parseConfigWarning(raw json.RawMessage) (types.ThreadEvent, error) {
 	var env struct {
 		Summary string          `json:"summary"`
@@ -176,6 +210,20 @@ func parseAppListUpdated(raw json.RawMessage) (types.ThreadEvent, error) {
 		return nil, err
 	}
 	return &types.AppListUpdated{Data: cloneRaw(env.Data)}, nil
+}
+
+func parseExternalAgentConfigImportProgress(raw json.RawMessage) (types.ThreadEvent, error) {
+	var env struct {
+		ImportID        string          `json:"importId"`
+		ItemTypeResults json.RawMessage `json:"itemTypeResults"`
+	}
+	if err := unmarshalTo(raw, &env); err != nil {
+		return nil, err
+	}
+	return &types.ExternalAgentConfigImportProgress{
+		ImportID:        env.ImportID,
+		ItemTypeResults: cloneRaw(env.ItemTypeResults),
+	}, nil
 }
 
 func parseServerRequestResolved(raw json.RawMessage) (types.ThreadEvent, error) {

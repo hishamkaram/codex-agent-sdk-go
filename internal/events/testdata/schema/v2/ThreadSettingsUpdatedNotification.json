@@ -54,7 +54,6 @@
           "type": "string",
           "enum": [
             "untrusted",
-            "on-failure",
             "on-request",
             "never"
           ]
@@ -120,6 +119,31 @@
       "enum": [
         "plan",
         "default"
+      ]
+    },
+    "MultiAgentMode": {
+      "description": "Controls the effective multi-agent delegation instructions for a turn. `custom` means the configured mode hint defines the policy instead of a built-in policy.",
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "explicitRequestOnly",
+            "proactive"
+          ]
+        },
+        {
+          "type": "object",
+          "required": [
+            "custom"
+          ],
+          "properties": {
+            "custom": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "title": "CustomMultiAgentMode"
+        }
       ]
     },
     "NetworkAccess": {
@@ -339,6 +363,16 @@
         "modelProvider": {
           "type": "string"
         },
+        "summary": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ReasoningSummary"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "personality": {
           "anyOf": [
             {
@@ -356,16 +390,6 @@
           "type": [
             "string",
             "null"
-          ]
-        },
-        "summary": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/ReasoningSummary"
-            },
-            {
-              "type": "null"
-            }
           ]
         }
       }

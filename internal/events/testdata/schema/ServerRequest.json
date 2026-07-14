@@ -285,7 +285,7 @@
             "null"
           ],
           "items": {
-            "$ref": "#/definitions/AbsolutePathBuf"
+            "$ref": "#/definitions/LegacyAppPathString"
           }
         },
         "write": {
@@ -295,7 +295,7 @@
             "null"
           ],
           "items": {
-            "$ref": "#/definitions/AbsolutePathBuf"
+            "$ref": "#/definitions/LegacyAppPathString"
           }
         }
       }
@@ -638,11 +638,19 @@
           "description": "The command's working directory.",
           "anyOf": [
             {
-              "$ref": "#/definitions/AbsolutePathBuf"
+              "$ref": "#/definitions/LegacyAppPathString"
             },
             {
               "type": "null"
             }
+          ]
+        },
+        "environmentId": {
+          "description": "Environment in which the command will run.",
+          "default": null,
+          "type": [
+            "string",
+            "null"
           ]
         },
         "itemId": {
@@ -690,6 +698,43 @@
           "description": "Unix timestamp (in milliseconds) when this approval request started.",
           "type": "integer",
           "format": "int64"
+        }
+      }
+    },
+    "ToolRequestUserInputQuestion": {
+      "description": "EXPERIMENTAL. Represents one request_user_input question and its required options.",
+      "type": "object",
+      "required": [
+        "header",
+        "id",
+        "question"
+      ],
+      "properties": {
+        "header": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "isOther": {
+          "default": false,
+          "type": "boolean"
+        },
+        "isSecret": {
+          "default": false,
+          "type": "boolean"
+        },
+        "options": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/definitions/ToolRequestUserInputOption"
+          }
+        },
+        "question": {
+          "type": "string"
         }
       }
     },
@@ -898,7 +943,7 @@
           ],
           "properties": {
             "path": {
-              "$ref": "#/definitions/AbsolutePathBuf"
+              "$ref": "#/definitions/LegacyAppPathString"
             },
             "type": {
               "type": "string",
@@ -1075,6 +1120,9 @@
           }
         }
       ]
+    },
+    "LegacyAppPathString": {
+      "type": "string"
     },
     "McpElicitationArrayType": {
       "type": "string",
@@ -1636,6 +1684,27 @@
         {
           "type": "object",
           "required": [
+            "message",
+            "mode",
+            "requestedSchema"
+          ],
+          "properties": {
+            "_meta": true,
+            "message": {
+              "type": "string"
+            },
+            "mode": {
+              "type": "string",
+              "enum": [
+                "openai/form"
+              ]
+            },
+            "requestedSchema": true
+          }
+        },
+        {
+          "type": "object",
+          "required": [
             "elicitationId",
             "message",
             "mode",
@@ -1950,6 +2019,15 @@
         "turnId"
       ],
       "properties": {
+        "autoResolutionMs": {
+          "default": null,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0.0
+        },
         "itemId": {
           "type": "string"
         },
@@ -1963,43 +2041,6 @@
           "type": "string"
         },
         "turnId": {
-          "type": "string"
-        }
-      }
-    },
-    "ToolRequestUserInputQuestion": {
-      "description": "EXPERIMENTAL. Represents one request_user_input question and its required options.",
-      "type": "object",
-      "required": [
-        "header",
-        "id",
-        "question"
-      ],
-      "properties": {
-        "header": {
-          "type": "string"
-        },
-        "id": {
-          "type": "string"
-        },
-        "isOther": {
-          "default": false,
-          "type": "boolean"
-        },
-        "isSecret": {
-          "default": false,
-          "type": "boolean"
-        },
-        "options": {
-          "type": [
-            "array",
-            "null"
-          ],
-          "items": {
-            "$ref": "#/definitions/ToolRequestUserInputOption"
-          }
-        },
-        "question": {
           "type": "string"
         }
       }

@@ -93,8 +93,8 @@ func (t *Thread) Steer(ctx context.Context, text string) error {
 		return fmt.Errorf("codex.Thread.Steer: no active turn")
 	}
 	_, err := t.client.sendRaw(ctx, "Thread.Steer", "turn/steer", map[string]any{
-		"threadId": t.id,
-		"turnId":   tid,
+		"threadId":       t.id,
+		"expectedTurnId": tid,
 		"input": []map[string]any{
 			{"type": "text", "text": text},
 		},

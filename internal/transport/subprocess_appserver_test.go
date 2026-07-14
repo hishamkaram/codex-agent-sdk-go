@@ -182,6 +182,26 @@ func TestAppServerClassifyExitShutdownRequestedSuppressesExitError(t *testing.T)
 	}
 }
 
+func TestAppServerAcceptsPrecomputedVersionProbe(t *testing.T) {
+	t.Parallel()
+
+	marker := filepath.Join(t.TempDir(), "version-probed")
+	cliPath := filepath.Join(t.TempDir(), "codex")
+	script := fmt.Sprintf("#!/bin/sh\ntouch '%s'\necho 'codex 9.9.9'\n", marker)
+	if err := os.WriteFile(cliPath, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	want := SemVer{Major: 0, Minor: 144, Patch: 1}
+	app := NewAppServer(AppServerConfig{
+		CLIPath:      cliPath,
+		VersionProbe: &CLIVersionProbeResult{Version: want},
+	})
+	app.logCLIVersion(context.Background(), app.cfg.CLIPath)
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("precomputed result was ignored; CLI probe marker stat error = %v", err)
+	}
+}
+
 func writeAppServerHelper(t *testing.T, body string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "codex-helper")

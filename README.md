@@ -34,7 +34,7 @@ Codex's app-server exposes a JSON-RPC 2.0 protocol over stdio — bidirectional,
 | CLI discovery + soft version probe | ✅ |
 | Goroutine leak detection (goleak) | ✅ |
 | Hook observer events (HookStarted / HookCompleted) | ✅ v0.2.0 — via `WithHooks(true)` |
-| Programmatic Go hook callbacks (shim bridge, auto-wired) | ✅ v0.3.0 — `WithHookCallback(h)` writes hooks.json automatically and restores on Close. See `docs/hooks.md`. |
+| Programmatic Go hook callbacks (shim bridge, auto-wired) | LIMITED v0.3.0 — `WithHookCallback(h)` manages hooks.json; Codex app-server 0.129–0.144 discovers but does not run ephemeral untrusted hooks. See `docs/hooks.md`. |
 | Slash-command equivalents (Compact, SetModel, ListMCPServerStatus, Review, etc.) | ✅ v0.4.0 — typed methods plus `GitDiff` / `InitAgentsMD` helpers. See `docs/commands.md`. |
 | Native FFI (CGO) | ❌ deferred |
 
@@ -42,7 +42,7 @@ Codex's app-server exposes a JSON-RPC 2.0 protocol over stdio — bidirectional,
 
 - Go 1.25+
 - Codex CLI installed: `npm install -g @openai/codex` (or your distro's equivalent)
-  - Recommended/tested CLI: `0.130.0` (verified 2026-05-13); older versions run with a soft warning.
+  - Recommended/tested CLI: `0.144.1` (verified 2026-07-12); older versions run with a soft warning and receive version-compatible hook flags.
 - Auth (one of):
   - `OPENAI_API_KEY` environment variable (pay-per-token)
   - `~/.codex/auth.json` (ChatGPT Plus/Pro subscription; run `codex login` once outside the daemon)

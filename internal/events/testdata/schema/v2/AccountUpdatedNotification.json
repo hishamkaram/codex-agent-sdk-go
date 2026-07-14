@@ -50,6 +50,13 @@
           ]
         },
         {
+          "description": "Backend auth supplied as request headers.",
+          "type": "string",
+          "enum": [
+            "headers"
+          ]
+        },
+        {
           "description": "Programmatic Codex auth backed by a registered Agent Identity.",
           "type": "string",
           "enum": [
@@ -61,6 +68,13 @@
           "type": "string",
           "enum": [
             "personalAccessToken"
+          ]
+        },
+        {
+          "description": "Amazon Bedrock bearer token managed by Codex.",
+          "type": "string",
+          "enum": [
+            "bedrockApiKey"
           ]
         }
       ]

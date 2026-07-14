@@ -156,20 +156,30 @@ func TestIntCmd_SetExperimentalFeature_ToggleOnOff(t *testing.T) {
 	t.Logf("toggled %q on/off cleanly", target.Name)
 }
 
-func TestIntCmd_SetExperimentalFeature_UnsupportedFeature(t *testing.T) {
+func TestIntCmd_SetExperimentalFeature_FormerlyUnsupportedFeature(t *testing.T) {
 	safetyNetCodexConfig(t)
 	c := connectReadOnlyClient(t)
-	// shell_tool exists in ListExperimentalFeatures but is NOT
-	// runtime-toggleable. Codex returns a structured RPC error.
-	err := c.SetExperimentalFeature(context.Background(), "shell_tool", false)
-	if err == nil {
-		t.Fatal("expected RPC error for non-toggleable feature")
+	// Codex 0.144.1 accepts shell_tool through the runtime enablement API;
+	// older peers rejected this feature even though they listed it.
+	features, err := c.ListExperimentalFeatures(context.Background())
+	if err != nil {
+		t.Fatalf("ListExperimentalFeatures: %v", err)
 	}
-	if !types.IsRPCError(err) {
-		t.Errorf("expected RPCError, got %T: %v", err, err)
+	var target *types.ExperimentalFeature
+	for i := range features {
+		if features[i].Name == "shell_tool" {
+			target = &features[i]
+			break
+		}
 	}
-	if !strings.Contains(err.Error(), "unsupported feature enablement") {
-		t.Errorf("err = %q, want 'unsupported feature enablement'", err)
+	if target == nil {
+		t.Skip("shell_tool feature not present")
+	}
+	if err := c.SetExperimentalFeature(context.Background(), target.Name, !target.Enabled); err != nil {
+		t.Fatalf("toggle formerly unsupported feature: %v", err)
+	}
+	if err := c.SetExperimentalFeature(context.Background(), target.Name, target.Enabled); err != nil {
+		t.Fatalf("restore formerly unsupported feature: %v", err)
 	}
 }
 

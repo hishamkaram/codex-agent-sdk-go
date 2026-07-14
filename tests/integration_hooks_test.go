@@ -25,6 +25,7 @@ import (
 	"time"
 
 	codex "github.com/hishamkaram/codex-agent-sdk-go"
+	"github.com/hishamkaram/codex-agent-sdk-go/internal/transport"
 	"github.com/hishamkaram/codex-agent-sdk-go/types"
 )
 
@@ -33,6 +34,22 @@ func requireRunTurns(t *testing.T) {
 	t.Helper()
 	if os.Getenv("CODEX_SDK_RUN_TURNS") != "1" {
 		t.Skip("set CODEX_SDK_RUN_TURNS=1 to run real turns (consumes quota)")
+	}
+}
+
+func requireProgrammaticHookCallbacks(t *testing.T) {
+	t.Helper()
+	requireRunTurns(t)
+	cliPath, err := exec.LookPath("codex")
+	if err != nil {
+		t.Skipf("codex CLI not found: %v", err)
+	}
+	version, err := transport.ProbeCLIVersion(cliPath)
+	if err != nil {
+		t.Skipf("cannot determine codex hook compatibility: %v", err)
+	}
+	if version.Major == 0 && version.Minor >= 129 && version.Minor <= 144 {
+		t.Skipf("codex %s app-server discovers generated user hooks but does not honor hook-trust bypass; callback bridge cannot run until upstream trust support is restored", version)
 	}
 }
 
@@ -127,7 +144,8 @@ func connectWithCallback(t *testing.T, handler types.HookHandler, opts ...func(*
 
 	o := types.NewCodexOptions().
 		WithShimPath(shim).
-		WithHookCallback(handler)
+		WithHookCallback(handler).
+		WithHookConfigMode(types.HookConfigModeUserHome)
 	for _, fn := range opts {
 		o = fn(o)
 	}
@@ -171,7 +189,8 @@ func TestLifecycle_HooksJsonBackupRestore(t *testing.T) {
 
 	opts := types.NewCodexOptions().
 		WithShimPath(shim).
-		WithHookCallback(types.DefaultAllowHookHandler)
+		WithHookCallback(types.DefaultAllowHookHandler).
+		WithHookConfigMode(types.HookConfigModeUserHome)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -226,7 +245,8 @@ func TestLifecycle_ConcurrentClientsConflict(t *testing.T) {
 
 	opts := types.NewCodexOptions().
 		WithShimPath(shim).
-		WithHookCallback(types.DefaultAllowHookHandler)
+		WithHookCallback(types.DefaultAllowHookHandler).
+		WithHookConfigMode(types.HookConfigModeUserHome)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -305,7 +325,7 @@ func TestIntegration_HookCallbackBlocksHooksConfigWrites(t *testing.T) {
 // hook_event_name normalizes from PascalCase "PreToolUse" to camelCase
 // HookPreToolUse.
 func TestHookCallback_Allow(t *testing.T) {
-	requireRunTurns(t)
+	requireProgrammaticHookCallbacks(t)
 	var (
 		callbackCount   atomic.Int32
 		sawPreToolUse   atomic.Bool
@@ -377,7 +397,7 @@ func TestHookCallback_Allow(t *testing.T) {
 // PreToolUse to avoid the spurious codex log warning. Re-enable this
 // test once codex supports updatedInput end-to-end.
 func TestHookCallback_AllowRewrite(t *testing.T) {
-	requireRunTurns(t)
+	requireProgrammaticHookCallbacks(t)
 	t.Skip("codex 0.121.0 rejects PreToolUse updatedInput as 'unsupported' (binary string evidence); re-enable when upstream lands the rewrite path")
 	const sentinel = "HOOKED_REWRITE_OK"
 
@@ -441,7 +461,7 @@ func TestHookCallback_AllowRewrite(t *testing.T) {
 // model usually adapts and reports the block) but no CommandExecution
 // reaches a 'completed' status.
 func TestHookCallback_Deny(t *testing.T) {
-	requireRunTurns(t)
+	requireProgrammaticHookCallbacks(t)
 	var denyCount atomic.Int32
 	handler := func(ctx context.Context, in types.HookInput) types.HookDecision {
 		if in.HookEventName == types.HookPreToolUse {
@@ -488,7 +508,7 @@ func TestHookCallback_Deny(t *testing.T) {
 // policy, register an ApprovalDeny callback, and assert the approval
 // callback fires.
 func TestHookCallback_Ask(t *testing.T) {
-	requireRunTurns(t)
+	requireProgrammaticHookCallbacks(t)
 	var (
 		askCount      atomic.Int32
 		approvalFired atomic.Bool
@@ -542,7 +562,7 @@ func TestHookCallback_Ask(t *testing.T) {
 // sleep, this exercises the listener's ctx cancellation path under a
 // real codex invocation.
 func TestHookCallback_Timeout(t *testing.T) {
-	requireRunTurns(t)
+	requireProgrammaticHookCallbacks(t)
 	var slowCalls atomic.Int32
 	handler := func(ctx context.Context, in types.HookInput) types.HookDecision {
 		slowCalls.Add(1)

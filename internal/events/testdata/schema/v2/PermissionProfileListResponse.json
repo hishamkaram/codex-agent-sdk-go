@@ -24,9 +24,14 @@
     "PermissionProfileSummary": {
       "type": "object",
       "required": [
+        "allowed",
         "id"
       ],
       "properties": {
+        "allowed": {
+          "description": "Whether the effective requirements allow selecting this profile.",
+          "type": "boolean"
+        },
         "description": {
           "description": "Optional user-facing description for display in clients.",
           "type": [

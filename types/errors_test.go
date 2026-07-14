@@ -35,6 +35,7 @@ func TestTypedErrors_IsHelpers(t *testing.T) {
 		{"MCPOAuth+IsMCPOAuth", NewMCPServerOAuthRequiredError("notion", "complete OAuth"), IsMCPServerOAuthRequiredError, true},
 		{"AGENTSMD+IsAGENTSMD", NewAGENTSMDExistsError("/repo/AGENTS.md"), IsAGENTSMDExistsError, true},
 		{"FeatureNotEnabled+IsAGENTSMD", NewFeatureNotEnabledError("a", "b", "c"), IsAGENTSMDExistsError, false},
+		{"UnsupportedApprovalPolicy", NewUnsupportedApprovalPolicyError(ApprovalOnFailure, "0.144.1"), IsUnsupportedApprovalPolicyError, true},
 	}
 	for _, tt := range tests {
 		tt := tt

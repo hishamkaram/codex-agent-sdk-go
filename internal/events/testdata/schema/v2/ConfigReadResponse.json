@@ -105,6 +105,7 @@
       "enum": [
         "auto",
         "prompt",
+        "writes",
         "approve"
       ]
     },
@@ -160,6 +161,26 @@
     "AppsDefaultConfig": {
       "type": "object",
       "properties": {
+        "approvals_reviewer": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ApprovalsReviewer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "default_tools_approval_mode": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/AppToolApproval"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "destructive_enabled": {
           "default": true,
           "type": "boolean"
@@ -180,7 +201,6 @@
           "type": "string",
           "enum": [
             "untrusted",
-            "on-failure",
             "on-request",
             "never"
           ]
@@ -816,6 +836,7 @@
       "enum": [
         "disabled",
         "cached",
+        "indexed",
         "live"
       ]
     },

@@ -11,6 +11,13 @@
       "items": {
         "$ref": "#/definitions/ExternalAgentConfigMigrationItem"
       }
+    },
+    "source": {
+      "description": "Source product that produced the migration items. Missing means unspecified.",
+      "type": [
+        "string",
+        "null"
+      ]
     }
   },
   "definitions": {
@@ -131,6 +138,13 @@
             "$ref": "#/definitions/SessionMigration"
           }
         },
+        "skills": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/SkillMigration"
+          }
+        },
         "subagents": {
           "default": [],
           "type": "array",
@@ -176,6 +190,17 @@
             "string",
             "null"
           ]
+        }
+      }
+    },
+    "SkillMigration": {
+      "type": "object",
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
         }
       }
     },

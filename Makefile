@@ -107,7 +107,7 @@ regen-schema:
 	@command -v codex > /dev/null || { echo "codex CLI not found on PATH — install @openai/codex"; exit 1; }
 	@rm -rf internal/events/testdata/schema
 	@mkdir -p internal/events/testdata/schema
-	@codex --enable codex_hooks app-server generate-json-schema \
+	@codex --enable hooks app-server generate-json-schema \
 	    --out internal/events/testdata/schema/
 	@echo "Schema regenerated. Review git diff + update parser.go if new methods appeared."
 	@echo "Then run: make test"
@@ -117,7 +117,7 @@ check-schema-drift:
 	@command -v codex > /dev/null || { echo "codex CLI not found on PATH — install @openai/codex"; exit 1; }
 	@tmp="$$(mktemp -d)"; \
 	trap 'rm -rf "$$tmp"' EXIT; \
-	codex --enable codex_hooks app-server generate-json-schema --out "$$tmp"; \
+	codex --enable hooks app-server generate-json-schema --out "$$tmp"; \
 	CODEX_SCHEMA_DRIFT_DIR="$$tmp" go test ./internal/events -run TestGeneratedSchemaMatchesVendored -count=1
 
 .DEFAULT_GOAL := help

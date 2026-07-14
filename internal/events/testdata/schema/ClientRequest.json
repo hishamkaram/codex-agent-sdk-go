@@ -138,6 +138,30 @@
         "method": {
           "type": "string",
           "enum": [
+            "thread/delete"
+          ],
+          "title": "Thread/deleteRequestMethod"
+        },
+        "params": {
+          "$ref": "#/definitions/ThreadDeleteParams"
+        }
+      },
+      "title": "Thread/deleteRequest"
+    },
+    {
+      "type": "object",
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
             "thread/unsubscribe"
           ],
           "title": "Thread/unsubscribeRequestMethod"
@@ -1637,6 +1661,30 @@
       "type": "object",
       "required": [
         "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "account/rateLimitResetCredit/consume"
+          ],
+          "title": "Account/rateLimitResetCredit/consumeRequestMethod"
+        },
+        "params": {
+          "$ref": "#/definitions/ConsumeAccountRateLimitResetCreditParams"
+        }
+      },
+      "title": "Account/rateLimitResetCredit/consumeRequest"
+    },
+    {
+      "type": "object",
+      "required": [
+        "id",
         "method"
       ],
       "properties": {
@@ -1655,6 +1703,29 @@
         }
       },
       "title": "Account/usage/readRequest"
+    },
+    {
+      "type": "object",
+      "required": [
+        "id",
+        "method"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "account/workspaceMessages/read"
+          ],
+          "title": "Account/workspaceMessages/readRequestMethod"
+        },
+        "params": {
+          "type": "null"
+        }
+      },
+      "title": "Account/workspaceMessages/readRequest"
     },
     {
       "type": "object",
@@ -1880,6 +1951,29 @@
       "type": "object",
       "required": [
         "id",
+        "method"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "externalAgentConfig/import/readHistories"
+          ],
+          "title": "ExternalAgentConfig/import/readHistoriesRequestMethod"
+        },
+        "params": {
+          "type": "null"
+        }
+      },
+      "title": "ExternalAgentConfig/import/readHistoriesRequest"
+    },
+    {
+      "type": "object",
+      "required": [
+        "id",
         "method",
         "params"
       ],
@@ -2035,6 +2129,26 @@
         {
           "type": "object",
           "required": [
+            "text",
+            "type"
+          ],
+          "properties": {
+            "text": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "input_text"
+              ],
+              "title": "InputTextAgentMessageInputContentType"
+            }
+          },
+          "title": "InputTextAgentMessageInputContent"
+        },
+        {
+          "type": "object",
+          "required": [
             "encrypted_content",
             "type"
           ],
@@ -2102,7 +2216,6 @@
           "type": "string",
           "enum": [
             "untrusted",
-            "on-failure",
             "on-request",
             "never"
           ]
@@ -2175,6 +2288,37 @@
           "type": "string"
         }
       }
+    },
+    "CapabilityRootLocation": {
+      "description": "Location used to resolve a selected capability root.",
+      "oneOf": [
+        {
+          "description": "A path owned by an execution environment.",
+          "type": "object",
+          "required": [
+            "environmentId",
+            "path",
+            "type"
+          ],
+          "properties": {
+            "environmentId": {
+              "type": "string"
+            },
+            "path": {
+              "description": "Absolute path for the root in the selected environment.",
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "environment"
+              ],
+              "title": "EnvironmentCapabilityRootLocationType"
+            }
+          },
+          "title": "EnvironmentCapabilityRootLocation"
+        }
+      ]
     },
     "ClientInfo": {
       "type": "object",
@@ -2521,6 +2665,25 @@
         "value": true
       }
     },
+    "ConsumeAccountRateLimitResetCreditParams": {
+      "type": "object",
+      "required": [
+        "idempotencyKey"
+      ],
+      "properties": {
+        "creditId": {
+          "description": "Opaque reset-credit identifier to redeem. When omitted, the backend selects the next available credit.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "idempotencyKey": {
+          "description": "Identifies one logical reset attempt. A UUID is recommended; reuse the same value when retrying that attempt.",
+          "type": "string"
+        }
+      }
+    },
     "ContentItem": {
       "oneOf": [
         {
@@ -2595,37 +2758,258 @@
         }
       ]
     },
-    "DynamicToolSpec": {
-      "type": "object",
-      "required": [
-        "description",
-        "inputSchema",
-        "name"
-      ],
-      "properties": {
-        "deferLoading": {
-          "type": "boolean"
-        },
-        "description": {
-          "type": "string"
-        },
-        "inputSchema": true,
-        "name": {
-          "type": "string"
-        },
-        "namespace": {
-          "type": [
-            "string",
-            "null"
-          ]
+    "ConversationTextRole": {
+      "type": "string",
+      "enum": [
+        "user",
+        "developer",
+        "assistant"
+      ]
+    },
+    "DynamicToolNamespaceTool": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "description",
+            "inputSchema",
+            "name",
+            "type"
+          ],
+          "properties": {
+            "deferLoading": {
+              "type": "boolean"
+            },
+            "description": {
+              "type": "string"
+            },
+            "inputSchema": true,
+            "name": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "function"
+              ],
+              "title": "FunctionDynamicToolNamespaceToolType"
+            }
+          },
+          "title": "FunctionDynamicToolNamespaceTool"
         }
-      }
+      ]
+    },
+    "DynamicToolSpec": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "description",
+            "inputSchema",
+            "name",
+            "type"
+          ],
+          "properties": {
+            "deferLoading": {
+              "type": "boolean"
+            },
+            "description": {
+              "type": "string"
+            },
+            "inputSchema": true,
+            "name": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "function"
+              ],
+              "title": "FunctionDynamicToolSpecType"
+            }
+          },
+          "title": "FunctionDynamicToolSpec"
+        },
+        {
+          "type": "object",
+          "required": [
+            "description",
+            "name",
+            "tools",
+            "type"
+          ],
+          "properties": {
+            "description": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "tools": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/DynamicToolNamespaceTool"
+              }
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "namespace"
+              ],
+              "title": "NamespaceDynamicToolSpecType"
+            }
+          },
+          "title": "NamespaceDynamicToolSpec"
+        }
+      ]
     },
     "WindowsSandboxSetupMode": {
       "type": "string",
       "enum": [
         "elevated",
         "unelevated"
+      ]
+    },
+    "UserInput": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "text",
+            "type"
+          ],
+          "properties": {
+            "text": {
+              "type": "string"
+            },
+            "text_elements": {
+              "description": "UI-defined spans within `text` used to render or persist special elements.",
+              "default": [],
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/TextElement"
+              }
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "text"
+              ],
+              "title": "TextUserInputType"
+            }
+          },
+          "title": "TextUserInput"
+        },
+        {
+          "type": "object",
+          "required": [
+            "type",
+            "url"
+          ],
+          "properties": {
+            "detail": {
+              "default": null,
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ImageDetail"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "image"
+              ],
+              "title": "ImageUserInputType"
+            },
+            "url": {
+              "type": "string"
+            }
+          },
+          "title": "ImageUserInput"
+        },
+        {
+          "type": "object",
+          "required": [
+            "path",
+            "type"
+          ],
+          "properties": {
+            "detail": {
+              "default": null,
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ImageDetail"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "path": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "localImage"
+              ],
+              "title": "LocalImageUserInputType"
+            }
+          },
+          "title": "LocalImageUserInput"
+        },
+        {
+          "type": "object",
+          "required": [
+            "name",
+            "path",
+            "type"
+          ],
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "skill"
+              ],
+              "title": "SkillUserInputType"
+            }
+          },
+          "title": "SkillUserInput"
+        },
+        {
+          "type": "object",
+          "required": [
+            "name",
+            "path",
+            "type"
+          ],
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "mention"
+              ],
+              "title": "MentionUserInputType"
+            }
+          },
+          "title": "MentionUserInput"
+        }
       ]
     },
     "ExperimentalFeatureEnablementSetParams": {
@@ -2685,7 +3069,7 @@
           }
         },
         "includeHome": {
-          "description": "If true, include detection under the user's home (~/.claude, ~/.codex, etc.).",
+          "description": "If true, include detection under the user's home directory.",
           "type": "boolean"
         }
       }
@@ -2701,6 +3085,13 @@
           "items": {
             "$ref": "#/definitions/ExternalAgentConfigMigrationItem"
           }
+        },
+        "source": {
+          "description": "Source product that produced the migration items. Missing means unspecified.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       }
     },
@@ -3099,148 +3490,6 @@
         }
       }
     },
-    "UserInput": {
-      "oneOf": [
-        {
-          "type": "object",
-          "required": [
-            "text",
-            "type"
-          ],
-          "properties": {
-            "text": {
-              "type": "string"
-            },
-            "text_elements": {
-              "description": "UI-defined spans within `text` used to render or persist special elements.",
-              "default": [],
-              "type": "array",
-              "items": {
-                "$ref": "#/definitions/TextElement"
-              }
-            },
-            "type": {
-              "type": "string",
-              "enum": [
-                "text"
-              ],
-              "title": "TextUserInputType"
-            }
-          },
-          "title": "TextUserInput"
-        },
-        {
-          "type": "object",
-          "required": [
-            "type",
-            "url"
-          ],
-          "properties": {
-            "detail": {
-              "default": null,
-              "anyOf": [
-                {
-                  "$ref": "#/definitions/ImageDetail"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "type": {
-              "type": "string",
-              "enum": [
-                "image"
-              ],
-              "title": "ImageUserInputType"
-            },
-            "url": {
-              "type": "string"
-            }
-          },
-          "title": "ImageUserInput"
-        },
-        {
-          "type": "object",
-          "required": [
-            "path",
-            "type"
-          ],
-          "properties": {
-            "detail": {
-              "default": null,
-              "anyOf": [
-                {
-                  "$ref": "#/definitions/ImageDetail"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "path": {
-              "type": "string"
-            },
-            "type": {
-              "type": "string",
-              "enum": [
-                "localImage"
-              ],
-              "title": "LocalImageUserInputType"
-            }
-          },
-          "title": "LocalImageUserInput"
-        },
-        {
-          "type": "object",
-          "required": [
-            "name",
-            "path",
-            "type"
-          ],
-          "properties": {
-            "name": {
-              "type": "string"
-            },
-            "path": {
-              "type": "string"
-            },
-            "type": {
-              "type": "string",
-              "enum": [
-                "skill"
-              ],
-              "title": "SkillUserInputType"
-            }
-          },
-          "title": "SkillUserInput"
-        },
-        {
-          "type": "object",
-          "required": [
-            "name",
-            "path",
-            "type"
-          ],
-          "properties": {
-            "name": {
-              "type": "string"
-            },
-            "path": {
-              "type": "string"
-            },
-            "type": {
-              "type": "string",
-              "enum": [
-                "mention"
-              ],
-              "title": "MentionUserInputType"
-            }
-          },
-          "title": "MentionUserInput"
-        }
-      ]
-    },
     "TurnSteerParams": {
       "type": "object",
       "required": [
@@ -3277,11 +3526,11 @@
         "threadId"
       ],
       "properties": {
-        "summary": {
-          "description": "Override the reasoning summary for this turn and subsequent turns.",
+        "sandboxPolicy": {
+          "description": "Override the sandbox policy for this turn and subsequent turns.",
           "anyOf": [
             {
-              "$ref": "#/definitions/ReasoningSummary"
+              "$ref": "#/definitions/SandboxPolicy"
             },
             {
               "type": "null"
@@ -3316,8 +3565,16 @@
             "null"
           ]
         },
-        "threadId": {
-          "type": "string"
+        "summary": {
+          "description": "Override the reasoning summary for this turn and subsequent turns.",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ReasoningSummary"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "cwd": {
           "description": "Override the working directory for this turn and subsequent turns.",
@@ -3337,16 +3594,8 @@
             }
           ]
         },
-        "sandboxPolicy": {
-          "description": "Override the sandbox policy for this turn and subsequent turns.",
-          "anyOf": [
-            {
-              "$ref": "#/definitions/SandboxPolicy"
-            },
-            {
-              "type": "null"
-            }
-          ]
+        "threadId": {
+          "type": "string"
         },
         "input": {
           "type": "array",
@@ -3356,16 +3605,6 @@
         },
         "model": {
           "description": "Override the model for this turn and subsequent turns.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "outputSchema": {
-          "description": "Optional JSON Schema used to constrain the final assistant message for this turn."
-        },
-        "serviceTier": {
-          "description": "Override the service tier for this turn and subsequent turns.",
           "type": [
             "string",
             "null"
@@ -3381,8 +3620,43 @@
               "type": "null"
             }
           ]
+        },
+        "outputSchema": {
+          "description": "Optional JSON Schema used to constrain the final assistant message for this turn."
+        },
+        "serviceTier": {
+          "description": "Override the service tier for this turn and subsequent turns.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       }
+    },
+    "TurnItemsView": {
+      "oneOf": [
+        {
+          "description": "`items` was not loaded for this turn. The field is intentionally empty.",
+          "type": "string",
+          "enum": [
+            "notLoaded"
+          ]
+        },
+        {
+          "description": "`items` contains only a display summary for this turn.",
+          "type": "string",
+          "enum": [
+            "summary"
+          ]
+        },
+        {
+          "description": "`items` contains every ThreadItem available from persisted app-server history for this turn.",
+          "type": "string",
+          "enum": [
+            "full"
+          ]
+        }
+      ]
     },
     "GetAccountParams": {
       "type": "object",
@@ -3434,6 +3708,10 @@
           "default": false,
           "type": "boolean"
         },
+        "mcpServerOpenaiFormElicitation": {
+          "description": "Allow downstream MCP servers to request OpenAI extended form elicitations.",
+          "type": "boolean"
+        },
         "optOutNotificationMethods": {
           "description": "Exact notification method names that should be suppressed for this connection (for example `thread/started`).",
           "type": [
@@ -3471,6 +3749,21 @@
           "$ref": "#/definitions/ClientInfo"
         }
       }
+    },
+    "InternalChatMessageMetadataPassthrough": {
+      "description": "Internal Responses API passthrough metadata copied into underlying chat messages.\n\nResponses API strongly types this payload. Do not modify it without first getting API approval and making the corresponding Responses API change.",
+      "type": "object",
+      "properties": {
+        "turn_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "LegacyAppPathString": {
+      "type": "string"
     },
     "ListMcpServerStatusParams": {
       "type": "object",
@@ -3602,6 +3895,17 @@
             "type"
           ],
           "properties": {
+            "appBrand": {
+              "default": null,
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/LoginAppBrand"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "codexStreamlinedLogin": {
               "type": "boolean"
             },
@@ -3611,6 +3915,9 @@
                 "chatgpt"
               ],
               "title": "ChatgptLoginAccountParamsType"
+            },
+            "useHostedLoginSuccessPage": {
+              "type": "boolean"
             }
           },
           "title": "ChatgptLoginAccountParams"
@@ -3665,6 +3972,13 @@
           },
           "title": "ChatgptAuthTokensLoginAccountParams"
         }
+      ]
+    },
+    "LoginAppBrand": {
+      "type": "string",
+      "enum": [
+        "codex",
+        "chatgpt"
       ]
     },
     "MarketplaceAddParams": {
@@ -3764,6 +4078,12 @@
           "items": {
             "type": "string"
           }
+        },
+        "threadId": {
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "timeoutSecs": {
           "type": [
@@ -3866,6 +4186,13 @@
             "$ref": "#/definitions/SessionMigration"
           }
         },
+        "skills": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/SkillMigration"
+          }
+        },
         "subagents": {
           "default": [],
           "type": "array",
@@ -3875,30 +4202,20 @@
         }
       }
     },
-    "TurnItemsView": {
-      "oneOf": [
-        {
-          "description": "`items` was not loaded for this turn. The field is intentionally empty.",
-          "type": "string",
-          "enum": [
-            "notLoaded"
-          ]
+    "TurnInterruptParams": {
+      "type": "object",
+      "required": [
+        "threadId",
+        "turnId"
+      ],
+      "properties": {
+        "threadId": {
+          "type": "string"
         },
-        {
-          "description": "`items` contains only a display summary for this turn.",
-          "type": "string",
-          "enum": [
-            "summary"
-          ]
-        },
-        {
-          "description": "`items` contains every ThreadItem available from persisted app-server history for this turn.",
-          "type": "string",
-          "enum": [
-            "full"
-          ]
+        "turnId": {
+          "type": "string"
         }
-      ]
+      }
     },
     "ModeKind": {
       "description": "Initial collaboration mode to use when the TUI starts.",
@@ -3938,6 +4255,31 @@
     },
     "ModelProviderCapabilitiesReadParams": {
       "type": "object"
+    },
+    "MultiAgentMode": {
+      "description": "Controls the effective multi-agent delegation instructions for a turn. `custom` means the configured mode hint defines the policy instead of a built-in policy.",
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "explicitRequestOnly",
+            "proactive"
+          ]
+        },
+        {
+          "type": "object",
+          "required": [
+            "custom"
+          ],
+          "properties": {
+            "custom": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "title": "CustomMultiAgentMode"
+        }
+      ]
     },
     "NetworkAccess": {
       "type": "string",
@@ -4040,7 +4382,8 @@
         "local",
         "vertical",
         "workspace-directory",
-        "shared-with-me"
+        "shared-with-me",
+        "created-by-me-remote"
       ]
     },
     "PluginListParams": {
@@ -4275,21 +4618,6 @@
         }
       }
     },
-    "TurnInterruptParams": {
-      "type": "object",
-      "required": [
-        "threadId",
-        "turnId"
-      ],
-      "properties": {
-        "threadId": {
-          "type": "string"
-        },
-        "turnId": {
-          "type": "string"
-        }
-      }
-    },
     "TurnEnvironmentParams": {
       "type": "object",
       "required": [
@@ -4298,7 +4626,7 @@
       ],
       "properties": {
         "cwd": {
-          "$ref": "#/definitions/AbsolutePathBuf"
+          "$ref": "#/definitions/LegacyAppPathString"
         },
         "environmentId": {
           "type": "string"
@@ -4306,6 +4634,17 @@
       }
     },
     "ThreadUnsubscribeParams": {
+      "type": "object",
+      "required": [
+        "threadId"
+      ],
+      "properties": {
+        "threadId": {
+          "type": "string"
+        }
+      }
+    },
+    "ThreadUnarchiveParams": {
       "type": "object",
       "required": [
         "threadId"
@@ -4338,16 +4677,27 @@
         }
       }
     },
-    "ThreadUnarchiveParams": {
+    "ThreadReadParams": {
       "type": "object",
       "required": [
         "threadId"
       ],
       "properties": {
+        "includeTurns": {
+          "description": "When true, include turns and their items from rollout history.",
+          "type": "boolean"
+        },
         "threadId": {
           "type": "string"
         }
       }
+    },
+    "RealtimeConversationVersion": {
+      "type": "string",
+      "enum": [
+        "v1",
+        "v2"
+      ]
     },
     "RealtimeOutputModality": {
       "type": "string",
@@ -4473,121 +4823,6 @@
         }
       ]
     },
-    "ThreadRollbackParams": {
-      "type": "object",
-      "required": [
-        "numTurns",
-        "threadId"
-      ],
-      "properties": {
-        "numTurns": {
-          "description": "The number of turns to drop from the end of the thread. Must be >= 1.\n\nThis only modifies the thread's history and does not revert local file changes that have been made by the agent. Clients are responsible for reverting these changes.",
-          "type": "integer",
-          "format": "uint32",
-          "minimum": 0.0
-        },
-        "threadId": {
-          "type": "string"
-        }
-      }
-    },
-    "ThreadResumeParams": {
-      "description": "There are three ways to resume a thread: 1. By thread_id: load the thread from disk by thread_id and resume it. 2. By history: instantiate the thread from memory and resume it. 3. By path: load the thread from disk by path and resume it.\n\nFor non-running threads, the precedence is: history > non-empty path > thread_id. If using history or a non-empty path for a non-running thread, the thread_id param will be ignored.\n\nIf thread_id identifies a running thread, app-server rejoins that thread and treats a non-empty path as a consistency check against the active rollout path. Empty string path values are treated as absent.\n\nPrefer using thread_id whenever possible.",
-      "type": "object",
-      "required": [
-        "threadId"
-      ],
-      "properties": {
-        "approvalPolicy": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/AskForApproval"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "approvalsReviewer": {
-          "description": "Override where approval requests are routed for review on this thread and subsequent turns.",
-          "anyOf": [
-            {
-              "$ref": "#/definitions/ApprovalsReviewer"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "baseInstructions": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "config": {
-          "type": [
-            "object",
-            "null"
-          ],
-          "additionalProperties": true
-        },
-        "cwd": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "developerInstructions": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "serviceTier": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "personality": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/Personality"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "threadId": {
-          "type": "string"
-        },
-        "model": {
-          "description": "Configuration overrides for the resumed thread, if any.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "modelProvider": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "sandbox": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/SandboxMode"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        }
-      }
-    },
     "ThreadStartSource": {
       "type": "string",
       "enum": [
@@ -4598,6 +4833,12 @@
     "ThreadStartParams": {
       "type": "object",
       "properties": {
+        "serviceName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "approvalPolicy": {
           "anyOf": [
             {
@@ -4654,15 +4895,10 @@
             }
           ]
         },
-        "threadSource": {
-          "description": "Optional client-supplied analytics source classification for this thread.",
-          "anyOf": [
-            {
-              "$ref": "#/definitions/ThreadSource"
-            },
-            {
-              "type": "null"
-            }
+        "serviceTier": {
+          "type": [
+            "string",
+            "null"
           ]
         },
         "ephemeral": {
@@ -4681,10 +4917,25 @@
             }
           ]
         },
-        "serviceTier": {
-          "type": [
-            "string",
-            "null"
+        "threadSource": {
+          "description": "Optional client-supplied analytics source classification for this thread.",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ThreadSource"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "personality": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Personality"
+            },
+            {
+              "type": "null"
+            }
           ]
         },
         "model": {
@@ -4697,22 +4948,6 @@
           "type": [
             "string",
             "null"
-          ]
-        },
-        "serviceName": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "personality": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/Personality"
-            },
-            {
-              "type": "null"
-            }
           ]
         }
       }
@@ -4730,6 +4965,33 @@
         "subAgentThreadSpawn",
         "subAgentOther",
         "unknown"
+      ]
+    },
+    "RemoteControlDisableParams": {
+      "type": "object",
+      "properties": {
+        "ephemeral": {
+          "type": "boolean"
+        }
+      }
+    },
+    "RemoteControlEnableParams": {
+      "type": "object",
+      "properties": {
+        "ephemeral": {
+          "type": "boolean"
+        }
+      }
+    },
+    "ThreadSource": {
+      "type": "string"
+    },
+    "ThreadSortKey": {
+      "type": "string",
+      "enum": [
+        "created_at",
+        "updated_at",
+        "recency_at"
       ]
     },
     "RequestId": {
@@ -4760,10 +5022,19 @@
               }
             },
             "id": {
-              "writeOnly": true,
               "type": [
                 "string",
                 "null"
+              ]
+            },
+            "internal_chat_message_metadata_passthrough": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/InternalChatMessageMetadataPassthrough"
+                },
+                {
+                  "type": "null"
+                }
               ]
             },
             "phase": {
@@ -4807,6 +5078,22 @@
                 "$ref": "#/definitions/AgentMessageInputContent"
               }
             },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "internal_chat_message_metadata_passthrough": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/InternalChatMessageMetadataPassthrough"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "recipient": {
               "type": "string"
             },
@@ -4841,6 +5128,22 @@
               "type": [
                 "string",
                 "null"
+              ]
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "internal_chat_message_metadata_passthrough": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/InternalChatMessageMetadataPassthrough"
+                },
+                {
+                  "type": "null"
+                }
               ]
             },
             "summary": {
@@ -4879,10 +5182,19 @@
             },
             "id": {
               "description": "Legacy id field retained for compatibility with older payloads.",
-              "writeOnly": true,
               "type": [
                 "string",
                 "null"
+              ]
+            },
+            "internal_chat_message_metadata_passthrough": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/InternalChatMessageMetadataPassthrough"
+                },
+                {
+                  "type": "null"
+                }
               ]
             },
             "status": {
@@ -4914,10 +5226,19 @@
               "type": "string"
             },
             "id": {
-              "writeOnly": true,
               "type": [
                 "string",
                 "null"
+              ]
+            },
+            "internal_chat_message_metadata_passthrough": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/InternalChatMessageMetadataPassthrough"
+                },
+                {
+                  "type": "null"
+                }
               ]
             },
             "name": {
@@ -4958,10 +5279,19 @@
               "type": "string"
             },
             "id": {
-              "writeOnly": true,
               "type": [
                 "string",
                 "null"
+              ]
+            },
+            "internal_chat_message_metadata_passthrough": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/InternalChatMessageMetadataPassthrough"
+                },
+                {
+                  "type": "null"
+                }
               ]
             },
             "status": {
@@ -4991,6 +5321,22 @@
             "call_id": {
               "type": "string"
             },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "internal_chat_message_metadata_passthrough": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/InternalChatMessageMetadataPassthrough"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "output": {
               "$ref": "#/definitions/FunctionCallOutputBody"
             },
@@ -5017,7 +5363,6 @@
               "type": "string"
             },
             "id": {
-              "writeOnly": true,
               "type": [
                 "string",
                 "null"
@@ -5026,8 +5371,24 @@
             "input": {
               "type": "string"
             },
+            "internal_chat_message_metadata_passthrough": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/InternalChatMessageMetadataPassthrough"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "name": {
               "type": "string"
+            },
+            "namespace": {
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "status": {
               "type": [
@@ -5055,6 +5416,22 @@
           "properties": {
             "call_id": {
               "type": "string"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "internal_chat_message_metadata_passthrough": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/InternalChatMessageMetadataPassthrough"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "name": {
               "type": [
@@ -5093,6 +5470,22 @@
             "execution": {
               "type": "string"
             },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "internal_chat_message_metadata_passthrough": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/InternalChatMessageMetadataPassthrough"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "status": {
               "type": "string"
             },
@@ -5127,10 +5520,19 @@
               ]
             },
             "id": {
-              "writeOnly": true,
               "type": [
                 "string",
                 "null"
+              ]
+            },
+            "internal_chat_message_metadata_passthrough": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/InternalChatMessageMetadataPassthrough"
+                },
+                {
+                  "type": "null"
+                }
               ]
             },
             "status": {
@@ -5152,14 +5554,26 @@
         {
           "type": "object",
           "required": [
-            "id",
             "result",
             "status",
             "type"
           ],
           "properties": {
             "id": {
-              "type": "string"
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "internal_chat_message_metadata_passthrough": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/InternalChatMessageMetadataPassthrough"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "result": {
               "type": "string"
@@ -5192,6 +5606,22 @@
           "properties": {
             "encrypted_content": {
               "type": "string"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "internal_chat_message_metadata_passthrough": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/InternalChatMessageMetadataPassthrough"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "type": {
               "type": "string",
@@ -5229,6 +5659,22 @@
               "type": [
                 "string",
                 "null"
+              ]
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "internal_chat_message_metadata_passthrough": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/InternalChatMessageMetadataPassthrough"
+                },
+                {
+                  "type": "null"
+                }
               ]
             },
             "type": {
@@ -5592,6 +6038,28 @@
         }
       ]
     },
+    "SelectedCapabilityRoot": {
+      "description": "A user-selected root that can expose one or more runtime capabilities.",
+      "type": "object",
+      "required": [
+        "id",
+        "location"
+      ],
+      "properties": {
+        "id": {
+          "description": "Stable identifier supplied by the capability selection platform.",
+          "type": "string"
+        },
+        "location": {
+          "description": "Where the selected root can be resolved.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/CapabilityRootLocation"
+            }
+          ]
+        }
+      }
+    },
     "SendAddCreditsNudgeEmailParams": {
       "type": "object",
       "required": [
@@ -5649,6 +6117,17 @@
               "type": "null"
             }
           ]
+        }
+      }
+    },
+    "SkillMigration": {
+      "type": "object",
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
         }
       }
     },
@@ -5778,13 +6257,74 @@
         }
       }
     },
-    "ThreadSource": {
-      "type": "string",
-      "enum": [
-        "user",
-        "subagent",
-        "memory_consolidation"
-      ]
+    "ThreadShellCommandParams": {
+      "type": "object",
+      "required": [
+        "command",
+        "threadId"
+      ],
+      "properties": {
+        "command": {
+          "description": "Shell command string evaluated by the thread's configured shell. Unlike `command/exec`, this intentionally preserves shell syntax such as pipes, redirects, and quoting. This runs unsandboxed with full access rather than inheriting the thread sandbox policy.",
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      }
+    },
+    "ThreadRealtimeAudioChunk": {
+      "description": "EXPERIMENTAL - thread realtime audio chunk.",
+      "type": "object",
+      "required": [
+        "data",
+        "numChannels",
+        "sampleRate"
+      ],
+      "properties": {
+        "data": {
+          "type": "string"
+        },
+        "itemId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "numChannels": {
+          "type": "integer",
+          "format": "uint16",
+          "minimum": 0.0
+        },
+        "sampleRate": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "samplesPerChannel": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0.0
+        }
+      }
+    },
+    "ThreadSetNameParams": {
+      "type": "object",
+      "required": [
+        "name",
+        "threadId"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      }
     },
     "ThreadCompactStartParams": {
       "type": "object",
@@ -5797,12 +6337,58 @@
         }
       }
     },
-    "ThreadSortKey": {
-      "type": "string",
-      "enum": [
-        "created_at",
-        "updated_at"
+    "ThreadRealtimeStartTransport": {
+      "description": "EXPERIMENTAL - transport used by thread realtime.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "websocket"
+              ],
+              "title": "WebsocketThreadRealtimeStartTransportType"
+            }
+          },
+          "title": "WebsocketThreadRealtimeStartTransport"
+        },
+        {
+          "type": "object",
+          "required": [
+            "sdp",
+            "type"
+          ],
+          "properties": {
+            "sdp": {
+              "description": "SDP offer generated by a WebRTC RTCPeerConnection after configuring audio and the realtime events data channel.",
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "webrtc"
+              ],
+              "title": "WebrtcThreadRealtimeStartTransportType"
+            }
+          },
+          "title": "WebrtcThreadRealtimeStartTransport"
+        }
       ]
+    },
+    "ThreadDeleteParams": {
+      "type": "object",
+      "required": [
+        "threadId"
+      ],
+      "properties": {
+        "threadId": {
+          "type": "string"
+        }
+      }
     },
     "ThreadForkParams": {
       "description": "There are two ways to fork a thread: 1. By thread_id: load the thread from disk by thread_id and fork it into a new thread. 2. By path: load the thread from disk by path and fork it into a new thread.\n\nIf using a non-empty path, the thread_id param will be ignored. Empty string path values are treated as absent.\n\nPrefer using thread_id whenever possible.",
@@ -5860,7 +6446,19 @@
         "ephemeral": {
           "type": "boolean"
         },
-        "serviceTier": {
+        "threadSource": {
+          "description": "Optional client-supplied analytics source classification for this forked thread.",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ThreadSource"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "lastTurnId": {
+          "description": "Optional last turn id to fork through, inclusive.\n\nWhen specified, turns after `last_turn_id` are omitted from the fork. The referenced turn cannot be in progress.",
           "type": [
             "string",
             "null"
@@ -5879,6 +6477,9 @@
             "null"
           ]
         },
+        "threadId": {
+          "type": "string"
+        },
         "sandbox": {
           "anyOf": [
             {
@@ -5889,18 +6490,10 @@
             }
           ]
         },
-        "threadId": {
-          "type": "string"
-        },
-        "threadSource": {
-          "description": "Optional client-supplied analytics source classification for this forked thread.",
-          "anyOf": [
-            {
-              "$ref": "#/definitions/ThreadSource"
-            },
-            {
-              "type": "null"
-            }
+        "serviceTier": {
+          "type": [
+            "string",
+            "null"
           ]
         }
       }
@@ -5972,16 +6565,26 @@
         "complete"
       ]
     },
-    "ThreadShellCommandParams": {
+    "ThreadHistoryMode": {
+      "type": "string",
+      "enum": [
+        "legacy",
+        "paginated"
+      ]
+    },
+    "ThreadRollbackParams": {
+      "description": "DEPRECATED: `thread/rollback` will be removed soon.",
       "type": "object",
       "required": [
-        "command",
+        "numTurns",
         "threadId"
       ],
       "properties": {
-        "command": {
-          "description": "Shell command string evaluated by the thread's configured shell. Unlike `command/exec`, this intentionally preserves shell syntax such as pipes, redirects, and quoting. This runs unsandboxed with full access rather than inheriting the thread sandbox policy.",
-          "type": "string"
+        "numTurns": {
+          "description": "The number of turns to drop from the end of the thread. Must be >= 1.\n\nThis only modifies the thread's history and does not revert local file changes that have been made by the agent. Clients are responsible for reverting these changes.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
         },
         "threadId": {
           "type": "string"
@@ -6005,6 +6608,103 @@
         }
       }
     },
+    "ThreadResumeParams": {
+      "description": "There are three ways to resume a thread: 1. By thread_id: load the thread from disk by thread_id and resume it. 2. By history: instantiate the thread from memory and resume it. 3. By path: load the thread from disk by path and resume it.\n\nFor non-running threads, the precedence is: history > non-empty path > thread_id. If using history or a non-empty path for a non-running thread, the thread_id param will be ignored.\n\nIf thread_id identifies a running thread, app-server rejoins that thread and treats a non-empty path as a consistency check against the active rollout path. Empty string path values are treated as absent.\n\nPrefer using thread_id whenever possible.",
+      "type": "object",
+      "required": [
+        "threadId"
+      ],
+      "properties": {
+        "approvalPolicy": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/AskForApproval"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "approvalsReviewer": {
+          "description": "Override where approval requests are routed for review on this thread and subsequent turns.",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ApprovalsReviewer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "baseInstructions": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "config": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": true
+        },
+        "cwd": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "developerInstructions": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "personality": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Personality"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sandbox": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/SandboxMode"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "model": {
+          "description": "Configuration overrides for the resumed thread, if any.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "modelProvider": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "serviceTier": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
     "ThreadListCwdFilter": {
       "anyOf": [
         {
@@ -6021,6 +6721,16 @@
     "ThreadListParams": {
       "type": "object",
       "properties": {
+        "sourceKinds": {
+          "description": "Optional source filter; when set, only sessions from these source kinds are returned. When omitted or empty, defaults to interactive sources.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/definitions/ThreadSourceKind"
+          }
+        },
         "archived": {
           "description": "Optional archived filter; when set to true, only archived threads are returned. If false or null, only non-archived threads are returned.",
           "type": [
@@ -6065,6 +6775,10 @@
             "type": "string"
           }
         },
+        "useStateDbOnly": {
+          "description": "If true, return from the state DB without scanning JSONL rollouts to repair thread metadata. Omitted or false preserves scan-and-repair behavior.",
+          "type": "boolean"
+        },
         "searchTerm": {
           "description": "Optional substring filter for the extracted thread title.",
           "type": [
@@ -6093,20 +6807,6 @@
               "type": "null"
             }
           ]
-        },
-        "sourceKinds": {
-          "description": "Optional source filter; when set, only sessions from these source kinds are returned. When omitted or empty, defaults to interactive sources.",
-          "type": [
-            "array",
-            "null"
-          ],
-          "items": {
-            "$ref": "#/definitions/ThreadSourceKind"
-          }
-        },
-        "useStateDbOnly": {
-          "description": "If true, return from the state DB without scanning JSONL rollouts to repair thread metadata. Omitted or false preserves scan-and-repair behavior.",
-          "type": "boolean"
         }
       }
     },
@@ -6138,47 +6838,41 @@
         "disabled"
       ]
     },
-    "ThreadRealtimeStartTransport": {
-      "description": "EXPERIMENTAL - transport used by thread realtime.",
-      "oneOf": [
-        {
-          "type": "object",
-          "required": [
-            "type"
-          ],
-          "properties": {
-            "type": {
-              "type": "string",
-              "enum": [
-                "websocket"
-              ],
-              "title": "WebsocketThreadRealtimeStartTransportType"
-            }
-          },
-          "title": "WebsocketThreadRealtimeStartTransport"
-        },
-        {
-          "type": "object",
-          "required": [
-            "sdp",
-            "type"
-          ],
-          "properties": {
-            "sdp": {
-              "description": "SDP offer generated by a WebRTC RTCPeerConnection after configuring audio and the realtime events data channel.",
-              "type": "string"
+    "ThreadResumeInitialTurnsPageParams": {
+      "type": "object",
+      "properties": {
+        "itemsView": {
+          "description": "How much item detail to include for each returned turn; defaults to summary.",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TurnItemsView"
             },
-            "type": {
-              "type": "string",
-              "enum": [
-                "webrtc"
-              ],
-              "title": "WebrtcThreadRealtimeStartTransportType"
+            {
+              "type": "null"
             }
-          },
-          "title": "WebrtcThreadRealtimeStartTransport"
+          ]
+        },
+        "limit": {
+          "description": "Optional turn page size.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "sortDirection": {
+          "description": "Optional turn pagination direction; defaults to descending.",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/SortDirection"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
-      ]
+      }
     },
     "ThreadMetadataGitInfoUpdateParams": {
       "type": "object",
@@ -6225,110 +6919,6 @@
         },
         "threadId": {
           "type": "string"
-        }
-      }
-    },
-    "ThreadReadParams": {
-      "type": "object",
-      "required": [
-        "threadId"
-      ],
-      "properties": {
-        "includeTurns": {
-          "description": "When true, include turns and their items from rollout history.",
-          "type": "boolean"
-        },
-        "threadId": {
-          "type": "string"
-        }
-      }
-    },
-    "ThreadSetNameParams": {
-      "type": "object",
-      "required": [
-        "name",
-        "threadId"
-      ],
-      "properties": {
-        "name": {
-          "type": "string"
-        },
-        "threadId": {
-          "type": "string"
-        }
-      }
-    },
-    "ThreadResumeInitialTurnsPageParams": {
-      "type": "object",
-      "properties": {
-        "itemsView": {
-          "description": "How much item detail to include for each returned turn; defaults to summary.",
-          "anyOf": [
-            {
-              "$ref": "#/definitions/TurnItemsView"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "limit": {
-          "description": "Optional turn page size.",
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "uint32",
-          "minimum": 0.0
-        },
-        "sortDirection": {
-          "description": "Optional turn pagination direction; defaults to descending.",
-          "anyOf": [
-            {
-              "$ref": "#/definitions/SortDirection"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        }
-      }
-    },
-    "ThreadRealtimeAudioChunk": {
-      "description": "EXPERIMENTAL - thread realtime audio chunk.",
-      "type": "object",
-      "required": [
-        "data",
-        "numChannels",
-        "sampleRate"
-      ],
-      "properties": {
-        "data": {
-          "type": "string"
-        },
-        "itemId": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "numChannels": {
-          "type": "integer",
-          "format": "uint16",
-          "minimum": 0.0
-        },
-        "sampleRate": {
-          "type": "integer",
-          "format": "uint32",
-          "minimum": 0.0
-        },
-        "samplesPerChannel": {
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "uint32",
-          "minimum": 0.0
         }
       }
     }

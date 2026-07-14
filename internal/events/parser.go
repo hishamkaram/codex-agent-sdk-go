@@ -35,6 +35,11 @@ var eventParsers = map[string]func(json.RawMessage) (types.ThreadEvent, error){
 			return &types.ThreadClosed{ThreadID: id}
 		})
 	},
+	"thread/deleted": func(params json.RawMessage) (types.ThreadEvent, error) {
+		return parseSimpleThreadEvent(params, func(id string) types.ThreadEvent {
+			return &types.ThreadDeleted{ThreadID: id}
+		})
+	},
 	"thread/name/updated":       parseThreadNameUpdated,
 	"thread/status/changed":     parseThreadStatusChanged,
 	"thread/settings/updated":   parseThreadSettingsUpdated,
@@ -140,30 +145,32 @@ var eventParsers = map[string]func(json.RawMessage) (types.ThreadEvent, error){
 	"mcpServer/oauthLogin/completed":  parseMCPServerOAuthLoginCompleted,
 
 	// --- Account + model ---
-	"account/login/completed":    parseAccountLoginCompleted,
-	"account/rateLimits/updated": parseAccountRateLimitsUpdated,
-	"account/updated":            parseAccountUpdated,
-	"model/rerouted":             parseModelRerouted,
-	"model/verification":         parseModelVerification,
+	"account/login/completed":       parseAccountLoginCompleted,
+	"account/rateLimits/updated":    parseAccountRateLimitsUpdated,
+	"account/updated":               parseAccountUpdated,
+	"model/rerouted":                parseModelRerouted,
+	"model/safetyBuffering/updated": parseModelSafetyBufferingUpdated,
+	"model/verification":            parseModelVerification,
 
 	// --- System / filesystem / apps ---
-	"command/exec/outputDelta":     parseCommandExecOutputDelta,
-	"process/outputDelta":          parseProcessOutputDelta,
-	"process/exited":               parseProcessExited,
-	"remoteControl/status/changed": parseRemoteControlStatusChanged,
-	"configWarning":                parseConfigWarning,
-	"warning":                      parseWarning,
-	"guardianWarning":              parseGuardianWarning,
-	"deprecationNotice":            parseDeprecationNotice,
-	"fs/changed":                   parseFsChanged,
-	"app/list/updated":             parseAppListUpdated,
-	"serverRequest/resolved":       parseServerRequestResolved,
+	"command/exec/outputDelta":            parseCommandExecOutputDelta,
+	"process/outputDelta":                 parseProcessOutputDelta,
+	"process/exited":                      parseProcessExited,
+	"remoteControl/status/changed":        parseRemoteControlStatusChanged,
+	"configWarning":                       parseConfigWarning,
+	"warning":                             parseWarning,
+	"guardianWarning":                     parseGuardianWarning,
+	"deprecationNotice":                   parseDeprecationNotice,
+	"fs/changed":                          parseFsChanged,
+	"app/list/updated":                    parseAppListUpdated,
+	"serverRequest/resolved":              parseServerRequestResolved,
+	"externalAgentConfig/import/progress": parseExternalAgentConfigImportProgress,
 
 	// --- Windows platform ---
 	"windows/worldWritableWarning":  parseWindowsWorldWritableWarning,
 	"windowsSandbox/setupCompleted": parseWindowsSandboxSetupCompleted,
 
-	// --- Hooks (v0.2.0 observer; require --enable codex_hooks) ---
+	// --- Hooks (v0.2.0 observer; require --enable hooks) ---
 	"hook/started": func(params json.RawMessage) (types.ThreadEvent, error) {
 		return parseHookEvent(params, true)
 	},

@@ -60,7 +60,7 @@ func TestEncodeApprovalPolicy_NonGranularPoliciesRemainStrings(t *testing.T) {
 
 	tests := []types.ApprovalPolicy{
 		types.ApprovalUntrusted,
-		types.ApprovalOnFailure,
+		types.ApprovalPolicy("on-failure"),
 		types.ApprovalOnRequest,
 		types.ApprovalNever,
 	}
@@ -360,6 +360,7 @@ func TestClientCommands_HookConfigKeyDetection(t *testing.T) {
 		{"hooks.PreToolUse", true},
 		{"hooks.pre_tool_use.0", true},
 		{"model", false},
+		{"features.hooks", false},
 		{"features.codex_hooks", false},
 		{"hooks_json", false},
 	}

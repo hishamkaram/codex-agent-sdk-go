@@ -31,6 +31,15 @@ type ThreadClosed struct {
 func (*ThreadClosed) isThreadEvent()      {}
 func (*ThreadClosed) EventMethod() string { return "thread/closed" }
 
+// ThreadDeleted is emitted after a thread is permanently deleted.
+// Wire method: "thread/deleted".
+type ThreadDeleted struct {
+	ThreadID string `json:"thread_id"`
+}
+
+func (*ThreadDeleted) isThreadEvent()      {}
+func (*ThreadDeleted) EventMethod() string { return "thread/deleted" }
+
 // ThreadNameUpdated is emitted when the thread's name changes. ThreadName
 // is nil when the name was cleared.
 // Wire method: "thread/name/updated".

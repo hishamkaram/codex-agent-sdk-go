@@ -26,10 +26,6 @@
     }
   },
   "definitions": {
-    "AbsolutePathBuf": {
-      "description": "A path that is guaranteed to be absolute and normalized (though it is not guaranteed to be canonicalized or exist on the filesystem).\n\nIMPORTANT: When deserializing an `AbsolutePathBuf`, a base path must be set using [AbsolutePathBufGuard::new]. If no base path is set, the deserialization will fail unless the path being deserialized is already absolute.",
-      "type": "string"
-    },
     "AdditionalFileSystemPermissions": {
       "type": "object",
       "properties": {
@@ -57,7 +53,7 @@
             "null"
           ],
           "items": {
-            "$ref": "#/definitions/AbsolutePathBuf"
+            "$ref": "#/definitions/LegacyAppPathString"
           }
         },
         "write": {
@@ -67,7 +63,7 @@
             "null"
           ],
           "items": {
-            "$ref": "#/definitions/AbsolutePathBuf"
+            "$ref": "#/definitions/LegacyAppPathString"
           }
         }
       }
@@ -101,7 +97,7 @@
           ],
           "properties": {
             "path": {
-              "$ref": "#/definitions/AbsolutePathBuf"
+              "$ref": "#/definitions/LegacyAppPathString"
             },
             "type": {
               "type": "string",
@@ -303,6 +299,9 @@
           ]
         }
       }
+    },
+    "LegacyAppPathString": {
+      "type": "string"
     },
     "PermissionGrantScope": {
       "type": "string",

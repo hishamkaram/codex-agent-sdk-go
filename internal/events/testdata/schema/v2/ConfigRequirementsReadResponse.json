@@ -31,7 +31,6 @@
           "type": "string",
           "enum": [
             "untrusted",
-            "on-failure",
             "on-request",
             "never"
           ]
@@ -101,6 +100,12 @@
             "null"
           ]
         },
+        "allowRemoteControl": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
         "allowedApprovalPolicies": {
           "type": [
             "array",
@@ -110,14 +115,15 @@
             "$ref": "#/definitions/AskForApproval"
           }
         },
-        "featureRequirements": {
-          "type": [
-            "object",
-            "null"
-          ],
-          "additionalProperties": {
-            "type": "boolean"
-          }
+        "models": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ModelsRequirements"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "allowedPermissionProfiles": {
           "type": [
@@ -180,6 +186,15 @@
               "type": "null"
             }
           ]
+        },
+        "featureRequirements": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": {
+            "type": "boolean"
+          }
         }
       }
     },
@@ -372,6 +387,21 @@
         }
       }
     },
+    "ModelsRequirements": {
+      "type": "object",
+      "properties": {
+        "newThread": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/NewThreadModelDefaults"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
     "NetworkDomainPermission": {
       "type": "string",
       "enum": [
@@ -494,6 +524,38 @@
         "deny"
       ]
     },
+    "NewThreadModelDefaults": {
+      "type": "object",
+      "properties": {
+        "model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "modelReasoningEffort": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ReasoningEffort"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "serviceTier": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "ReasoningEffort": {
+      "description": "A non-empty reasoning effort value advertised by the model.",
+      "type": "string",
+      "minLength": 1
+    },
     "ResidencyRequirement": {
       "type": "string",
       "enum": [
@@ -513,6 +575,7 @@
       "enum": [
         "disabled",
         "cached",
+        "indexed",
         "live"
       ]
     },

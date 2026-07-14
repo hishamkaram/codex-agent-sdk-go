@@ -94,6 +94,26 @@
         "method": {
           "type": "string",
           "enum": [
+            "thread/deleted"
+          ],
+          "title": "Thread/deletedNotificationMethod"
+        },
+        "params": {
+          "$ref": "#/definitions/ThreadDeletedNotification"
+        }
+      },
+      "title": "Thread/deletedNotification"
+    },
+    {
+      "type": "object",
+      "required": [
+        "method",
+        "params"
+      ],
+      "properties": {
+        "method": {
+          "type": "string",
+          "enum": [
             "thread/unarchived"
           ],
           "title": "Thread/unarchivedNotificationMethod"
@@ -799,6 +819,26 @@
         "method": {
           "type": "string",
           "enum": [
+            "externalAgentConfig/import/progress"
+          ],
+          "title": "ExternalAgentConfig/import/progressNotificationMethod"
+        },
+        "params": {
+          "$ref": "#/definitions/ExternalAgentConfigImportProgressNotification"
+        }
+      },
+      "title": "ExternalAgentConfig/import/progressNotification"
+    },
+    {
+      "type": "object",
+      "required": [
+        "method",
+        "params"
+      ],
+      "properties": {
+        "method": {
+          "type": "string",
+          "enum": [
             "externalAgentConfig/import/completed"
           ],
           "title": "ExternalAgentConfig/import/completedNotificationMethod"
@@ -969,6 +1009,26 @@
         }
       },
       "title": "Turn/moderationMetadataNotification"
+    },
+    {
+      "type": "object",
+      "required": [
+        "method",
+        "params"
+      ],
+      "properties": {
+        "method": {
+          "type": "string",
+          "enum": [
+            "model/safetyBuffering/updated"
+          ],
+          "title": "Model/safetyBuffering/updatedNotificationMethod"
+        },
+        "params": {
+          "$ref": "#/definitions/ModelSafetyBufferingUpdatedNotification"
+        }
+      },
+      "title": "Model/safetyBuffering/updatedNotification"
     },
     {
       "type": "object",
@@ -1424,7 +1484,7 @@
             "null"
           ],
           "items": {
-            "$ref": "#/definitions/AbsolutePathBuf"
+            "$ref": "#/definitions/LegacyAppPathString"
           }
         },
         "write": {
@@ -1434,7 +1494,7 @@
             "null"
           ],
           "items": {
-            "$ref": "#/definitions/AbsolutePathBuf"
+            "$ref": "#/definitions/LegacyAppPathString"
           }
         }
       }
@@ -1557,6 +1617,24 @@
             "string",
             "null"
           ]
+        },
+        "iconAssets": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "iconDarkAssets": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": {
+            "type": "string"
+          }
         },
         "id": {
           "type": "string"
@@ -1763,7 +1841,6 @@
           "type": "string",
           "enum": [
             "untrusted",
-            "on-failure",
             "on-request",
             "never"
           ]
@@ -1832,6 +1909,13 @@
           ]
         },
         {
+          "description": "Backend auth supplied as request headers.",
+          "type": "string",
+          "enum": [
+            "headers"
+          ]
+        },
+        {
           "description": "Programmatic Codex auth backed by a registered Agent Identity.",
           "type": "string",
           "enum": [
@@ -1843,6 +1927,13 @@
           "type": "string",
           "enum": [
             "personalAccessToken"
+          ]
+        },
+        {
+          "description": "Amazon Bedrock bearer token managed by Codex.",
+          "type": "string",
+          "enum": [
+            "bedrockApiKey"
           ]
         }
       ]
@@ -1880,6 +1971,7 @@
           "type": "string",
           "enum": [
             "contextWindowExceeded",
+            "sessionBudgetExceeded",
             "usageLimitExceeded",
             "serverOverloaded",
             "cyberPolicy",
@@ -2444,7 +2536,145 @@
       }
     },
     "ExternalAgentConfigImportCompletedNotification": {
-      "type": "object"
+      "type": "object",
+      "required": [
+        "importId",
+        "itemTypeResults"
+      ],
+      "properties": {
+        "importId": {
+          "type": "string"
+        },
+        "itemTypeResults": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ExternalAgentConfigImportTypeResult"
+          }
+        }
+      }
+    },
+    "ExternalAgentConfigImportItemTypeFailure": {
+      "type": "object",
+      "required": [
+        "failureStage",
+        "itemType",
+        "message"
+      ],
+      "properties": {
+        "cwd": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "errorType": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "failureStage": {
+          "type": "string"
+        },
+        "itemType": {
+          "$ref": "#/definitions/ExternalAgentConfigMigrationItemType"
+        },
+        "message": {
+          "type": "string"
+        },
+        "source": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "ExternalAgentConfigImportItemTypeSuccess": {
+      "type": "object",
+      "required": [
+        "itemType"
+      ],
+      "properties": {
+        "cwd": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "itemType": {
+          "$ref": "#/definitions/ExternalAgentConfigMigrationItemType"
+        },
+        "source": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "target": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "ExternalAgentConfigImportProgressNotification": {
+      "type": "object",
+      "required": [
+        "importId",
+        "itemTypeResults"
+      ],
+      "properties": {
+        "importId": {
+          "type": "string"
+        },
+        "itemTypeResults": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ExternalAgentConfigImportTypeResult"
+          }
+        }
+      }
+    },
+    "ExternalAgentConfigImportTypeResult": {
+      "type": "object",
+      "required": [
+        "failures",
+        "itemType",
+        "successes"
+      ],
+      "properties": {
+        "failures": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ExternalAgentConfigImportItemTypeFailure"
+          }
+        },
+        "itemType": {
+          "$ref": "#/definitions/ExternalAgentConfigMigrationItemType"
+        },
+        "successes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ExternalAgentConfigImportItemTypeSuccess"
+          }
+        }
+      }
+    },
+    "ExternalAgentConfigMigrationItemType": {
+      "type": "string",
+      "enum": [
+        "AGENTS_MD",
+        "CONFIG",
+        "SKILLS",
+        "PLUGINS",
+        "MCP_SERVER_CONFIG",
+        "SUBAGENTS",
+        "HOOKS",
+        "COMMANDS",
+        "SESSIONS"
+      ]
     },
     "FileChangeOutputDeltaNotification": {
       "description": "Deprecated legacy notification for `apply_patch` textual output.\n\nThe server no longer emits this notification.",
@@ -2514,7 +2744,7 @@
           ],
           "properties": {
             "path": {
-              "$ref": "#/definitions/AbsolutePathBuf"
+              "$ref": "#/definitions/LegacyAppPathString"
             },
             "type": {
               "type": "string",
@@ -3503,6 +3733,9 @@
         }
       }
     },
+    "LegacyAppPathString": {
+      "type": "string"
+    },
     "McpServerOauthLoginCompletedNotification": {
       "type": "object",
       "required": [
@@ -3521,8 +3754,20 @@
         },
         "success": {
           "type": "boolean"
+        },
+        "threadId": {
+          "type": [
+            "string",
+            "null"
+          ]
         }
       }
+    },
+    "McpServerStartupFailureReason": {
+      "type": "string",
+      "enum": [
+        "reauthenticationRequired"
+      ]
     },
     "McpServerStartupState": {
       "type": "string",
@@ -3546,11 +3791,68 @@
             "null"
           ]
         },
+        "failureReason": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/McpServerStartupFailureReason"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "name": {
           "type": "string"
         },
         "status": {
           "$ref": "#/definitions/McpServerStartupState"
+        },
+        "threadId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "McpToolCallAppContext": {
+      "type": "object",
+      "required": [
+        "connectorId"
+      ],
+      "properties": {
+        "actionName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "appName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "connectorId": {
+          "type": "string"
+        },
+        "linkId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "resourceUri": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "templateId": {
+          "type": [
+            "string",
+            "null"
+          ]
         }
       }
     },
@@ -3718,6 +4020,49 @@
         }
       }
     },
+    "ModelSafetyBufferingUpdatedNotification": {
+      "type": "object",
+      "required": [
+        "model",
+        "reasons",
+        "showBufferingUi",
+        "threadId",
+        "turnId",
+        "useCases"
+      ],
+      "properties": {
+        "fasterModel": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "model": {
+          "type": "string"
+        },
+        "reasons": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "showBufferingUi": {
+          "type": "boolean"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        },
+        "useCases": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
     "ModelVerification": {
       "type": "string",
       "enum": [
@@ -3745,6 +4090,31 @@
           }
         }
       }
+    },
+    "MultiAgentMode": {
+      "description": "Controls the effective multi-agent delegation instructions for a turn. `custom` means the configured mode hint defines the policy instead of a built-in policy.",
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "explicitRequestOnly",
+            "proactive"
+          ]
+        },
+        {
+          "type": "object",
+          "required": [
+            "custom"
+          ],
+          "properties": {
+            "custom": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "title": "CustomMultiAgentMode"
+        }
+      ]
     },
     "NetworkAccess": {
       "type": "string",
@@ -4483,6 +4853,14 @@
         }
       }
     },
+    "SubAgentActivityKind": {
+      "type": "string",
+      "enum": [
+        "started",
+        "interacted",
+        "interrupted"
+      ]
+    },
     "SubAgentSource": {
       "oneOf": [
         {
@@ -4697,6 +5075,11 @@
           "description": "Whether the thread is ephemeral and should not be materialized on disk.",
           "type": "boolean"
         },
+        "updatedAt": {
+          "description": "Unix timestamp (in seconds) when the thread was last updated.",
+          "type": "integer",
+          "format": "int64"
+        },
         "forkedFromId": {
           "description": "Source thread id when this thread was created by forking another thread.",
           "type": [
@@ -4715,7 +5098,15 @@
             }
           ]
         },
+        "turns": {
+          "description": "Only populated on `thread/resume`, `thread/rollback`, `thread/fork`, and `thread/read` (when `includeTurns` is true) responses. For all other responses and notifications returning a Thread, the turns field will be an empty list.",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Turn"
+          }
+        },
         "id": {
+          "description": "Identifier for this thread. Codex-generated thread IDs are UUIDv7.",
           "type": "string"
         },
         "modelProvider": {
@@ -4747,6 +5138,14 @@
           "description": "Usually the first user message in the thread, if available.",
           "type": "string"
         },
+        "recencyAt": {
+          "description": "Unix timestamp (in seconds) used for thread recency ordering.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int64"
+        },
         "sessionId": {
           "description": "Session id shared by threads that belong to the same session tree.",
           "type": "string"
@@ -4777,18 +5176,6 @@
               "type": "null"
             }
           ]
-        },
-        "turns": {
-          "description": "Only populated on `thread/resume`, `thread/rollback`, `thread/fork`, and `thread/read` (when `includeTurns` is true) responses. For all other responses and notifications returning a Thread, the turns field will be an empty list.",
-          "type": "array",
-          "items": {
-            "$ref": "#/definitions/Turn"
-          }
-        },
-        "updatedAt": {
-          "description": "Unix timestamp (in seconds) when the thread was last updated.",
-          "type": "integer",
-          "format": "int64"
         }
       }
     },
@@ -4820,6 +5207,21 @@
           "type": "string"
         }
       }
+    },
+    "ThreadDeletedNotification": {
+      "type": "object",
+      "required": [
+        "threadId"
+      ],
+      "properties": {
+        "threadId": {
+          "type": "string"
+        }
+      }
+    },
+    "ThreadExtra": {
+      "description": "Extra app-server data for a thread.",
+      "type": "object"
     },
     "ThreadGoal": {
       "type": "object",
@@ -4909,6 +5311,13 @@
           ]
         }
       }
+    },
+    "ThreadHistoryMode": {
+      "type": "string",
+      "enum": [
+        "legacy",
+        "paginated"
+      ]
     },
     "ThreadId": {
       "type": "string"
@@ -5113,7 +5522,7 @@
               "description": "The command's working directory.",
               "allOf": [
                 {
-                  "$ref": "#/definitions/AbsolutePathBuf"
+                  "$ref": "#/definitions/LegacyAppPathString"
                 }
               ]
             },
@@ -5206,6 +5615,16 @@
             "type"
           ],
           "properties": {
+            "appContext": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/McpToolCallAppContext"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "arguments": true,
             "durationMs": {
               "description": "The duration of the MCP tool call in milliseconds.",
@@ -5229,6 +5648,7 @@
               "type": "string"
             },
             "mcpAppResourceUri": {
+              "description": "Deprecated: use `appContext.resourceUri` instead.",
               "type": [
                 "string",
                 "null"
@@ -5416,6 +5836,38 @@
         {
           "type": "object",
           "required": [
+            "agentPath",
+            "agentThreadId",
+            "id",
+            "kind",
+            "type"
+          ],
+          "properties": {
+            "agentPath": {
+              "type": "string"
+            },
+            "agentThreadId": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "$ref": "#/definitions/SubAgentActivityKind"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "subAgentActivity"
+              ],
+              "title": "SubAgentActivityThreadItemType"
+            }
+          },
+          "title": "SubAgentActivityThreadItem"
+        },
+        {
+          "type": "object",
+          "required": [
             "id",
             "query",
             "type"
@@ -5459,7 +5911,7 @@
               "type": "string"
             },
             "path": {
-              "$ref": "#/definitions/AbsolutePathBuf"
+              "$ref": "#/definitions/LegacyAppPathString"
             },
             "type": {
               "type": "string",
@@ -5470,6 +5922,32 @@
             }
           },
           "title": "ImageViewThreadItem"
+        },
+        {
+          "type": "object",
+          "required": [
+            "durationMs",
+            "id",
+            "type"
+          ],
+          "properties": {
+            "durationMs": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0.0
+            },
+            "id": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "sleep"
+              ],
+              "title": "SleepThreadItemType"
+            }
+          },
+          "title": "SleepThreadItem"
         },
         {
           "type": "object",
@@ -5834,6 +6312,16 @@
         "modelProvider": {
           "type": "string"
         },
+        "summary": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ReasoningSummary"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "personality": {
           "anyOf": [
             {
@@ -5851,16 +6339,6 @@
           "type": [
             "string",
             "null"
-          ]
-        },
-        "summary": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/ReasoningSummary"
-            },
-            {
-              "type": "null"
-            }
           ]
         }
       }
@@ -5881,12 +6359,7 @@
       }
     },
     "ThreadSource": {
-      "type": "string",
-      "enum": [
-        "user",
-        "subagent",
-        "memory_consolidation"
-      ]
+      "type": "string"
     },
     "ThreadStartedNotification": {
       "type": "object",
@@ -6109,6 +6582,7 @@
           ]
         },
         "id": {
+          "description": "Identifier for this turn. Codex-generated turn IDs are UUIDv7.",
           "type": "string"
         },
         "items": {

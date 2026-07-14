@@ -439,6 +439,9 @@ func (c *Client) SetApprovalPolicy(ctx context.Context, policy types.ApprovalPol
 	if policy == "" {
 		return fmt.Errorf("codex.Client.SetApprovalPolicy: policy must not be empty")
 	}
+	if err := c.validateApprovalPolicy(policy); err != nil {
+		return fmt.Errorf("codex.Client.SetApprovalPolicy: %w", err)
+	}
 	_, err := c.WriteConfigValue(ctx, "approval_policy", encodeApprovalPolicy(policy), types.MergeReplace)
 	return err
 }

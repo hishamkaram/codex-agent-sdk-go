@@ -14,13 +14,21 @@ import (
 // RecommendedCLIVersion is the minimum tested codex CLI version. The SDK
 // does NOT reject older versions — the check is soft (probe + warn) per the
 // v0.1.0 design. Callers can inspect the version via ProbeCLIVersion.
-const RecommendedCLIVersion = "0.130.0"
+const RecommendedCLIVersion = "0.144.1"
 
 // SemVer is a minimal semantic version struct.
 type SemVer struct {
 	Major int
 	Minor int
 	Patch int
+}
+
+// CLIVersionProbeResult caches one CLI version probe so higher layers can use
+// the same compatibility decision and transport log without spawning a second
+// `codex --version` process.
+type CLIVersionProbeResult struct {
+	Version SemVer
+	Err     error
 }
 
 // String returns "major.minor.patch".

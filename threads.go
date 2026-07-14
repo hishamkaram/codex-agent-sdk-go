@@ -414,6 +414,9 @@ func (c *Client) StartThread(ctx context.Context, opts *types.ThreadOptions) (*T
 	if !c.connected.Load() {
 		return nil, fmt.Errorf("codex.Client.StartThread: %w", types.ErrClientNotConnected)
 	}
+	if err := c.validateThreadApprovalPolicy(opts); err != nil {
+		return nil, fmt.Errorf("codex.Client.StartThread: %w", err)
+	}
 	params := buildThreadStartParams(c.opts, opts)
 	resp, err := c.demux.Send(ctx, "thread/start", params)
 	if err != nil {
@@ -500,6 +503,9 @@ func (c *Client) ForkThread(ctx context.Context, sourceThreadID string, opts *ty
 	}
 	if sourceThreadID == "" {
 		return nil, nil, fmt.Errorf("codex.Client.ForkThread: sourceThreadID must not be empty")
+	}
+	if err := c.validateThreadApprovalPolicy(opts); err != nil {
+		return nil, nil, fmt.Errorf("codex.Client.ForkThread: %w", err)
 	}
 	params := buildThreadStartParams(c.opts, opts)
 	params["sourceThreadId"] = sourceThreadID
