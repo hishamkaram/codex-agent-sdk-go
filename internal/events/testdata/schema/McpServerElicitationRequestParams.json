@@ -29,6 +29,27 @@
     {
       "type": "object",
       "required": [
+        "message",
+        "mode",
+        "requestedSchema"
+      ],
+      "properties": {
+        "_meta": true,
+        "message": {
+          "type": "string"
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "openai/form"
+          ]
+        },
+        "requestedSchema": true
+      }
+    },
+    {
+      "type": "object",
+      "required": [
         "elicitationId",
         "message",
         "mode",

@@ -2,10 +2,12 @@ package codex
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
 
+	"github.com/hishamkaram/codex-agent-sdk-go/internal/jsonrpc"
 	"github.com/hishamkaram/codex-agent-sdk-go/types"
 )
 
@@ -75,6 +77,36 @@ func TestThread_Steer_NoActiveTurn(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "no active turn") {
 		t.Errorf("err = %q, want 'no active turn'", err)
+	}
+}
+
+func TestThread_SteerSendsExpectedTurnID(t *testing.T) {
+	t.Parallel()
+
+	requests := make(chan jsonrpc.Request, 1)
+	client, _ := setupMockClient(t, types.NewCodexOptions(), func(req jsonrpc.Request) jsonrpc.Response {
+		if req.Method == "turn/steer" {
+			requests <- req
+			return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{}`)}
+		}
+		return jsonrpc.Response{ID: req.ID, Error: &jsonrpc.RPCError{Code: -32601, Message: "unexpected method"}}
+	})
+	thread := newThread(client, "thread-1")
+	thread.activeTurnID.Store("turn-1")
+
+	if err := thread.Steer(context.Background(), "include tests"); err != nil {
+		t.Fatalf("Steer: %v", err)
+	}
+
+	var params map[string]any
+	if err := json.Unmarshal((<-requests).Params, &params); err != nil {
+		t.Fatalf("unmarshal params: %v", err)
+	}
+	if params["expectedTurnId"] != "turn-1" {
+		t.Fatalf("expectedTurnId = %#v, want turn-1", params["expectedTurnId"])
+	}
+	if _, legacy := params["turnId"]; legacy {
+		t.Fatal("legacy turnId must not be sent")
 	}
 }
 

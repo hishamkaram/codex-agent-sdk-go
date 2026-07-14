@@ -67,9 +67,14 @@ type CodexOptions struct {
 	// Setting it causes Connect to generate hooks.json in an isolated
 	// CODEX_HOME by default so codex routes hooks through the SDK shim.
 	// User-home mutation is available only via HookConfigModeUserHome. Nil
-	// means no bridge is set up — the codex_hooks feature alone only
+	// means no bridge is set up — the hooks feature alone only
 	// delivers HookStarted/HookCompleted observer events. See docs/hooks.md.
 	HookCallback HookHandler
+
+	// HooksEnabled records a WithHooks request. Connect resolves the feature
+	// name against the installed CLI because older peers use codex_hooks while
+	// current peers use hooks. Never serialized.
+	HooksEnabled bool `json:"-"`
 
 	// ShimPath overrides auto-discovery of the codex-sdk-hook-shim binary.
 	// When empty, the SDK searches PATH, $GOPATH/bin, $HOME/go/bin, and
@@ -96,7 +101,7 @@ type CodexOptions struct {
 	// behavior.
 	//
 	// Methods that require this flag (verified live against codex
-	// 0.130.0):
+	// 0.144.1):
 	//   - thread/backgroundTerminals/clean
 	//
 	// Calling such methods without this option set returns a
@@ -232,7 +237,7 @@ func (o *CodexOptions) WithFeatureEnabled(names ...string) *CodexOptions {
 	return o
 }
 
-// WithHooks is the convenience shortcut for enabling the codex_hooks
+// WithHooks is the convenience shortcut for enabling the hooks
 // feature flag. When true, codex emits hook/started and hook/completed
 // notifications for registered hook handlers (see
 // ~/.codex/hooks.json or a CODEX_HOME override). The SDK observes them
@@ -241,7 +246,7 @@ func (o *CodexOptions) WithFeatureEnabled(names ...string) *CodexOptions {
 // When false or unset, hook wire methods are never emitted.
 func (o *CodexOptions) WithHooks(enabled bool) *CodexOptions {
 	if enabled {
-		return o.WithFeatureEnabled("codex_hooks")
+		o.HooksEnabled = true
 	}
 	return o
 }
@@ -253,15 +258,15 @@ func (o *CodexOptions) WithHooks(enabled bool) *CodexOptions {
 // binary, sets CODEX_HOME to a tempdir, and passes
 // CODEX_SDK_HOOK_SOCKET to the codex subprocess.
 //
-// This option implies WithHooks(true) — the SDK adds --enable codex_hooks
-// automatically.
+// This option implies WithHooks(true). Because the SDK generates and owns the
+// exact ephemeral command hook definition, it also bypasses Codex's interactive
+// hook-trust prompt for this invocation.
 //
 // WARNING: the callback runs inside the SDK process on the bridge
 // listener's goroutine. Do NOT call Thread.Run, Thread.RunStreamed, or
 // any other SDK operation that would deadlock the dispatcher.
 func (o *CodexOptions) WithHookCallback(h HookHandler) *CodexOptions {
 	o.HookCallback = h
-	// Auto-enable the feature flag so users don't have to chain both.
 	return o.WithHooks(true)
 }
 

@@ -9,7 +9,7 @@ need to construct raw JSON-RPC frames.
 
 This doc is the map. The v0.4.0 command matrix was last fully stress-
 verified live against codex 0.121.0; the current SDK parser and vendored
-schema target Codex 0.130.0. See `tests/coverage_matrix.md` for the
+schema target Codex 0.144.1. See `tests/coverage_matrix.md` for the
 one-row-per-test breakdown.
 
 ## Mid-session controls
@@ -223,8 +223,8 @@ wrapped `fmt.Errorf` chain.
 ## Version & testing
 
 The full v0.4.0 command matrix was verified against codex **0.121.0**
-on **2026-04-19**. The current schema/parser target is codex **0.130.0**
-(verified 2026-05-13 with `make check-schema-drift` and
+on **2026-04-19**. The current schema/parser target is codex **0.144.1**
+(verified 2026-07-12 with `make check-schema-drift` and
 `TestIntegrationSchema`). Coverage matrix at
 [`tests/coverage_matrix.md`](../tests/coverage_matrix.md) — every typed
 method × every option variant × every documented error path has a

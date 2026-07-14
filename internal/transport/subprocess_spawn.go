@@ -28,20 +28,24 @@ type spawnedProc struct {
 // logging a warning when the probe fails or the codex CLI is below
 // RecommendedCLIVersion, and a debug line when the version is acceptable.
 func (t *AppServer) logCLIVersion(ctx context.Context, cliPath string) {
-	v, err := probeCLIVersionCtx(ctx, cliPath)
-	if err != nil {
+	probe := t.cfg.VersionProbe
+	if probe == nil {
+		version, err := probeCLIVersionCtx(ctx, cliPath)
+		probe = &CLIVersionProbeResult{Version: version, Err: err}
+	}
+	if probe.Err != nil {
 		t.logger.Warn("could not probe codex CLI version (continuing)",
-			zap.String("cli", cliPath), zap.Error(err))
+			zap.String("cli", cliPath), zap.Error(probe.Err))
 		return
 	}
 	recommended, _ := ParseSemVer(RecommendedCLIVersion)
-	if !v.AtLeast(recommended) {
+	if !probe.Version.AtLeast(recommended) {
 		t.logger.Warn("codex CLI version below recommended",
-			zap.String("found", v.String()),
+			zap.String("found", probe.Version.String()),
 			zap.String("recommended", RecommendedCLIVersion))
 		return
 	}
-	t.logger.Debug("codex CLI version ok", zap.String("version", v.String()))
+	t.logger.Debug("codex CLI version ok", zap.String("version", probe.Version.String()))
 }
 
 // spawnWithRetry builds and starts the codex app-server subprocess, returning

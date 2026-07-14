@@ -32,9 +32,10 @@ type Client struct {
 	// InitializeResult from the handshake. Populated during Connect.
 	initResult InitializeResult
 
-	mu             sync.Mutex
-	threads        map[string]*Thread
-	latestThreadID string
+	mu               sync.Mutex
+	threads          map[string]*Thread
+	latestThreadID   string
+	cliCompatibility atomic.Pointer[cliCompatibilityState]
 
 	lifecycleMu    sync.Mutex
 	connectStarted atomic.Bool
@@ -127,14 +128,20 @@ func (c *Client) Connect(ctx context.Context) (err error) {
 			return fmt.Errorf("codex.Client.Connect: hook bridge: %w", hookErr)
 		}
 	}
+	versionProbe := probeCLICompatibilityVersion(connectCtx, c.opts, extraEnv)
+	cliVersion, cliVersionKnown := versionProbe.Version, versionProbe.Err == nil
+	c.cliCompatibility.Store(&cliCompatibilityState{version: cliVersion, known: cliVersionKnown})
 
 	maxParseErrors := uint(0)
 	if c.opts.MaxConsecutiveParseErrors != nil {
 		maxParseErrors = *c.opts.MaxConsecutiveParseErrors
 	}
+	globalArgs, extraArgs := cliCompatibilityArgs(c.opts, cliVersion, cliVersionKnown)
 	tr := transport.NewAppServer(transport.AppServerConfig{
 		CLIPath:                   c.opts.CLIPath,
-		ExtraArgs:                 c.opts.ExtraArgs,
+		GlobalArgs:                globalArgs,
+		VersionProbe:              &versionProbe,
+		ExtraArgs:                 extraArgs,
 		Env:                       extraEnv,
 		Logger:                    c.logger,
 		ReadBufferSize:            c.opts.ReadBufferSize,

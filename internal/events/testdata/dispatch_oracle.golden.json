@@ -40,6 +40,10 @@
     "*types.ExternalAgentConfigImportCompleted | {\"params\":{\"name\":\"cfg\"}}"
   ],
   [
+    "event:externalAgentConfig/import/progress",
+    "*types.ExternalAgentConfigImportProgress | {\"import_id\":\"import-1\",\"item_type_results\":[]}"
+  ],
+  [
     "event:fs/changed",
     "*types.FsChanged | {\"watch_id\":\"\",\"changed_paths\":null}"
   ],
@@ -136,6 +140,10 @@
     "*types.ModelRerouted | {\"thread_id\":\"\",\"turn_id\":\"\",\"from_model\":\"\",\"to_model\":\"\",\"reason\":null}"
   ],
   [
+    "event:model/safetyBuffering/updated",
+    "*types.ModelSafetyBufferingUpdated | {\"thread_id\":\"t1\",\"turn_id\":\"u1\",\"model\":\"gpt-5\",\"reasons\":[],\"show_buffering_ui\":true,\"use_cases\":[]}"
+  ],
+  [
     "event:model/verification",
     "*types.ModelVerification | {\"thread_id\":\"\",\"turn_id\":\"\",\"verifications\":null}"
   ],
@@ -170,6 +178,10 @@
   [
     "event:thread/compacted",
     "*types.ContextCompacted | {\"thread_id\":\"t1\",\"turn_id\":\"\"}"
+  ],
+  [
+    "event:thread/deleted",
+    "*types.ThreadDeleted | {\"thread_id\":\"t1\"}"
   ],
   [
     "event:thread/goal/cleared",

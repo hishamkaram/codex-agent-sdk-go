@@ -34,14 +34,14 @@ import (
 )
 
 // schemaPrompt forces codex to exercise several item-type code paths in a
-// single turn: parallel bash commands (CommandExecution or DynamicToolCall),
+// single turn: a bash command (CommandExecution or DynamicToolCall),
 // a file edit (FileChange), and an agent message summary (AgentMessage).
 // MCP tool calls are opportunistic — codex may or may not route through
 // MCP depending on its current tool catalog, so we do not hard-require
 // McpToolCall to appear.
-const schemaPrompt = "Run `pwd`, `date`, and `whoami` in parallel. " +
-	"Then create /tmp/codex-spike-187.txt with the contents " +
-	"'hello from feature 187' and summarize what you did."
+const schemaPrompt = "Run `pwd` exactly once. Then create schema-proof.txt in the current " +
+	"working directory with the exact contents 'schema parser proof'. Do not inspect other " +
+	"files or run tests. Finish by replying exactly SCHEMA_OK."
 
 func TestIntegrationSchema(t *testing.T) {
 	// Accept either OPENAI_API_KEY env var OR a logged-in ~/.codex/auth.json
@@ -138,13 +138,12 @@ func TestIntegrationSchema(t *testing.T) {
 
 	t.Logf("item types seen: %+v", counts)
 
-	// Sanity: the prompt explicitly asks for 3 parallel bash commands,
-	// so codex should emit at least one CommandExecution OR
-	// DynamicToolCall item. If zero appeared, either the prompt was
-	// ignored or the parser missed every tool-call notification.
-	toolCallItems := counts["commandExecution"] + counts["dynamicToolCall"]
+	// Sanity: the prompt explicitly asks for a tool-backed operation. Codex
+	// may satisfy it through shell, dynamic, or MCP tools depending on the
+	// active catalog; every path still exercises concrete item parsing.
+	toolCallItems := counts["commandExecution"] + counts["dynamicToolCall"] + counts["mcpToolCall"]
 	if toolCallItems == 0 {
-		t.Errorf("expected at least one tool-call item (commandExecution or dynamicToolCall); codex may not have run the bash commands. counts=%+v", counts)
+		t.Errorf("expected at least one tool-call item; codex may not have run the requested operation. counts=%+v", counts)
 	}
 }
 

@@ -270,7 +270,7 @@ race.
   (523 lines, real `codex app-server` v0.121.0)
 - Vendored schema: `internal/events/testdata/schema/codex_app_server_protocol.v2.schemas.json`
   (regenerated from `codex app-server generate-json-schema` with Codex
-  0.130.0 on 2026-05-13)
+  0.144.1 on 2026-07-12)
 - `internal/jsonrpc/types.go` — envelope types
 - `internal/events/parser.go` — method → event dispatch
 - `internal/events/items.go` — item.type → ThreadItem dispatch

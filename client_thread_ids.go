@@ -12,6 +12,7 @@ var threadIDExtractors = []func(types.ThreadEvent) (string, bool){
 	threadIDFromTurnEvent,
 	threadIDFromItemEvent,
 	threadIDFromRealtimeEvent,
+	threadIDFromMCPEvent,
 	threadIDFromMiscEvent,
 }
 
@@ -36,6 +37,8 @@ func threadIDFromThreadLifecycleEvent(ev types.ThreadEvent) (string, bool) {
 	case *types.ThreadUnarchived:
 		return e.ThreadID, true
 	case *types.ThreadClosed:
+		return e.ThreadID, true
+	case *types.ThreadDeleted:
 		return e.ThreadID, true
 	case *types.ThreadNameUpdated:
 		return e.ThreadID, true
@@ -111,6 +114,22 @@ func threadIDFromRealtimeEvent(ev types.ThreadEvent) (string, bool) {
 	return "", false
 }
 
+func threadIDFromMCPEvent(ev types.ThreadEvent) (string, bool) {
+	switch e := ev.(type) {
+	case *types.MCPServerStartupStatusUpdated:
+		if e.ThreadID != nil {
+			return *e.ThreadID, true
+		}
+		return "", true
+	case *types.MCPServerOAuthLoginCompleted:
+		if e.ThreadID != nil {
+			return *e.ThreadID, true
+		}
+		return "", true
+	}
+	return "", false
+}
+
 func threadIDFromMiscEvent(ev types.ThreadEvent) (string, bool) {
 	switch e := ev.(type) {
 	case *types.TokenUsageUpdated:
@@ -122,6 +141,8 @@ func threadIDFromMiscEvent(ev types.ThreadEvent) (string, bool) {
 	case *types.ModelRerouted:
 		return e.ThreadID, true
 	case *types.ModelVerification:
+		return e.ThreadID, true
+	case *types.ModelSafetyBufferingUpdated:
 		return e.ThreadID, true
 	case *types.Warning:
 		if e.ThreadID != nil {

@@ -18,6 +18,12 @@
         "type": "string"
       }
     },
+    "threadId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "timeoutSecs": {
       "type": [
         "integer",

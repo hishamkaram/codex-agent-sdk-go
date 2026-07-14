@@ -39,6 +39,14 @@ type AppServerConfig struct {
 	// is used at Connect time.
 	CLIPath string
 
+	// GlobalArgs are passed before the "app-server" subcommand. Keep this
+	// internal lane narrow because these flags affect the whole Codex process.
+	GlobalArgs []string
+
+	// VersionProbe reuses a probe already performed by the Client compatibility
+	// layer. Nil preserves direct AppServer callers' existing soft probe.
+	VersionProbe *CLIVersionProbeResult
+
 	// ExtraArgs are passed after "app-server". None of the public SDK
 	// options map to app-server flags in v0.1.0, but the hook is exposed
 	// so integration tests can append --verbose or similar.
@@ -124,7 +132,7 @@ func (t *AppServer) doConnect(ctx context.Context) error {
 	// below RecommendedCLIVersion.
 	t.logCLIVersion(ctx, cliPath)
 
-	args := append([]string{"app-server"}, t.cfg.ExtraArgs...)
+	args := appServerArgs(t.cfg)
 
 	proc, err := t.spawnWithRetry(ctx, cliPath, args)
 	if err != nil {
@@ -176,6 +184,13 @@ func (t *AppServer) doConnect(ctx context.Context) error {
 		zap.String("cli", cliPath),
 		zap.Int("pid", proc.cmd.Process.Pid))
 	return nil
+}
+
+func appServerArgs(cfg AppServerConfig) []string {
+	args := make([]string, 0, len(cfg.GlobalArgs)+1+len(cfg.ExtraArgs))
+	args = append(args, cfg.GlobalArgs...)
+	args = append(args, "app-server")
+	return append(args, cfg.ExtraArgs...)
 }
 
 // Demux returns the underlying demux. Valid between Connect and Close.

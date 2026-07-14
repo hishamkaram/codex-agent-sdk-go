@@ -40,6 +40,7 @@ var eventCorpus = []struct {
 	{"thread/archived", `{"threadId":"t1"}`},
 	{"thread/unarchived", `{"threadId":"t1"}`},
 	{"thread/closed", `{"threadId":"t1"}`},
+	{"thread/deleted", `{"threadId":"t1"}`},
 	{"thread/name/updated", `{"threadId":"t1","name":"My Thread"}`},
 	{"thread/status/changed", `{"threadId":"t1","status":"active"}`},
 	{"thread/settings/updated", `{"threadId":"t1","settings":{"model":"gpt-5"}}`},
@@ -97,6 +98,7 @@ var eventCorpus = []struct {
 	{"account/rateLimits/updated", `{}`},
 	{"account/updated", `{"accountId":"acc1"}`},
 	{"model/rerouted", `{"from":"gpt-5","to":"gpt-5-mini"}`},
+	{"model/safetyBuffering/updated", `{"threadId":"t1","turnId":"u1","model":"gpt-5","reasons":[],"showBufferingUi":true,"useCases":[]}`},
 	{"model/verification", `{"model":"gpt-5"}`},
 
 	// --- System / filesystem / apps ---
@@ -105,6 +107,7 @@ var eventCorpus = []struct {
 	{"process/exited", `{"exitCode":0}`},
 	{"remoteControl/status/changed", `{"status":"connected"}`},
 	{"externalAgentConfig/import/completed", `{"name":"cfg"}`},
+	{"externalAgentConfig/import/progress", `{"importId":"import-1","itemTypeResults":[]}`},
 	{"configWarning", `{"message":"deprecated key"}`},
 	{"warning", `{"message":"heads up"}`},
 	{"guardianWarning", `{"message":"risky"}`},

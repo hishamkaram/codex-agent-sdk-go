@@ -86,6 +86,18 @@ func TestCodexOptions_WithMCPServers(t *testing.T) {
 	}
 }
 
+func TestCodexOptions_WithHooksRecordsCompatibilityRequest(t *testing.T) {
+	t.Parallel()
+
+	opts := NewCodexOptions().WithHooks(true)
+	if !opts.HooksEnabled {
+		t.Fatal("HooksEnabled = false, want true")
+	}
+	if len(opts.ExtraArgs) != 0 {
+		t.Fatalf("ExtraArgs = %#v, want version resolution at Connect", opts.ExtraArgs)
+	}
+}
+
 func TestCollaborationMode_JSONShape(t *testing.T) {
 	t.Parallel()
 	mode := CollaborationMode{

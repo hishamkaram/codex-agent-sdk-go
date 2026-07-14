@@ -264,6 +264,32 @@ func IsFeatureNotEnabledError(err error) bool {
 	return errors.As(err, &e)
 }
 
+// UnsupportedApprovalPolicyError reports that an installed CLI no longer
+// accepts an approval policy retained by the SDK for older peers.
+type UnsupportedApprovalPolicyError struct {
+	Policy     ApprovalPolicy
+	CLIVersion string
+}
+
+func (e *UnsupportedApprovalPolicyError) Error() string {
+	if e == nil {
+		return "<nil UnsupportedApprovalPolicyError>"
+	}
+	return fmt.Sprintf("approval policy %q is not supported by codex CLI %s", e.Policy, e.CLIVersion)
+}
+
+func NewUnsupportedApprovalPolicyError(
+	policy ApprovalPolicy,
+	cliVersion string,
+) *UnsupportedApprovalPolicyError {
+	return &UnsupportedApprovalPolicyError{Policy: policy, CLIVersion: cliVersion}
+}
+
+func IsUnsupportedApprovalPolicyError(err error) bool {
+	var e *UnsupportedApprovalPolicyError
+	return errors.As(err, &e)
+}
+
 // MCPServerOAuthRequiredError is returned by inventory methods (e.g.,
 // ListMCPServerStatus) when one of the configured MCP servers needs the
 // user to complete an OAuth handshake before tools can be listed. Call

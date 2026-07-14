@@ -45,6 +45,37 @@ func TestParseEvent_ThreadStarted_FlatThreadID(t *testing.T) {
 	}
 }
 
+func TestParseEvent_MCPNotificationsPreserveOptionalThreadID(t *testing.T) {
+	t.Parallel()
+
+	oauthEvent, err := ParseEvent(jsonrpc.Notification{
+		Method: "mcpServer/oauthLogin/completed",
+		Params: json.RawMessage(`{"name":"docs","success":true,"threadId":"thread-1"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	oauth := oauthEvent.(*types.MCPServerOAuthLoginCompleted)
+	if oauth.ThreadID == nil || *oauth.ThreadID != "thread-1" {
+		t.Fatalf("OAuth ThreadID = %#v, want thread-1", oauth.ThreadID)
+	}
+
+	statusEvent, err := ParseEvent(jsonrpc.Notification{
+		Method: "mcpServer/startupStatus/updated",
+		Params: json.RawMessage(`{"name":"docs","status":"failed","failureReason":"reauthenticationRequired","threadId":"thread-2"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	status := statusEvent.(*types.MCPServerStartupStatusUpdated)
+	if status.ThreadID == nil || *status.ThreadID != "thread-2" {
+		t.Fatalf("status ThreadID = %#v, want thread-2", status.ThreadID)
+	}
+	if status.FailureReason == nil || *status.FailureReason != "reauthenticationRequired" {
+		t.Fatalf("FailureReason = %#v, want reauthenticationRequired", status.FailureReason)
+	}
+}
+
 func TestParseEvent_TurnStarted(t *testing.T) {
 	t.Parallel()
 	n := jsonrpc.Notification{
@@ -426,6 +457,64 @@ func TestParseEvent_ItemStartedMissingItemIsError(t *testing.T) {
 	}
 	if !types.IsMessageParseError(err) {
 		t.Fatalf("expected MessageParseError, got %T", err)
+	}
+}
+
+func TestParseEvent_Codex01441NotificationsAreTyped(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		method string
+		params string
+	}{
+		{
+			method: "externalAgentConfig/import/progress",
+			params: `{"importId":"import-1","itemTypeResults":[]}`,
+		},
+		{
+			method: "model/safetyBuffering/updated",
+			params: `{"threadId":"thread-1","turnId":"turn-1","model":"gpt-5","reasons":[],"showBufferingUi":true,"useCases":[]}`,
+		},
+		{
+			method: "thread/deleted",
+			params: `{"threadId":"thread-1"}`,
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.method, func(t *testing.T) {
+			t.Parallel()
+			ev, err := ParseEvent(jsonrpc.Notification{
+				Method: tc.method,
+				Params: json.RawMessage(tc.params),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, unknown := ev.(*types.UnknownEvent); unknown {
+				t.Fatalf("%s parsed as UnknownEvent", tc.method)
+			}
+			if ev.EventMethod() != tc.method {
+				t.Fatalf("EventMethod() = %q, want %q", ev.EventMethod(), tc.method)
+			}
+			switch got := ev.(type) {
+			case *types.ExternalAgentConfigImportProgress:
+				if got.ImportID != "import-1" || string(got.ItemTypeResults) != "[]" {
+					t.Fatalf("progress = %+v", got)
+				}
+			case *types.ModelSafetyBufferingUpdated:
+				if got.ThreadID != "thread-1" || got.TurnID != "turn-1" || !got.ShowBufferingUI {
+					t.Fatalf("safety buffering = %+v", got)
+				}
+			case *types.ThreadDeleted:
+				if got.ThreadID != "thread-1" {
+					t.Fatalf("thread deleted = %+v", got)
+				}
+			default:
+				t.Fatalf("unexpected event type %T", ev)
+			}
+		})
 	}
 }
 

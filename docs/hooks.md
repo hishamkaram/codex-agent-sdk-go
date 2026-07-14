@@ -1,7 +1,8 @@
 # Hooks
 
-Codex emits two hook-related wire notifications when its `codex_hooks`
-feature flag is enabled:
+Codex emits two hook-related wire notifications when its hook feature flag is
+enabled. `WithHooks(true)` selects the peer-compatible name automatically:
+`codex_hooks` for older or unprobed CLIs and `hooks` for current CLIs.
 
 - `hook/started` — a hook handler began running
 - `hook/completed` — a hook handler finished (status may be `completed`,
@@ -72,8 +73,18 @@ On `Connect` (when `WithHookCallback` is set), the SDK:
 5. Exports `CODEX_HOME=<tempdir>` and
    `CODEX_SDK_HOOK_SOCKET=<socket path>` to the codex
    subprocess so the shim can dial back.
+6. On Codex 0.131+, passes `--dangerously-bypass-hook-trust` for the invocation
+   because the SDK generated and vetted the exact ephemeral command hook
+   definition. Older or unprobed peers omit the unsupported flag.
 
 On `Close`, the SDK removes the isolated `CODEX_HOME`.
+
+> **Codex 0.129-0.144 app-server limitation:** these versions discover the
+> generated command hooks but continue to classify them as untrusted even when
+> the documented `--dangerously-bypass-hook-trust` automation flag is present.
+> Observer hooks that are already trusted still work, but an ephemeral
+> `WithHookCallback` bridge may not fire. The live callback tests are explicitly
+> skipped for this bounded peer range rather than reporting false compatibility.
 
 To temporarily mutate user `~/.codex/hooks.json` instead, opt in
 explicitly:

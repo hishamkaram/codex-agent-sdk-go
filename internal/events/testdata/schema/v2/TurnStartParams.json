@@ -7,11 +7,11 @@
     "threadId"
   ],
   "properties": {
-    "summary": {
-      "description": "Override the reasoning summary for this turn and subsequent turns.",
+    "sandboxPolicy": {
+      "description": "Override the sandbox policy for this turn and subsequent turns.",
       "anyOf": [
         {
-          "$ref": "#/definitions/ReasoningSummary"
+          "$ref": "#/definitions/SandboxPolicy"
         },
         {
           "type": "null"
@@ -46,8 +46,16 @@
         "null"
       ]
     },
-    "threadId": {
-      "type": "string"
+    "summary": {
+      "description": "Override the reasoning summary for this turn and subsequent turns.",
+      "anyOf": [
+        {
+          "$ref": "#/definitions/ReasoningSummary"
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "cwd": {
       "description": "Override the working directory for this turn and subsequent turns.",
@@ -67,16 +75,8 @@
         }
       ]
     },
-    "sandboxPolicy": {
-      "description": "Override the sandbox policy for this turn and subsequent turns.",
-      "anyOf": [
-        {
-          "$ref": "#/definitions/SandboxPolicy"
-        },
-        {
-          "type": "null"
-        }
-      ]
+    "threadId": {
+      "type": "string"
     },
     "input": {
       "type": "array",
@@ -91,16 +91,6 @@
         "null"
       ]
     },
-    "outputSchema": {
-      "description": "Optional JSON Schema used to constrain the final assistant message for this turn."
-    },
-    "serviceTier": {
-      "description": "Override the service tier for this turn and subsequent turns.",
-      "type": [
-        "string",
-        "null"
-      ]
-    },
     "personality": {
       "description": "Override the personality for this turn and subsequent turns.",
       "anyOf": [
@@ -110,6 +100,16 @@
         {
           "type": "null"
         }
+      ]
+    },
+    "outputSchema": {
+      "description": "Optional JSON Schema used to constrain the final assistant message for this turn."
+    },
+    "serviceTier": {
+      "description": "Override the service tier for this turn and subsequent turns.",
+      "type": [
+        "string",
+        "null"
       ]
     }
   },
@@ -155,7 +155,6 @@
           "type": "string",
           "enum": [
             "untrusted",
-            "on-failure",
             "on-request",
             "never"
           ]
@@ -243,12 +242,40 @@
         "original"
       ]
     },
+    "LegacyAppPathString": {
+      "type": "string"
+    },
     "ModeKind": {
       "description": "Initial collaboration mode to use when the TUI starts.",
       "type": "string",
       "enum": [
         "plan",
         "default"
+      ]
+    },
+    "MultiAgentMode": {
+      "description": "Controls the effective multi-agent delegation instructions for a turn. `custom` means the configured mode hint defines the policy instead of a built-in policy.",
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "explicitRequestOnly",
+            "proactive"
+          ]
+        },
+        {
+          "type": "object",
+          "required": [
+            "custom"
+          ],
+          "properties": {
+            "custom": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "title": "CustomMultiAgentMode"
+        }
       ]
     },
     "NetworkAccess": {
@@ -449,7 +476,7 @@
       ],
       "properties": {
         "cwd": {
-          "$ref": "#/definitions/AbsolutePathBuf"
+          "$ref": "#/definitions/LegacyAppPathString"
         },
         "environmentId": {
           "type": "string"

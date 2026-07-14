@@ -33,8 +33,10 @@ const (
 	// mutating command prompts. Strictest practical policy.
 	ApprovalUntrusted ApprovalPolicy = "untrusted"
 
-	// ApprovalOnFailure only prompts after a command fails — the server
-	// runs the agent's plan optimistically and escalates on error.
+	// ApprovalOnFailure is retained for older Codex peers. Codex 0.143+
+	// removed it; SDK operations return UnsupportedApprovalPolicyError there.
+	//
+	// Deprecated: prefer ApprovalOnRequest.
 	ApprovalOnFailure ApprovalPolicy = "on-failure"
 
 	// ApprovalOnRequest is the server default. Prompts for destructive or

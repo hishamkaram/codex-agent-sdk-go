@@ -6,6 +6,16 @@
     "rateLimits"
   ],
   "properties": {
+    "rateLimitResetCredits": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/RateLimitResetCreditsSummary"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "rateLimits": {
       "description": "Backward-compatible single-bucket view; mirrors the historical payload.",
       "allOf": [
@@ -72,6 +82,92 @@
         "workspace_member_credits_depleted",
         "workspace_owner_usage_limit_reached",
         "workspace_member_usage_limit_reached"
+      ]
+    },
+    "RateLimitResetCredit": {
+      "type": "object",
+      "required": [
+        "grantedAt",
+        "id",
+        "resetType",
+        "status"
+      ],
+      "properties": {
+        "description": {
+          "description": "Backend-provided display description for this credit, or `null` when unavailable.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "expiresAt": {
+          "description": "Unix timestamp in seconds when the credit expires, or `null` if it does not expire.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int64"
+        },
+        "grantedAt": {
+          "description": "Unix timestamp in seconds when the credit was granted.",
+          "type": "integer",
+          "format": "int64"
+        },
+        "id": {
+          "description": "Opaque backend identifier for this reset credit.",
+          "type": "string"
+        },
+        "resetType": {
+          "$ref": "#/definitions/RateLimitResetType"
+        },
+        "status": {
+          "$ref": "#/definitions/RateLimitResetCreditStatus"
+        },
+        "title": {
+          "description": "Backend-provided display title for this credit, or `null` when unavailable.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "RateLimitResetCreditStatus": {
+      "type": "string",
+      "enum": [
+        "available",
+        "redeeming",
+        "redeemed",
+        "unknown"
+      ]
+    },
+    "RateLimitResetCreditsSummary": {
+      "type": "object",
+      "required": [
+        "availableCount"
+      ],
+      "properties": {
+        "availableCount": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "credits": {
+          "description": "Detail rows for available reset credits, when the backend provides them.\n\n`null` means only `availableCount` is known, while an empty array means details were fetched and no available credits were returned. The backend may cap this list, so its length can be less than `availableCount`.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/definitions/RateLimitResetCredit"
+          }
+        }
+      }
+    },
+    "RateLimitResetType": {
+      "type": "string",
+      "enum": [
+        "codexRateLimits",
+        "unknown"
       ]
     },
     "RateLimitSnapshot": {

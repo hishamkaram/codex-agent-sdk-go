@@ -28,6 +28,17 @@
         "type"
       ],
       "properties": {
+        "appBrand": {
+          "default": null,
+          "anyOf": [
+            {
+              "$ref": "#/definitions/LoginAppBrand"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "codexStreamlinedLogin": {
           "type": "boolean"
         },
@@ -37,6 +48,9 @@
             "chatgpt"
           ],
           "title": "Chatgptv2::LoginAccountParamsType"
+        },
+        "useHostedLoginSuccessPage": {
+          "type": "boolean"
         }
       },
       "title": "Chatgptv2::LoginAccountParams"
@@ -91,5 +105,14 @@
       },
       "title": "ChatgptAuthTokensv2::LoginAccountParams"
     }
-  ]
+  ],
+  "definitions": {
+    "LoginAppBrand": {
+      "type": "string",
+      "enum": [
+        "codex",
+        "chatgpt"
+      ]
+    }
+  }
 }

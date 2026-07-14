@@ -8,7 +8,7 @@ go get github.com/hishamkaram/codex-agent-sdk-go
 
 Requires:
 - Go 1.25+
-- Codex CLI 0.130.0 (verified 2026-05-13; lower versions work but
+- Codex CLI 0.144.1 (verified 2026-07-12; lower versions work but
   trigger a soft warning — see `docs/wire-protocol.md`).
   - `npm install -g @openai/codex` — or Homebrew, per your OS.
 - Authentication: one of

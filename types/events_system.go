@@ -8,9 +8,11 @@ import "encoding/json"
 // its startup lifecycle (starting -> connected | error).
 // Wire method: "mcpServer/startupStatus/updated".
 type MCPServerStartupStatusUpdated struct {
-	Name   string          `json:"name"`
-	Status json.RawMessage `json:"status"`
-	Error  *string         `json:"error,omitempty"`
+	ThreadID      *string         `json:"thread_id,omitempty"`
+	Name          string          `json:"name"`
+	Status        json.RawMessage `json:"status"`
+	Error         *string         `json:"error,omitempty"`
+	FailureReason *string         `json:"failure_reason,omitempty"`
 }
 
 func (*MCPServerStartupStatusUpdated) isThreadEvent() {}
@@ -21,9 +23,10 @@ func (*MCPServerStartupStatusUpdated) EventMethod() string {
 // MCPServerOAuthLoginCompleted is emitted when an MCP server's OAuth flow
 // finishes. Wire method: "mcpServer/oauthLogin/completed".
 type MCPServerOAuthLoginCompleted struct {
-	Name    string  `json:"name"`
-	Success bool    `json:"success"`
-	Error   *string `json:"error,omitempty"`
+	ThreadID *string `json:"thread_id,omitempty"`
+	Name     string  `json:"name"`
+	Success  bool    `json:"success"`
+	Error    *string `json:"error,omitempty"`
 }
 
 func (*MCPServerOAuthLoginCompleted) isThreadEvent() {}
@@ -91,6 +94,23 @@ type ModelVerification struct {
 
 func (*ModelVerification) isThreadEvent()      {}
 func (*ModelVerification) EventMethod() string { return "model/verification" }
+
+// ModelSafetyBufferingUpdated reports whether Codex is buffering a turn for
+// model-safety reasons. Wire method: "model/safetyBuffering/updated".
+type ModelSafetyBufferingUpdated struct {
+	ThreadID        string   `json:"thread_id"`
+	TurnID          string   `json:"turn_id"`
+	Model           string   `json:"model"`
+	Reasons         []string `json:"reasons"`
+	ShowBufferingUI bool     `json:"show_buffering_ui"`
+	UseCases        []string `json:"use_cases"`
+	FasterModel     *string  `json:"faster_model,omitempty"`
+}
+
+func (*ModelSafetyBufferingUpdated) isThreadEvent() {}
+func (*ModelSafetyBufferingUpdated) EventMethod() string {
+	return "model/safetyBuffering/updated"
+}
 
 // --- v0.2.0 expansion: system / filesystem events ---
 
@@ -226,7 +246,7 @@ func (*RemoteControlStatusChanged) EventMethod() string {
 }
 
 // ExternalAgentConfigImportCompleted reports completion of an external agent
-// config import. Params is preserved raw because 0.130.0 declares an empty
+// config import. Params is preserved raw because 0.144.1 declares an empty
 // object and future versions may add fields.
 // Wire method: "externalAgentConfig/import/completed".
 type ExternalAgentConfigImportCompleted struct {
@@ -236,6 +256,19 @@ type ExternalAgentConfigImportCompleted struct {
 func (*ExternalAgentConfigImportCompleted) isThreadEvent() {}
 func (*ExternalAgentConfigImportCompleted) EventMethod() string {
 	return "externalAgentConfig/import/completed"
+}
+
+// ExternalAgentConfigImportProgress reports intermediate import results.
+// ItemTypeResults remains raw so new migration item types stay forward-compatible.
+// Wire method: "externalAgentConfig/import/progress".
+type ExternalAgentConfigImportProgress struct {
+	ImportID        string          `json:"import_id"`
+	ItemTypeResults json.RawMessage `json:"item_type_results"`
+}
+
+func (*ExternalAgentConfigImportProgress) isThreadEvent() {}
+func (*ExternalAgentConfigImportProgress) EventMethod() string {
+	return "externalAgentConfig/import/progress"
 }
 
 // --- v0.2.0 expansion: Windows platform events ---

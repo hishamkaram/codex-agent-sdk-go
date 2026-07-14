@@ -7,7 +7,7 @@ v0.4.0 surface has a live-CLI integration test or an explicit
 
 The full command matrix was verified against **codex 0.121.0** on
 **2026-04-19**. Schema/parser compatibility for the current SDK target is
-verified against **codex 0.130.0** on **2026-05-13** via
+verified against **codex 0.144.1** on **2026-07-12** via
 `make check-schema-drift` and `TestIntegrationSchema`.
 
 ## Legend
@@ -59,7 +59,7 @@ verified against **codex 0.130.0** on **2026-05-13** via
 | `WriteConfigBatch` | 2-key happy | `TestIntCmd_WriteConfigBatch_Happy` | ✅ |
 | `WriteConfigBatch` | empty edits | `TestIntCmd_WriteConfigBatch_EmptyEdits` | ✅ |
 | `SetExperimentalFeature` | toggle on/off | `TestIntCmd_SetExperimentalFeature_ToggleOnOff` | ✅ |
-| `SetExperimentalFeature` | unsupported feature | `TestIntCmd_SetExperimentalFeature_UnsupportedFeature` | ✅ |
+| `SetExperimentalFeature` | formerly unsupported feature | `TestIntCmd_SetExperimentalFeature_FormerlyUnsupportedFeature` | ✅ |
 | `SetExperimentalFeature` | empty name | `TestIntCmd_SetExperimentalFeature_EmptyName` | ✅ |
 | `SetExperimentalFeatures` | bulk toggle + restore | `TestIntCmd_SetExperimentalFeatures_Bulk` | ✅ |
 | `SetExperimentalFeatures` | empty map (no-op probe) | `TestIntCmd_SetExperimentalFeatures_EmptyMap` | ✅ |
