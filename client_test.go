@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/hishamkaram/codex-agent-sdk-go/types"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 func TestNewClient_NilOptsIsError(t *testing.T) {
@@ -203,6 +205,120 @@ while IFS= read -r line; do :; done
 		default:
 			t.Fatal("dispatcher still running after Close")
 		}
+	}
+}
+
+func TestClient_InitializeTimeoutIsCLIConnectionError(t *testing.T) {
+	t.Parallel()
+
+	helper := filepath.Join(t.TempDir(), "codex-helper")
+	secret := "sk-test-secret-in-stderr"
+	secretSuffix := "tail-secret-from-long-line"
+	script := fmt.Sprintf(`#!/bin/sh
+if [ "$1" = "--version" ]; then echo "codex 0.144.4"; exit 0; fi
+if [ "$1" = "app-server" ]; then shift; fi
+printf 'control protocol initialization failed OPENAI_API_KEY=%s\n' >&2
+printf 'DATABASE_URL=postgres://user:%s@localhost/db\n' >&2
+printf 'Authorization: Bearer %s%s\n' >&2
+while IFS= read -r line; do :; done
+`, secret, secret, strings.Repeat("x", stderrDiagnosticTailLimit), secretSuffix)
+	if err := os.WriteFile(helper, []byte(script), 0o755); err != nil {
+		t.Fatalf("write helper: %v", err)
+	}
+	core, logs := observer.New(zap.DebugLevel)
+	c, err := NewClient(
+		context.Background(),
+		types.NewCodexOptions().WithCLIPath(helper).WithLogger(zap.New(core)),
+	)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	err = c.Connect(ctx)
+	if err == nil {
+		t.Fatal("Connect succeeded; want initialize timeout")
+	}
+	if !types.IsCLIConnectionError(err) {
+		t.Fatalf("Connect error = %T %[1]v, want CLIConnectionError", err)
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Connect error = %v, want context deadline exceeded in chain", err)
+	}
+	if strings.Contains(err.Error(), secret) {
+		t.Fatalf("Connect error leaked stderr secret: %v", err)
+	}
+	if h := c.Health(); h.Ready {
+		t.Fatalf("Health.Ready after initialize timeout = true; health=%+v", h)
+	}
+	entries := logs.FilterMessage("codex.Client.Connect: initialize failed").All()
+	if len(entries) == 0 {
+		t.Fatal("missing initialize failure diagnostic log")
+	}
+	fields := entries[0].ContextMap()
+	stderrTail, _ := fields["stderr_tail"].(string)
+	if stderrTail == "" || strings.Contains(stderrTail, secret) || strings.Contains(stderrTail, secretSuffix) {
+		t.Fatalf("stderr diagnostic tail = %q, want non-empty redacted tail", stderrTail)
+	}
+	if !strings.Contains(stderrTail, "<redacted>") {
+		t.Fatalf("stderr diagnostic tail = %q, want redaction marker", stderrTail)
+	}
+}
+
+func TestRedactedStderrDiagnosticTailUsesAllowlistedDiagnostics(t *testing.T) {
+	t.Parallel()
+
+	secret := "sk-review-secret"
+	got := redactedStderrDiagnosticTail(strings.Join([]string{
+		"control protocol initialization failed OPENAI_API_KEY=" + secret,
+		"DATABASE_URL=postgres://user:" + secret + "@localhost/db",
+		"Authorization: Bearer " + strings.Repeat("x", stderrDiagnosticTailLimit) + secret,
+	}, "\n"))
+	if strings.Contains(got, secret) {
+		t.Fatalf("redacted stderr tail leaked secret: %q", got)
+	}
+	if strings.Contains(got, "DATABASE_URL") || strings.Contains(got, "Authorization") {
+		t.Fatalf("redacted stderr tail leaked raw stderr fields: %q", got)
+	}
+	if !strings.Contains(got, "control protocol initialization failed") {
+		t.Fatalf("redacted stderr tail = %q, want allowlisted diagnostic", got)
+	}
+	if !strings.Contains(got, "<redacted>") {
+		t.Fatalf("redacted stderr tail = %q, want redaction marker", got)
+	}
+}
+
+func TestClient_LogInitializeFailureOmitsRPCMessage(t *testing.T) {
+	t.Parallel()
+
+	core, logs := observer.New(zap.DebugLevel)
+	c, err := NewClient(
+		context.Background(),
+		types.NewCodexOptions().WithLogger(zap.New(core)),
+	)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	secret := "DATABASE_URL=postgres://secret"
+	c.logInitializeFailure(types.NewRPCError(-32000, secret, []byte(`{"cookie":"secret"}`)), "")
+
+	entries := logs.FilterMessage("codex.Client.Connect: initialize failed").All()
+	if len(entries) == 0 {
+		t.Fatal("missing initialize failure diagnostic log")
+	}
+	fields := entries[0].ContextMap()
+	if _, ok := fields["error"]; ok {
+		t.Fatalf("initialize failure log included raw error field: %#v", fields)
+	}
+	if strings.Contains(fmt.Sprint(fields), secret) || strings.Contains(fmt.Sprint(fields), "cookie") {
+		t.Fatalf("initialize failure log leaked RPC payload: %#v", fields)
+	}
+	if fields["error_kind"] != "rpc_error" {
+		t.Fatalf("error_kind = %#v, want rpc_error; fields=%#v", fields["error_kind"], fields)
+	}
+	if fmt.Sprint(fields["rpc_error_code"]) != "-32000" {
+		t.Fatalf("rpc_error_code = %#v, want -32000; fields=%#v", fields["rpc_error_code"], fields)
 	}
 }
 
