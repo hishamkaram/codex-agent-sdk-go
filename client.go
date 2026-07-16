@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -163,11 +164,13 @@ func (c *Client) Connect(ctx context.Context) (err error) {
 	if err != nil {
 		// Detach cancellation for best-effort transport teardown; ctx may
 		// already be canceled. Inherit values only.
-		c.closeTransportAfterConnectError(ctx, tr)
-		return fmt.Errorf("codex.Client.Connect: initialize: %w", err)
+		stderrTail := c.closeTransportAfterConnectError(ctx, tr)
+		c.logInitializeFailure(err, stderrTail)
+		return fmt.Errorf("codex.Client.Connect: initialize: %w", types.NewCLIConnectionError("initialize", err))
 	}
 	if resp.Error != nil {
-		c.closeTransportAfterConnectError(ctx, tr)
+		stderrTail := c.closeTransportAfterConnectError(ctx, tr)
+		c.logInitializeFailure(types.NewRPCError(resp.Error.Code, resp.Error.Message, resp.Error.Data), stderrTail)
 		return types.NewRPCError(resp.Error.Code, resp.Error.Message, resp.Error.Data)
 	}
 	if err := json.Unmarshal(resp.Result, &c.initResult); err != nil {
@@ -264,11 +267,91 @@ func (c *Client) startDispatcher(
 	return nil
 }
 
-func (c *Client) closeTransportAfterConnectError(ctx context.Context, tr *transport.AppServer) {
+func (c *Client) closeTransportAfterConnectError(ctx context.Context, tr *transport.AppServer) string {
 	if c.closed.Load() {
-		return
+		return redactedStderrDiagnosticTail(tr.Stderr())
 	}
 	_ = tr.Close(context.WithoutCancel(ctx))
+	return redactedStderrDiagnosticTail(tr.Stderr())
+}
+
+func (c *Client) logInitializeFailure(err error, stderrTail string) {
+	fields := []zap.Field{zap.String("error_kind", initializeFailureKind(err))}
+	var rpcErr *types.RPCError
+	if errors.As(err, &rpcErr) {
+		fields = append(fields, zap.Int("rpc_error_code", rpcErr.Code))
+	}
+	if stderrTail != "" {
+		fields = append(fields, zap.String("stderr_tail", stderrTail))
+	}
+	c.logger.Warn("codex.Client.Connect: initialize failed", fields...)
+}
+
+const stderrDiagnosticTailLimit = 2048
+
+const (
+	redactedStderrLine                    = "<redacted>"
+	controlProtocolInitializationFailed   = "control protocol initialization failed"
+	initializeFailureKindDeadlineExceeded = "deadline_exceeded"
+	initializeFailureKindContextCanceled  = "context_canceled"
+	initializeFailureKindRPCError         = "rpc_error"
+	initializeFailureKindOther            = "other"
+)
+
+func initializeFailureKind(err error) string {
+	var rpcErr *types.RPCError
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return initializeFailureKindDeadlineExceeded
+	case errors.Is(err, context.Canceled):
+		return initializeFailureKindContextCanceled
+	case errors.As(err, &rpcErr):
+		return initializeFailureKindRPCError
+	default:
+		return initializeFailureKindOther
+	}
+}
+
+func redactedStderrDiagnosticTail(stderr string) string {
+	if stderr == "" {
+		return ""
+	}
+	stderr = redactStderrDiagnosticLines(stderr)
+	truncated := false
+	if len(stderr) > stderrDiagnosticTailLimit {
+		stderr = stderr[len(stderr)-stderrDiagnosticTailLimit:]
+		truncated = true
+	}
+	if truncated {
+		return "[truncated]\n" + stderr
+	}
+	return stderr
+}
+
+func redactStderrDiagnosticLines(stderr string) string {
+	lines := strings.SplitAfter(stderr, "\n")
+	for i, line := range lines {
+		lines[i] = redactStderrDiagnosticLine(line)
+	}
+	return strings.Join(lines, "")
+}
+
+func redactStderrDiagnosticLine(line string) string {
+	if line == "" {
+		return ""
+	}
+	suffix := ""
+	if strings.HasSuffix(line, "\n") {
+		line = strings.TrimSuffix(line, "\n")
+		suffix = "\n"
+	}
+	if strings.TrimSpace(line) == "" {
+		return suffix
+	}
+	if strings.HasPrefix(strings.TrimSpace(line), controlProtocolInitializationFailed) {
+		return controlProtocolInitializationFailed + suffix
+	}
+	return redactedStderrLine + suffix
 }
 
 func buildInitializeParams(opts *types.CodexOptions) map[string]any {
