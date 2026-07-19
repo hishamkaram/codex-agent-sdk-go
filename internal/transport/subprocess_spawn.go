@@ -2,13 +2,12 @@ package transport
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
-	"syscall"
-	"time"
+	"path/filepath"
+	"strings"
 
 	"github.com/hishamkaram/codex-agent-sdk-go/types"
 	"go.uber.org/zap"
@@ -56,52 +55,87 @@ func (t *AppServer) logCLIVersion(ctx context.Context, cliPath string) {
 // command is rebuilt each attempt. This is the standard mitigation for the Go
 // fork/exec ETXTBSY race. The returned pipes are owned by the caller.
 func (t *AppServer) spawnWithRetry(ctx context.Context, cliPath string, args []string) (*spawnedProc, error) {
-	const maxSpawnAttempts = 5
-	for attempt := 1; ; attempt++ {
-		if err := ctx.Err(); err != nil {
-			return nil, types.NewCLIConnectionError(fmt.Sprintf("spawn %q", cliPath), err)
-		}
-		// The subprocess lifetime is owned by AppServer.Close, not by the
-		// connect-attempt context. Client.Connect cancels that context after a
-		// successful handshake; tying exec.Cmd to it kills the live app-server.
-		cmd := exec.Command(cliPath, args...)
-		cmd.Env = BuildRuntimeEnvironment(t.cfg.Env)
+	resolvedCLIPath, err := resolveExplicitCLIPath(cliPath)
+	if err != nil {
+		return nil, types.NewCLIConnectionError(fmt.Sprintf("resolve %q", cliPath), err)
+	}
 
-		stdin, pipeErr := cmd.StdinPipe()
-		if pipeErr != nil {
-			return nil, types.NewCLIConnectionError("stdin pipe", pipeErr)
+	var proc *spawnedProc
+	var pipeErr error
+	startErr := retryOnETXTBSY(ctx, func() error {
+		candidate, err := newSpawnedProc(t.newSpawnCommand(resolvedCLIPath, args))
+		if err != nil {
+			pipeErr = err
+			return err
 		}
-		stdout, pipeErr := cmd.StdoutPipe()
-		if pipeErr != nil {
-			_ = stdin.Close()
-			return nil, types.NewCLIConnectionError("stdout pipe", pipeErr)
+		if err := candidate.cmd.Start(); err != nil {
+			candidate.closePipes()
+			return err
 		}
-		stderr, pipeErr := cmd.StderrPipe()
-		if pipeErr != nil {
-			_ = stdin.Close()
-			_ = stdout.Close()
-			return nil, types.NewCLIConnectionError("stderr pipe", pipeErr)
-		}
-
-		startErr := cmd.Start()
-		if startErr == nil {
-			return &spawnedProc{cmd: cmd, stdin: stdin, stdout: stdout, stderr: stderr}, nil
-		}
-		_ = stdin.Close()
-		_ = stdout.Close()
-		_ = stderr.Close()
-		if errors.Is(startErr, syscall.ETXTBSY) && attempt < maxSpawnAttempts {
-			t.logger.Debug("spawn hit ETXTBSY; retrying",
-				zap.Int("attempt", attempt), zap.String("cli", cliPath))
-			select {
-			case <-ctx.Done():
-				return nil, types.NewCLIConnectionError(fmt.Sprintf("spawn %q", cliPath), ctx.Err())
-			case <-time.After(time.Duration(attempt) * 5 * time.Millisecond):
-			}
-			continue
-		}
+		proc = candidate
+		return nil
+	}, func(attempt int) {
+		t.logger.Debug("spawn hit ETXTBSY; retrying",
+			zap.Int("attempt", attempt), zap.String("cli", cliPath))
+	})
+	if pipeErr != nil {
+		return nil, pipeErr
+	}
+	if startErr != nil {
 		return nil, types.NewCLIConnectionError(fmt.Sprintf("spawn %q", cliPath), startErr)
 	}
+	return proc, nil
+}
+
+// resolveExplicitCLIPath preserves PATH lookup for a bare CLI name while
+// anchoring an explicitly relative path before exec.Cmd applies its Dir.
+func resolveExplicitCLIPath(cliPath string) (string, error) {
+	hasExplicitPath := strings.ContainsRune(cliPath, '/') || strings.ContainsRune(cliPath, filepath.Separator)
+	if filepath.IsAbs(cliPath) || !hasExplicitPath {
+		return cliPath, nil
+	}
+	resolved, err := filepath.Abs(cliPath)
+	if err != nil {
+		return "", fmt.Errorf("resolve explicit relative CLI path %q: %w", cliPath, err)
+	}
+	return resolved, nil
+}
+
+func (t *AppServer) newSpawnCommand(cliPath string, args []string) *exec.Cmd {
+	// The subprocess lifetime is owned by AppServer.Close, not by the
+	// connect-attempt context. Client.Connect cancels that context after a
+	// successful handshake; tying exec.Cmd to it kills the live app-server.
+	cmd := exec.Command(cliPath, args...)
+	if t.cfg.Cwd != "" {
+		cmd.Dir = t.cfg.Cwd
+	}
+	cmd.Env = BuildRuntimeEnvironment(t.cfg.Env)
+	return cmd
+}
+
+func newSpawnedProc(cmd *exec.Cmd) (*spawnedProc, error) {
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return nil, types.NewCLIConnectionError("stdin pipe", err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		_ = stdin.Close()
+		return nil, types.NewCLIConnectionError("stdout pipe", err)
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		_ = stdin.Close()
+		_ = stdout.Close()
+		return nil, types.NewCLIConnectionError("stderr pipe", err)
+	}
+	return &spawnedProc{cmd: cmd, stdin: stdin, stdout: stdout, stderr: stderr}, nil
+}
+
+func (p *spawnedProc) closePipes() {
+	_ = p.stdin.Close()
+	_ = p.stdout.Close()
+	_ = p.stderr.Close()
 }
 
 // BuildRuntimeEnvironment overlays keyEqVals on os.Environ. An entry "KEY="

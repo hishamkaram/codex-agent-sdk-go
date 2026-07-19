@@ -202,6 +202,68 @@ func TestAppServerAcceptsPrecomputedVersionProbe(t *testing.T) {
 	}
 }
 
+func TestAppServerSpawnUsesConfiguredCwd(t *testing.T) {
+	t.Parallel()
+
+	cwd := t.TempDir()
+	helper := writeAppServerHelper(t, "while IFS= read -r _line; do :; done")
+	app := NewAppServer(AppServerConfig{Cwd: cwd})
+	proc, err := app.spawnWithRetry(context.Background(), helper, []string{"app-server"})
+	if err != nil {
+		t.Fatalf("spawnWithRetry: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = proc.stdin.Close()
+		_ = proc.cmd.Wait()
+	})
+
+	if got, want := proc.cmd.Dir, cwd; got != want {
+		t.Fatalf("spawned command directory = %q, want %q", got, want)
+	}
+}
+
+func TestAppServerSpawnResolvesRelativeCLIPathBeforeConfiguredCwd(t *testing.T) {
+	t.Parallel()
+
+	helper := writeAppServerHelper(t, "while IFS= read -r _line; do :; done")
+	callerDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get caller directory: %v", err)
+	}
+	relativeHelper, err := filepath.Rel(callerDir, helper)
+	if err != nil {
+		t.Fatalf("make helper path relative: %v", err)
+	}
+	if filepath.IsAbs(relativeHelper) {
+		t.Skip("relative helper path is unavailable across filesystem volumes")
+	}
+
+	cwd := t.TempDir()
+	for i := 0; i < 32; i++ {
+		cwd = filepath.Join(cwd, "nested")
+	}
+	if mkdirErr := os.MkdirAll(cwd, 0o700); mkdirErr != nil {
+		t.Fatalf("create configured directory: %v", mkdirErr)
+	}
+
+	app := NewAppServer(AppServerConfig{Cwd: cwd})
+	proc, err := app.spawnWithRetry(context.Background(), relativeHelper, []string{"app-server"})
+	if err != nil {
+		t.Fatalf("spawnWithRetry with explicit relative CLI path: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = proc.stdin.Close()
+		_ = proc.cmd.Wait()
+	})
+
+	if !filepath.IsAbs(proc.cmd.Path) {
+		t.Fatalf("spawned command path = %q, want caller-resolved absolute path", proc.cmd.Path)
+	}
+	if got, want := proc.cmd.Dir, cwd; got != want {
+		t.Fatalf("spawned command directory = %q, want %q", got, want)
+	}
+}
+
 func writeAppServerHelper(t *testing.T, body string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "codex-helper")
@@ -209,13 +271,21 @@ func writeAppServerHelper(t *testing.T, body string) string {
 		"if [ \"$1\" = \"--version\" ]; then echo \"codex 0.130.0\"; exit 0; fi\n" +
 		"if [ \"$1\" = \"app-server\" ]; then shift; fi\n" +
 		body + "\n"
-	if err := os.WriteFile(path, []byte(script), 0o644); err != nil {
-		t.Fatalf("write helper: %v", err)
-	}
-	if err := os.Chmod(path, 0o755); err != nil {
-		t.Fatalf("chmod helper: %v", err)
-	}
+	writeExecutableFixture(t, path, script)
 	return path
+}
+
+func writeExecutableFixture(t *testing.T, path, contents string) {
+	t.Helper()
+	temporaryPath := path + ".tmp"
+	if err := os.WriteFile(temporaryPath, []byte(contents), 0o700); err != nil {
+		t.Fatalf("write executable fixture: %v", err)
+	}
+	// Rename publishes a complete executable, avoiding ETXTBSY from a probe
+	// racing a writable fixture under parallel test load.
+	if err := os.Rename(temporaryPath, path); err != nil {
+		t.Fatalf("publish executable fixture: %v", err)
+	}
 }
 
 func TestAppServerStderrTailStableAfterClose(t *testing.T) {

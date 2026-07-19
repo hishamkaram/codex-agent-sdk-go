@@ -39,6 +39,10 @@ type AppServerConfig struct {
 	// is used at Connect time.
 	CLIPath string
 
+	// Cwd is the app-server process working directory. An empty value inherits
+	// the caller's cwd.
+	Cwd string
+
 	// GlobalArgs are passed before the "app-server" subcommand. Keep this
 	// internal lane narrow because these flags affect the whole Codex process.
 	GlobalArgs []string

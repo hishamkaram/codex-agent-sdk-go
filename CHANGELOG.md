@@ -7,6 +7,20 @@ All notable changes to the Codex Agent SDK for Go are documented in this file.
 - Expose the CLI-resolved thread model through `Thread.Model()`, including
   account defaults selected when `thread/start` omits a model override.
 
+### Fixed
+- Keep explicit relative `WithCLIPath` values anchored to the caller when
+  `WithCwd` launches the app-server from another directory.
+- Retry transient `ETXTBSY` failures for short-lived CLI probes and publish
+  their fixtures atomically; verify the live schema gate against an explicit
+  `workspace-write` sandbox before it consumes quota.
+- Bound the live schema sandbox preflight so an unavailable local sandbox
+  reaches an actionable failure instead of blocking the release gate, including
+  when a descendant retains its output pipes.
+- Verify standalone `go.mod` and `go.sum` metadata in the local test target
+  and CI so workspace state cannot mask an incomplete module checksum.
+- Decode current file-change `kind` payloads while preserving the legacy
+  `operation` projection for existing SDK consumers.
+
 ### Changed
 - Reorganized public client dispatch, hook bridge, thread ID helpers, event
   parser, and subprocess transport internals into smaller files for
@@ -16,6 +30,8 @@ All notable changes to the Codex Agent SDK for Go are documented in this file.
 ### Added
 - `DiscoverRuntimeControls()` reads approval and sandbox values from the
   installed Codex CLI and intersects them with `configRequirements/read`.
+- `FileChangePart.Kind` exposes the current app-server file-change
+  discriminator, including optional `move_path` metadata.
 - `Client.ReadConfigRequirements()` exposes provider-managed runtime
   constraints without hardcoding CLI-owned values.
 - `ErrRuntimeControlsUnsupported` lets callers distinguish an older CLI that

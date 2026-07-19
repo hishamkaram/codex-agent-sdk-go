@@ -34,7 +34,6 @@ func (t *AppServer) watchExit(cmd *exec.Cmd, stderrDone <-chan struct{}) {
 		}
 	}
 	waitErr := cmd.Wait()
-	t.waitDone <- waitErr
 
 	t.mu.Lock()
 	t.ready = false
@@ -61,6 +60,11 @@ func (t *AppServer) watchExit(cmd *exec.Cmd, stderrDone <-chan struct{}) {
 		cause = t.lastErr
 	}
 	t.mu.Unlock()
+
+	// Close uses waitDone as its completion barrier. Publish only after the
+	// corresponding Health state is visible, so callers cannot observe Ready
+	// after a successful close or failed initialization cleanup.
+	t.waitDone <- waitErr
 
 	t.exitOnce.Do(func() {
 		t.observer.OnSubprocessExit(exitCode, requested, cause)

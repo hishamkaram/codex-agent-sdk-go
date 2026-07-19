@@ -195,7 +195,9 @@ func (o *CodexOptions) WithClientInfo(name, version, title string) *CodexOptions
 // WithModel sets the default model for new threads.
 func (o *CodexOptions) WithModel(m string) *CodexOptions { o.DefaultModel = m; return o }
 
-// WithCwd sets the default working directory for new threads.
+// WithCwd sets the app-server's initial working directory and the default
+// working directory for new threads. Configure it before Connect when the
+// subprocess must launch outside the caller's working directory.
 func (o *CodexOptions) WithCwd(cwd string) *CodexOptions { o.DefaultCwd = cwd; return o }
 
 // WithSandbox sets the default sandbox mode for new threads.

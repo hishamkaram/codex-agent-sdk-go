@@ -1,6 +1,10 @@
 package transport
 
-import "testing"
+import (
+	"context"
+	"path/filepath"
+	"testing"
+)
 
 func TestParseSemVer(t *testing.T) {
 	t.Parallel()
@@ -53,5 +57,23 @@ func TestSemVer_AtLeast(t *testing.T) {
 				t.Fatalf("got %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestProbeCLIVersionAllowsShortLivedInheritedOutputPipe(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "codex")
+	script := "#!/bin/sh\n" +
+		"sleep 0.25 &\n" +
+		"printf '%s\\n' 'codex-cli 9.1.0'\n"
+	writeExecutableFixture(t, path, script)
+
+	version, err := ProbeCLIVersionContext(context.Background(), path, nil)
+	if err != nil {
+		t.Fatalf("ProbeCLIVersionContext() error = %v", err)
+	}
+	if want := (SemVer{Major: 9, Minor: 1, Patch: 0}); version != want {
+		t.Fatalf("ProbeCLIVersionContext() = %+v, want %+v", version, want)
 	}
 }

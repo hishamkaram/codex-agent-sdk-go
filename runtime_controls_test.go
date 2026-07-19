@@ -53,7 +53,7 @@ if [ "$1" = "--help" ]; then
 -h, --help
 EOF
 else
-  sleep 0.3
+  sleep 1
   echo 'codex-cli 9.1.0'
 fi
 `
@@ -66,8 +66,57 @@ fi
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("DiscoverRuntimeControls() error = %v, want caller deadline", err)
 	}
-	if elapsed := time.Since(started); elapsed > 250*time.Millisecond {
+	// WaitDelay bounds cancellation cleanup, but an overloaded CI worker can
+	// delay the test goroutine after the child has been stopped. Keep a generous
+	// scheduling allowance while staying below the fixture's uncanceled delay.
+	if elapsed := time.Since(started); elapsed > 750*time.Millisecond {
 		t.Fatalf("DiscoverRuntimeControls() took %v after caller deadline", elapsed)
+	}
+}
+
+func TestDiscoverRuntimeControlsAllowsShortLivedInheritedOutputPipe(t *testing.T) {
+	t.Parallel()
+
+	script := filepath.Join(t.TempDir(), "codex")
+	contents := `#!/bin/sh
+if [ "$1" = "--help" ]; then
+  sleep 0.25 &
+  printf '%s\n' '-s, --sandbox <SANDBOX_MODE>' '  [possible values: read-only]' '-a, --ask-for-approval <APPROVAL_POLICY>' '  - on-request: ask' '-h, --help'
+else
+  echo 'codex-cli 9.1.0'
+fi
+`
+	writeFakeRuntimeControlsCLI(t, script, contents)
+
+	controls, err := DiscoverRuntimeControls(
+		context.Background(),
+		types.NewCodexOptions().WithCLIPath(script),
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("DiscoverRuntimeControls() error = %v", err)
+	}
+	if controls.CLIVersion != "9.1.0" {
+		t.Fatalf("CLI version = %q, want 9.1.0", controls.CLIVersion)
+	}
+}
+
+func TestRequireExperimentalSchemaCommandAllowsShortLivedInheritedOutputPipe(t *testing.T) {
+	t.Parallel()
+
+	script := filepath.Join(t.TempDir(), "codex")
+	contents := `#!/bin/sh
+if [ "$1" = "app-server" ] && [ "$2" = "generate-json-schema" ] && [ "$3" = "--help" ]; then
+  sleep 0.25 &
+  printf '%s\n' 'Usage: codex app-server generate-json-schema' '  --experimental' '  --out <DIR>'
+  exit 0
+fi
+exit 99
+`
+	writeFakeRuntimeControlsCLI(t, script, contents)
+
+	if err := requireExperimentalSchemaCommand(context.Background(), script, nil); err != nil {
+		t.Fatalf("requireExperimentalSchemaCommand() error = %v", err)
 	}
 }
 
@@ -432,10 +481,8 @@ func writeFakeRuntimeControlsCLI(t *testing.T, path, contents string) {
 	if err := os.WriteFile(tmp, []byte(contents), 0o700); err != nil {
 		t.Fatalf("write fake CLI: %v", err)
 	}
+	// Publish atomically so parallel probes never execute a writable fixture.
 	if err := os.Rename(tmp, path); err != nil {
 		t.Fatalf("publish fake CLI: %v", err)
 	}
-	// Local file-indexing hooks may briefly reopen a new executable for write.
-	// Let that observer finish before the test asks the kernel to execute it.
-	time.Sleep(20 * time.Millisecond)
 }

@@ -1,16 +1,13 @@
 package codex
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/hishamkaram/codex-agent-sdk-go/internal/transport"
 	"github.com/hishamkaram/codex-agent-sdk-go/types"
@@ -43,20 +40,17 @@ func discoverExperimentalApprovalPolicies(
 	}
 	defer func() { _ = os.RemoveAll(outDir) }()
 
-	cmd := exec.CommandContext(
+	_, _, runErr := transport.RunCLICommand(
 		ctx,
 		cliPath,
+		env,
+		runtimeControlCommandWaitDelay,
 		"app-server",
 		"generate-json-schema",
 		"--experimental",
 		"--out",
 		outDir,
 	)
-	cmd.WaitDelay = 100 * time.Millisecond
-	cmd.Env = transport.BuildRuntimeEnvironment(env)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	runErr := cmd.Run()
 	if runErr != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, fmt.Errorf("codex.DiscoverRuntimeControls: generate app-server schema: %w", ctxErr)
@@ -102,18 +96,22 @@ func discoverExperimentalApprovalPolicies(
 }
 
 func requireExperimentalSchemaCommand(ctx context.Context, cliPath string, env []string) error {
-	cmd := exec.CommandContext(ctx, cliPath, "app-server", "generate-json-schema", "--help")
-	cmd.WaitDelay = 100 * time.Millisecond
-	cmd.Env = transport.BuildRuntimeEnvironment(env)
-	var output bytes.Buffer
-	cmd.Stdout = &output
-	cmd.Stderr = &output
-	if err := cmd.Run(); err != nil {
+	stdout, stderr, err := transport.RunCLICommand(
+		ctx,
+		cliPath,
+		env,
+		runtimeControlCommandWaitDelay,
+		"app-server",
+		"generate-json-schema",
+		"--help",
+	)
+	output := stdout + stderr
+	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return fmt.Errorf("codex.DiscoverRuntimeControls: app-server help: %w", ctxErr)
 		}
-		missingCommand := strings.Contains(output.String(), "unexpected argument 'generate-json-schema' found") ||
-			strings.Contains(output.String(), "unrecognized subcommand 'generate-json-schema'")
+		missingCommand := strings.Contains(output, "unexpected argument 'generate-json-schema' found") ||
+			strings.Contains(output, "unrecognized subcommand 'generate-json-schema'")
 		if missingCommand {
 			return fmt.Errorf(
 				"codex.DiscoverRuntimeControls: app-server schema command is unavailable: %w",
@@ -123,7 +121,7 @@ func requireExperimentalSchemaCommand(ctx context.Context, cliPath string, env [
 		return fmt.Errorf("codex.DiscoverRuntimeControls: app-server help: %w", err)
 	}
 	required := map[string]bool{"--experimental": false, "--out": false}
-	for _, field := range strings.Fields(output.String()) {
+	for _, field := range strings.Fields(output) {
 		if _, ok := required[field]; ok {
 			required[field] = true
 		}

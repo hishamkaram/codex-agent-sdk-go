@@ -87,9 +87,62 @@ type FileChange struct {
 
 // FileChangePart is one file's change within a FileChange item.
 type FileChangePart struct {
-	Path      string `json:"path"`
-	Operation string `json:"operation"` // "create" | "modify" | "delete"
-	Diff      string `json:"diff,omitempty"`
+	Path string `json:"path"`
+	// Kind is the current app-server operation shape. Operation remains populated
+	// as a compatibility projection for older SDK consumers and wire payloads.
+	Kind      *PatchChangeKind `json:"kind,omitempty"`
+	Operation string           `json:"operation,omitempty"` // "create" | "modify" | "delete"
+	Diff      string           `json:"diff,omitempty"`
+}
+
+// PatchChangeKind is the current app-server file operation discriminator.
+type PatchChangeKind struct {
+	Type     string  `json:"type"` // "add" | "update" | "delete"
+	MovePath *string `json:"move_path,omitempty"`
+}
+
+func (p *FileChangePart) UnmarshalJSON(data []byte) error {
+	type wirePart FileChangePart
+	decoded := wirePart(*p)
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	*p = FileChangePart(decoded)
+	_, kindProvided := fields["kind"]
+	_, operationProvided := fields["operation"]
+	if kindProvided && !operationProvided {
+		p.Operation = ""
+		if p.Kind != nil {
+			p.Operation = legacyFileChangeOperation(p.Kind.Type)
+		}
+	}
+	return nil
+}
+
+func (p FileChangePart) MarshalJSON() ([]byte, error) {
+	type wirePart FileChangePart
+	encoded := wirePart(p)
+	if encoded.Kind != nil {
+		encoded.Operation = ""
+	}
+	return json.Marshal(encoded)
+}
+
+func legacyFileChangeOperation(kind string) string {
+	switch kind {
+	case "add":
+		return "create"
+	case "update":
+		return "modify"
+	case "delete":
+		return "delete"
+	default:
+		return ""
+	}
 }
 
 func (*FileChange) isThreadItem()    {}
