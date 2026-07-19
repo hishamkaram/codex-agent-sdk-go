@@ -138,6 +138,8 @@ func TestClient_CloseWaitsForDispatcherBeforeClosingCompactSubscription(t *testi
 }
 
 func TestClient_CloseDuringConnectCancelsHungInitialize(t *testing.T) {
+	t.Parallel()
+
 	marker := filepath.Join(t.TempDir(), "started")
 	helper := filepath.Join(t.TempDir(), "codex-helper")
 	script := fmt.Sprintf(`#!/bin/sh
@@ -146,39 +148,46 @@ if [ "$1" = "app-server" ]; then shift; fi
 printf started > %q
 while IFS= read -r line; do :; done
 `, marker)
-	if err := os.WriteFile(helper, []byte(script), 0o755); err != nil {
-		t.Fatalf("write helper: %v", err)
-	}
+	writeClientExecutable(t, helper, script)
 
 	c, err := NewClient(context.Background(), types.NewCodexOptions().WithCLIPath(helper))
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
+	t.Cleanup(func() {
+		closeCtx, closeCancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer closeCancel()
+		_ = c.Close(closeCtx)
+	})
 
 	connectDone := make(chan error, 1)
-	go func() {
+	go func(client *Client) {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
-		connectDone <- c.Connect(ctx)
-	}()
+		connectDone <- client.Connect(ctx)
+	}(c)
 
-	deadline := time.Now().Add(1 * time.Second)
+	startupTimeout := time.NewTimer(time.Second)
+	defer startupTimeout.Stop()
+	poll := time.NewTicker(10 * time.Millisecond)
+	defer poll.Stop()
 	for {
 		if _, err := os.Stat(marker); err == nil && c.ProcessID() != 0 {
 			break
 		}
-		if time.Now().After(deadline) {
+		select {
+		case <-startupTimeout.C:
 			t.Fatal("fake app-server did not start")
+		case <-poll.C:
 		}
-		time.Sleep(10 * time.Millisecond)
 	}
 
 	closeDone := make(chan error, 1)
-	go func() {
+	go func(client *Client) {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
-		closeDone <- c.Close(ctx)
-	}()
+		closeDone <- client.Close(ctx)
+	}(c)
 
 	select {
 	case err := <-connectDone:
@@ -208,6 +217,54 @@ while IFS= read -r line; do :; done
 	}
 }
 
+func TestClientConnectUsesDefaultCwdForSubprocess(t *testing.T) {
+	t.Parallel()
+
+	cwd := t.TempDir()
+	marker := filepath.Join(t.TempDir(), "cwd")
+	helper := filepath.Join(t.TempDir(), "codex-helper")
+	script := fmt.Sprintf(`#!/bin/sh
+if [ "$1" = "--version" ]; then echo "codex 0.144.4"; exit 0; fi
+if [ "$1" = "app-server" ]; then shift; fi
+pwd > %q
+IFS= read -r _initialize
+printf '%%s\n' '{"id":1,"result":{}}'
+while IFS= read -r line; do :; done
+`, marker)
+	writeClientExecutable(t, helper, script)
+
+	c, err := NewClient(context.Background(), types.NewCodexOptions().WithCLIPath(helper).WithCwd(cwd))
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	t.Cleanup(func() {
+		closeCtx, closeCancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer closeCancel()
+		_ = c.Close(closeCtx)
+	})
+	connectDone := make(chan error, 1)
+	go func(client *Client, connectCtx context.Context) {
+		connectDone <- client.Connect(connectCtx)
+	}(c, ctx)
+	select {
+	case connectErr := <-connectDone:
+		if connectErr != nil {
+			t.Fatalf("Connect: %v", connectErr)
+		}
+	case <-ctx.Done():
+		t.Fatalf("Connect did not complete: %v", ctx.Err())
+	}
+	contents, err := os.ReadFile(marker)
+	if err != nil {
+		t.Fatalf("read subprocess cwd marker: %v", err)
+	}
+	if got := strings.TrimSpace(string(contents)); got != cwd {
+		t.Fatalf("subprocess cwd = %q, want %q", got, cwd)
+	}
+}
+
 func TestClient_InitializeTimeoutIsCLIConnectionError(t *testing.T) {
 	t.Parallel()
 
@@ -222,9 +279,7 @@ printf 'DATABASE_URL=postgres://user:%s@localhost/db\n' >&2
 printf 'Authorization: Bearer %s%s\n' >&2
 while IFS= read -r line; do :; done
 `, secret, secret, strings.Repeat("x", stderrDiagnosticTailLimit), secretSuffix)
-	if err := os.WriteFile(helper, []byte(script), 0o755); err != nil {
-		t.Fatalf("write helper: %v", err)
-	}
+	writeClientExecutable(t, helper, script)
 	core, logs := observer.New(zap.DebugLevel)
 	c, err := NewClient(
 		context.Background(),
@@ -263,6 +318,17 @@ while IFS= read -r line; do :; done
 	}
 	if !strings.Contains(stderrTail, "<redacted>") {
 		t.Fatalf("stderr diagnostic tail = %q, want redaction marker", stderrTail)
+	}
+}
+
+func writeClientExecutable(t *testing.T, path, contents string) {
+	t.Helper()
+	temporaryPath := path + ".tmp"
+	if err := os.WriteFile(temporaryPath, []byte(contents), 0o700); err != nil {
+		t.Fatalf("write client executable fixture: %v", err)
+	}
+	if err := os.Rename(temporaryPath, path); err != nil {
+		t.Fatalf("publish client executable fixture: %v", err)
 	}
 }
 

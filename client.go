@@ -120,37 +120,9 @@ func (c *Client) Connect(ctx context.Context) (err error) {
 		}
 	}()
 
-	// Hook-bridge auto-wiring is end-to-end. By default, HookCallback uses an
-	// isolated CODEX_HOME containing SDK-generated hooks.json. Opt-in
-	// user-home mode preserves the original backup/restore behavior.
-	extraEnv := append([]string(nil), c.opts.Env...)
-	if c.opts.HookCallback != nil {
-		if hookErr := c.setupHookBridge(connectCtx, &extraEnv); hookErr != nil {
-			return fmt.Errorf("codex.Client.Connect: hook bridge: %w", hookErr)
-		}
-	}
-	versionProbe := probeCLICompatibilityVersion(connectCtx, c.opts, extraEnv)
-	cliVersion, cliVersionKnown := versionProbe.Version, versionProbe.Err == nil
-	c.cliCompatibility.Store(&cliCompatibilityState{version: cliVersion, known: cliVersionKnown})
-
-	maxParseErrors := uint(0)
-	if c.opts.MaxConsecutiveParseErrors != nil {
-		maxParseErrors = *c.opts.MaxConsecutiveParseErrors
-	}
-	globalArgs, extraArgs := cliCompatibilityArgs(c.opts, cliVersion, cliVersionKnown)
-	tr := transport.NewAppServer(transport.AppServerConfig{
-		CLIPath:                   c.opts.CLIPath,
-		GlobalArgs:                globalArgs,
-		VersionProbe:              &versionProbe,
-		ExtraArgs:                 extraArgs,
-		Env:                       extraEnv,
-		Logger:                    c.logger,
-		ReadBufferSize:            c.opts.ReadBufferSize,
-		Observer:                  c.opts.ObserverOrNop(),
-		MaxConsecutiveParseErrors: maxParseErrors,
-	})
-	if connErr := tr.Connect(connectCtx); connErr != nil {
-		return fmt.Errorf("codex.Client.Connect: transport: %w", connErr)
+	tr, connErr := c.connectTransport(connectCtx)
+	if connErr != nil {
+		return connErr
 	}
 	demux := tr.Demux()
 	if publishErr := c.publishConnectingTransport(tr, demux); publishErr != nil {
@@ -195,6 +167,43 @@ func (c *Client) Connect(ctx context.Context) (err error) {
 		zap.String("user_agent", c.initResult.UserAgent),
 		zap.String("codex_home", c.initResult.CodexHome))
 	return nil
+}
+
+func (c *Client) connectTransport(ctx context.Context) (*transport.AppServer, error) {
+	// Hook-bridge auto-wiring is end-to-end. By default, HookCallback uses an
+	// isolated CODEX_HOME containing SDK-generated hooks.json. Opt-in user-home
+	// mode preserves the original backup/restore behavior.
+	extraEnv := append([]string(nil), c.opts.Env...)
+	if c.opts.HookCallback != nil {
+		if err := c.setupHookBridge(ctx, &extraEnv); err != nil {
+			return nil, fmt.Errorf("codex.Client.Connect: hook bridge: %w", err)
+		}
+	}
+	versionProbe := probeCLICompatibilityVersion(ctx, c.opts, extraEnv)
+	knownVersion := versionProbe.Err == nil
+	c.cliCompatibility.Store(&cliCompatibilityState{version: versionProbe.Version, known: knownVersion})
+
+	maxParseErrors := uint(0)
+	if c.opts.MaxConsecutiveParseErrors != nil {
+		maxParseErrors = *c.opts.MaxConsecutiveParseErrors
+	}
+	globalArgs, extraArgs := cliCompatibilityArgs(c.opts, versionProbe.Version, knownVersion)
+	tr := transport.NewAppServer(transport.AppServerConfig{
+		CLIPath:                   c.opts.CLIPath,
+		Cwd:                       c.opts.DefaultCwd,
+		GlobalArgs:                globalArgs,
+		VersionProbe:              &versionProbe,
+		ExtraArgs:                 extraArgs,
+		Env:                       extraEnv,
+		Logger:                    c.logger,
+		ReadBufferSize:            c.opts.ReadBufferSize,
+		Observer:                  c.opts.ObserverOrNop(),
+		MaxConsecutiveParseErrors: maxParseErrors,
+	})
+	if err := tr.Connect(ctx); err != nil {
+		return nil, fmt.Errorf("codex.Client.Connect: transport: %w", err)
+	}
+	return tr, nil
 }
 
 func (c *Client) beginConnect(ctx context.Context) (
@@ -444,24 +453,7 @@ func (c *Client) Close(ctx context.Context) error {
 	}
 
 	connectCancel, dispatcherCancel, dispatcherDone, demux, tr := c.closeSnapshot()
-	if connectCancel != nil {
-		connectCancel()
-	}
-	if dispatcherCancel != nil {
-		dispatcherCancel()
-	}
-	if demux != nil {
-		_ = demux.Close()
-	}
-
-	var waitErr error
-	if dispatcherDone != nil {
-		select {
-		case <-dispatcherDone:
-		case <-ctx.Done():
-			waitErr = fmt.Errorf("codex.Client.Close: waiting for dispatcher: %w", ctx.Err())
-		}
-	}
+	waitErr := stopClientDispatcher(ctx, connectCancel, dispatcherCancel, dispatcherDone, demux)
 
 	c.mu.Lock()
 	for _, t := range c.threads {
@@ -487,6 +479,33 @@ func (c *Client) Close(ctx context.Context) error {
 	// in-flight hook subprocess can still dial the socket.
 	c.closeHookBridge()
 	return errors.Join(trErr, waitErr)
+}
+
+func stopClientDispatcher(
+	ctx context.Context,
+	connectCancel context.CancelFunc,
+	dispatcherCancel context.CancelFunc,
+	dispatcherDone chan struct{},
+	demux *jsonrpc.Demux,
+) error {
+	if connectCancel != nil {
+		connectCancel()
+	}
+	if dispatcherCancel != nil {
+		dispatcherCancel()
+	}
+	if demux != nil {
+		_ = demux.Close()
+	}
+	if dispatcherDone == nil {
+		return nil
+	}
+	select {
+	case <-dispatcherDone:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("codex.Client.Close: waiting for dispatcher: %w", ctx.Err())
+	}
 }
 
 func (c *Client) closeSnapshot() (

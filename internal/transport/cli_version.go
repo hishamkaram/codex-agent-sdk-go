@@ -1,10 +1,8 @@
 package transport
 
 import (
-	"bytes"
 	"context"
 	"fmt"
-	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
@@ -14,7 +12,10 @@ import (
 // RecommendedCLIVersion is the minimum tested codex CLI version. The SDK
 // does NOT reject older versions — the check is soft (probe + warn) per the
 // v0.1.0 design. Callers can inspect the version via ProbeCLIVersion.
-const RecommendedCLIVersion = "0.144.1"
+const (
+	RecommendedCLIVersion = "0.144.1"
+	cliVersionWaitDelay   = 500 * time.Millisecond
+)
 
 // SemVer is a minimal semantic version struct.
 type SemVer struct {
@@ -103,18 +104,13 @@ func probeCLIVersionWithEnvironment(
 	ctx, cancel := context.WithTimeout(parent, 5*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, cliPath, "--version")
-	cmd.WaitDelay = 100 * time.Millisecond
-	cmd.Env = BuildRuntimeEnvironment(env)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
+	stdout, stderr, err := RunCLICommand(ctx, cliPath, env, cliVersionWaitDelay, "--version")
+	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return SemVer{}, fmt.Errorf("transport.ProbeCLIVersion: %w", ctxErr)
 		}
 		return SemVer{}, fmt.Errorf("transport.ProbeCLIVersion: run %q --version: %w (stderr=%q)",
-			cliPath, err, stderr.String())
+			cliPath, err, stderr)
 	}
-	return ParseSemVer(stdout.String())
+	return ParseSemVer(stdout)
 }

@@ -236,9 +236,16 @@ run:
 
 ```bash
 make check-schema-drift
-CODEX_SDK_RUN_TURNS=1 go test -tags=integration -count=1 -p 1 \
-  ./tests/... -run TestIntegrationSchema -timeout=300s -v
+make test-codex-livecli
 ```
+
+`make test-codex-livecli` requires Codex authentication and runs the strict
+schema turn five times. Before spending quota, its integration test verifies that
+`codex sandbox -c 'sandbox_mode="workspace-write"' /bin/true` can start the
+explicit `workspace-write` sandbox. A failed sandbox preflight is a hard
+failure, not a skipped live test; the preflight is bounded, and on Linux the
+target reports the known Bubblewrap loopback permission error separately. Its
+subprocess wait is also bounded when a sandbox descendant retains output pipes.
 
 To re-capture the v0.4.0 command fixtures, run the opt-in probe:
 

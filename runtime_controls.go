@@ -1,11 +1,9 @@
 package codex
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
-	"os/exec"
 	"regexp"
 	"strings"
 	"time"
@@ -13,6 +11,8 @@ import (
 	"github.com/hishamkaram/codex-agent-sdk-go/internal/transport"
 	"github.com/hishamkaram/codex-agent-sdk-go/types"
 )
+
+const runtimeControlCommandWaitDelay = 500 * time.Millisecond
 
 var approvalChoiceRE = regexp.MustCompile(`^\s*-\s+([a-z][a-z0-9-]*):`)
 
@@ -43,19 +43,20 @@ func DiscoverRuntimeControls(
 	}
 	probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(probeCtx, cliPath, "--help")
-	cmd.WaitDelay = 100 * time.Millisecond
-	cmd.Env = transport.BuildRuntimeEnvironment(options.Env)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
+	stdout, stderr, err := transport.RunCLICommand(
+		probeCtx,
+		cliPath,
+		options.Env,
+		runtimeControlCommandWaitDelay,
+		"--help",
+	)
+	if err != nil {
 		if ctxErr := probeCtx.Err(); ctxErr != nil {
 			return types.RuntimeControlCapabilities{}, fmt.Errorf("codex.DiscoverRuntimeControls: CLI help: %w", ctxErr)
 		}
 		return types.RuntimeControlCapabilities{}, fmt.Errorf("codex.DiscoverRuntimeControls: CLI help: %w", err)
 	}
-	help := stdout.String() + "\n" + stderr.String()
+	help := stdout + "\n" + stderr
 	approvals, sandboxes := parseRuntimeControls(help)
 	if len(approvals) == 0 || len(sandboxes) == 0 {
 		return types.RuntimeControlCapabilities{}, fmt.Errorf(

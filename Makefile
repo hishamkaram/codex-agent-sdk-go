@@ -1,7 +1,7 @@
 LEFTHOOK_MODULE  ?= github.com/evilmartians/lefthook/v2
 LEFTHOOK_VERSION ?= v2.1.5
 
-.PHONY: help build test test-all test-integration test-codex-livecli bench fmt lint clean coverage govulncheck hooks examples regen-schema check-schema-drift shim install-shim
+.PHONY: help build test test-all test-integration test-codex-livecli verify-module bench fmt lint clean coverage govulncheck hooks examples regen-schema check-schema-drift shim install-shim
 
 help:
 	@echo "Codex Agent SDK for Go - Development Tasks"
@@ -9,8 +9,9 @@ help:
 	@echo "Available targets:"
 	@echo "  make build           - Build the SDK"
 	@echo "  make test            - Run unit tests (default, fast)"
-	@echo "  make test-all        - Run ALL tests including integration (requires codex CLI + OPENAI_API_KEY)"
+	@echo "  make test-all        - Run ALL tests including integration (requires codex CLI authentication)"
 	@echo "  make test-integration - Run integration tests only"
+	@echo "  make verify-module   - Verify standalone module metadata"
 	@echo "  make bench           - Run benchmarks"
 	@echo "  make fmt             - Format code with gofmt"
 	@echo "  make lint            - Run go vet and golangci-lint"
@@ -30,11 +31,12 @@ build:
 test:
 	@echo "Running unit tests (short mode)..."
 	@echo "Note: Integration tests skipped. Use 'make test-all' to run all tests."
+	@$(MAKE) verify-module
 	go test -race -short -count=1 -p 4 ./...
 
 test-all:
 	@echo "Running ALL tests (including integration tests)..."
-	@echo "WARNING: This will spawn codex CLI processes if OPENAI_API_KEY is set"
+	@echo "WARNING: This will spawn codex CLI processes when Codex authentication is available"
 	go test -race -count=1 -p 4 -tags=integration ./...
 
 test-integration:
@@ -43,8 +45,14 @@ test-integration:
 
 test-codex-livecli:
 	@echo "Running live-CLI schema integration test 5 consecutive times (feature 187)..."
-	@test -n "$${OPENAI_API_KEY}" || { echo "OPENAI_API_KEY required"; exit 1; }
+	@auth_file="$${CODEX_HOME:-$${HOME}/.codex}/auth.json"; \
+		test -n "$${OPENAI_API_KEY}" || test -f "$$auth_file" || { echo "Codex authentication required: set OPENAI_API_KEY or run codex login"; exit 1; }
 	go test -tags=integration -race -count=5 -run TestIntegrationSchema ./tests/...
+
+verify-module:
+	@echo "Verifying standalone module metadata..."
+	@GOWORK=off go mod tidy -diff
+	@GOWORK=off go list -mod=readonly -m all > /dev/null
 
 bench:
 	@echo "Running benchmarks..."
