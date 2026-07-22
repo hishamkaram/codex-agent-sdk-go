@@ -106,6 +106,40 @@ func TestParseEvent_TurnCompleted_NestedRealShape(t *testing.T) {
 	}
 }
 
+func TestParseEvent_TurnCompleted_FailurePreservesError(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name   string
+		params json.RawMessage
+	}{
+		{
+			name:   "nested",
+			params: json.RawMessage(`{"threadId":"T","turn":{"id":"U","status":"failed","error":{"message":"quota exhausted"}}}`),
+		},
+		{
+			name:   "flat fallback",
+			params: json.RawMessage(`{"threadId":"T","turnId":"U","status":"failed","error":{"message":"quota exhausted"}}`),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			ev, err := ParseEvent(jsonrpc.Notification{Method: "turn/completed", Params: tc.params})
+			if err != nil {
+				t.Fatal(err)
+			}
+			completed, ok := ev.(*types.TurnCompleted)
+			if !ok {
+				t.Fatalf("event = %T, want *types.TurnCompleted", ev)
+			}
+			if completed.Error != "quota exhausted" {
+				t.Fatalf("Error = %q, want quota exhausted", completed.Error)
+			}
+		})
+	}
+}
+
 func TestParseEvent_TurnCompleted_FlatFallbackShape(t *testing.T) {
 	t.Parallel()
 	// Forward-compat: older/other CLI versions may use flat turnId +
