@@ -37,12 +37,14 @@ func (*TurnStarted) isThreadEvent()      {}
 func (*TurnStarted) EventMethod() string { return "turn/started" }
 
 // TurnCompleted is emitted when the turn reaches a terminal state. Status
-// is "success" | "failed" | "canceled". Usage is the final per-turn
+// is "success" | "failed" | "canceled". Error is the provider-supplied
+// terminal failure message when available. Usage is the final per-turn
 // accounting.
 type TurnCompleted struct {
 	ThreadID string     `json:"thread_id"`
 	TurnID   string     `json:"turn_id"`
 	Status   string     `json:"status"`
+	Error    string     `json:"error,omitempty"`
 	Usage    TokenUsage `json:"usage"`
 }
 

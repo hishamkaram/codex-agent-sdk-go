@@ -30,17 +30,19 @@ func parseTurnCompleted(raw json.RawMessage) (types.ThreadEvent, error) {
 	// "durationMs","items":[]}}. Earlier design-time assumptions used
 	// flat {"turnId","status","usage"} — we tolerate both for
 	// forward-compat.
+	type terminalError struct {
+		Message string `json:"message"`
+	}
 	var env struct {
 		ThreadID string `json:"threadId"`
 		TurnID   string `json:"turnId"`
 		Turn     *struct {
-			ID     string `json:"id"`
-			Status string `json:"status"`
-			Error  *struct {
-				Message string `json:"message"`
-			} `json:"error,omitempty"`
+			ID     string         `json:"id"`
+			Status string         `json:"status"`
+			Error  *terminalError `json:"error,omitempty"`
 		} `json:"turn,omitempty"`
 		Status string            `json:"status,omitempty"`
+		Error  *terminalError    `json:"error,omitempty"`
 		Usage  *types.TokenUsage `json:"usage,omitempty"`
 	}
 	if err := unmarshalTo(raw, &env); err != nil {
@@ -48,6 +50,10 @@ func parseTurnCompleted(raw json.RawMessage) (types.ThreadEvent, error) {
 	}
 	turnID := env.TurnID
 	status := env.Status
+	errorMessage := ""
+	if env.Error != nil {
+		errorMessage = env.Error.Message
+	}
 	if env.Turn != nil {
 		if turnID == "" {
 			turnID = env.Turn.ID
@@ -55,11 +61,15 @@ func parseTurnCompleted(raw json.RawMessage) (types.ThreadEvent, error) {
 		if status == "" {
 			status = env.Turn.Status
 		}
+		if env.Turn.Error != nil {
+			errorMessage = env.Turn.Error.Message
+		}
 	}
 	ev := &types.TurnCompleted{
 		ThreadID: env.ThreadID,
 		TurnID:   turnID,
 		Status:   status,
+		Error:    errorMessage,
 	}
 	if env.Usage != nil {
 		ev.Usage = *env.Usage

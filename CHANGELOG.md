@@ -6,6 +6,7 @@ All notable changes to the Codex Agent SDK for Go are documented in this file.
 
 - Expose the CLI-resolved thread model through `Thread.Model()`, including
   account defaults selected when `thread/start` omits a model override.
+- Preserve provider terminal failure text on `TurnCompleted.Error`.
 
 ### Fixed
 - Keep explicit relative `WithCLIPath` values anchored to the caller when

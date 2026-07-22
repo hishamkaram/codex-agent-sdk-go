@@ -206,6 +206,10 @@ The Go type is `Content []UserMessagePart` — not a single string.
 Status values observed: `"completed"` (success) and `"failed"`. The
 parser tolerates BOTH the nested shape and a flat fallback.
 
+Failed terminal turns can include `turn.error.message`. The SDK preserves
+that message on `TurnCompleted.Error`; callers that present it to users must
+apply their own redaction policy.
+
 ### `turn/completed` does NOT carry usage
 
 Usage flows as a separate stream via `thread/tokenUsage/updated` with
