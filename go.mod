@@ -2,7 +2,7 @@ module github.com/hishamkaram/codex-agent-sdk-go
 
 go 1.25.10
 
-toolchain go1.25.12
+toolchain go1.25.13
 
 require (
 	go.uber.org/goleak v1.3.0
