@@ -17,13 +17,12 @@ import (
 // a real PID; post-StartThread SessionID must equal the thread's ID.
 // No billing — does not run a turn.
 func TestIntegration_ClientAccessors(t *testing.T) {
-	requireCodex(t)
 	requireAuth(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	client, err := codex.NewClient(ctx, types.NewCodexOptions())
+	client, err := codex.NewClient(ctx, integrationOptions(t))
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}

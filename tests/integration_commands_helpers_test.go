@@ -21,13 +21,12 @@ import (
 
 func connectReadOnlyClient(t *testing.T) *codex.Client {
 	t.Helper()
-	requireCodex(t)
 	requireAuth(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	t.Cleanup(cancel)
 
-	opts := types.NewCodexOptions()
+	opts := integrationOptions(t)
 	c, err := codex.NewClient(ctx, opts)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)

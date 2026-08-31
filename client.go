@@ -33,10 +33,12 @@ type Client struct {
 	// InitializeResult from the handshake. Populated during Connect.
 	initResult InitializeResult
 
-	mu               sync.Mutex
-	threads          map[string]*Thread
-	latestThreadID   string
-	cliCompatibility atomic.Pointer[cliCompatibilityState]
+	mu                          sync.Mutex
+	threads                     map[string]*Thread
+	latestThreadID              string
+	threadEventSubscribers      map[uint64]*threadEventSubscriber
+	nextThreadEventSubscriberID uint64
+	cliCompatibility            atomic.Pointer[cliCompatibilityState]
 
 	lifecycleMu    sync.Mutex
 	connectStarted atomic.Bool
@@ -91,9 +93,10 @@ func NewClient(ctx context.Context, opts *types.CodexOptions) (*Client, error) {
 		logger = sdklog.NewLogger(true)
 	}
 	return &Client{
-		opts:    opts,
-		logger:  logger,
-		threads: make(map[string]*Thread),
+		opts:                   opts,
+		logger:                 logger,
+		threads:                make(map[string]*Thread),
+		threadEventSubscribers: make(map[uint64]*threadEventSubscriber),
 	}, nil
 }
 
@@ -271,8 +274,8 @@ func (c *Client) startDispatcher(
 	c.dispatcherCtx = dispatcherCtx
 	c.dispatcherCancel = dispatcherCancel
 	c.dispatcherDone = make(chan struct{})
-	go c.dispatch(dispatcherCtx, demux, c.dispatcherDone)
 	c.connected.Store(true)
+	go c.dispatch(dispatcherCtx, demux, c.dispatcherDone)
 	return nil
 }
 
@@ -456,6 +459,10 @@ func (c *Client) Close(ctx context.Context) error {
 	waitErr := stopClientDispatcher(ctx, connectCancel, dispatcherCancel, dispatcherDone, demux)
 
 	c.mu.Lock()
+	for _, subscriber := range c.threadEventSubscribers {
+		subscriber.close()
+	}
+	c.threadEventSubscribers = nil
 	for _, t := range c.threads {
 		t.markClosed()
 	}

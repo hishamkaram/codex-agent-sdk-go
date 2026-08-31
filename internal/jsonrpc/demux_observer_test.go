@@ -167,9 +167,59 @@ func TestDemux_GiveUpTerminates(t *testing.T) {
 	if err, _ := handlerErr.Load().(error); !errors.Is(err, ErrParseGiveUp) {
 		t.Fatalf("onUnrecoverable err = %v, want ErrParseGiveUp", err)
 	}
-	// (3) channels are closed after give-up.
-	if _, ok := <-d.Notifications(); ok {
-		t.Fatal("notifications channel not closed after give-up")
+	// (3) the consecutive malformed-frame run is represented by one gap before
+	// the channel closes. Telemetry above retains the exact frame count.
+	var gaps uint
+	for note := range d.Notifications() {
+		if note.DecodeError == nil {
+			t.Fatalf("notification before give-up close = %+v, want decode gap", note)
+		}
+		gaps++
+	}
+	if gaps != 1 {
+		t.Fatalf("decode gaps before close = %d, want 1", gaps)
+	}
+}
+
+func TestDemux_GiveUpAboveNotificationCapacityDoesNotBlockWithoutConsumer(t *testing.T) {
+	t.Parallel()
+
+	const threshold uint = 100
+	d, s := makeDemuxWithObserver(t, WithMaxParseErrors(threshold))
+	defer s.close()
+
+	writeDone := make(chan error, 1)
+	go func() {
+		for range threshold {
+			if _, err := s.serverOut.Write([]byte("garbage\n")); err != nil {
+				writeDone <- err
+				return
+			}
+		}
+		writeDone <- nil
+	}()
+
+	select {
+	case err := <-d.LoopError():
+		if !errors.Is(err, ErrParseGiveUp) {
+			t.Fatalf("LoopError = %v, want ErrParseGiveUp", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("demux blocked on gap delivery before reaching parse threshold")
+	}
+	if err := <-writeDone; err != nil {
+		t.Fatalf("write malformed frames: %v", err)
+	}
+
+	var gaps int
+	for note := range d.Notifications() {
+		if note.DecodeError == nil {
+			t.Fatalf("notification before give-up close = %+v, want decode gap", note)
+		}
+		gaps++
+	}
+	if gaps != 1 {
+		t.Fatalf("decode gaps before close = %d, want 1", gaps)
 	}
 }
 

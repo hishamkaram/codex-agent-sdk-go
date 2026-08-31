@@ -137,12 +137,11 @@ func buildShimBinary(t *testing.T) string {
 // scaffold for all callback integration tests.
 func connectWithCallback(t *testing.T, handler types.HookHandler, opts ...func(*types.CodexOptions) *types.CodexOptions) *codex.Client {
 	t.Helper()
-	requireCodex(t)
 	requireAuth(t)
 	safetyNetHooksJSON(t)
 	shim := buildShimBinary(t)
 
-	o := types.NewCodexOptions().
+	o := integrationOptions(t).
 		WithShimPath(shim).
 		WithHookCallback(handler).
 		WithHookConfigMode(types.HookConfigModeUserHome)
@@ -169,7 +168,6 @@ func connectWithCallback(t *testing.T, handler types.HookHandler, opts ...func(*
 // config which is byte-backed-up), Close restores byte-identically.
 // Does NOT run any turn — gates on requireCodex only (no quota).
 func TestLifecycle_HooksJsonBackupRestore(t *testing.T) {
-	requireCodex(t)
 	requireAuth(t)
 	safetyNetHooksJSON(t)
 	shim := buildShimBinary(t)
@@ -187,7 +185,7 @@ func TestLifecycle_HooksJsonBackupRestore(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	opts := types.NewCodexOptions().
+	opts := integrationOptions(t).
 		WithShimPath(shim).
 		WithHookCallback(types.DefaultAllowHookHandler).
 		WithHookConfigMode(types.HookConfigModeUserHome)
@@ -238,12 +236,11 @@ func TestLifecycle_HooksJsonBackupRestore(t *testing.T) {
 // while a first is already managing the user's config. Last-writer-wins
 // would silently corrupt the user's true original on Close, so we error.
 func TestLifecycle_ConcurrentClientsConflict(t *testing.T) {
-	requireCodex(t)
 	requireAuth(t)
 	safetyNetHooksJSON(t)
 	shim := buildShimBinary(t)
 
-	opts := types.NewCodexOptions().
+	opts := integrationOptions(t).
 		WithShimPath(shim).
 		WithHookCallback(types.DefaultAllowHookHandler).
 		WithHookConfigMode(types.HookConfigModeUserHome)
@@ -610,10 +607,9 @@ func TestHookCallback_Timeout(t *testing.T) {
 // firing observer events.
 func TestIntegration_HookObserverEndToEnd(t *testing.T) {
 	requireRunTurns(t)
-	requireCodex(t)
 	requireAuth(t)
 
-	opts := types.NewCodexOptions().
+	opts := integrationOptions(t).
 		WithSandbox(types.SandboxWorkspaceWrite).
 		WithApprovalPolicy(types.ApprovalNever)
 

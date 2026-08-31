@@ -113,9 +113,7 @@ func (t *Thread) CleanBackgroundTerminals(ctx context.Context) error {
 	if t.closed.Load() {
 		return fmt.Errorf("codex.Thread.CleanBackgroundTerminals: thread closed")
 	}
-	_, err := t.client.sendRaw(ctx, "Thread.CleanBackgroundTerminals", "thread/backgroundTerminals/clean", map[string]any{
-		"threadId": t.id,
-	})
+	err := t.client.CleanBackgroundTerminals(ctx, t.id)
 	if err != nil && types.IsFeatureNotEnabledError(err) {
 		// Augment with concrete remediation advice.
 		return fmt.Errorf("%w (set CodexOptions.WithExperimentalAPI(true) at NewClient)", err)

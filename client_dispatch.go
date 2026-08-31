@@ -2,6 +2,7 @@ package codex
 
 import (
 	"context"
+	"errors"
 
 	"github.com/hishamkaram/codex-agent-sdk-go/internal/events"
 	"github.com/hishamkaram/codex-agent-sdk-go/internal/jsonrpc"
@@ -9,31 +10,73 @@ import (
 	"go.uber.org/zap"
 )
 
+var errThreadEventIdentityMissing = errors.New("thread-scoped notification is missing required thread ID")
+
 // dispatch runs the event-routing goroutine. Reads notifications and
 // server-initiated requests from the demux and fans them out.
 func (c *Client) dispatch(ctx context.Context, demux *jsonrpc.Demux, done chan struct{}) {
-	defer close(done)
-	for {
+	defer func() {
+		c.connected.Store(false)
+		c.closeThreadEventSubscriptions()
+		close(done)
+	}()
+
+	notifications := demux.Notifications()
+	serverRequests := demux.ServerRequests()
+	for notifications != nil || serverRequests != nil {
 		select {
 		case <-ctx.Done():
 			return
-		case note, ok := <-demux.Notifications():
+		case note, ok := <-notifications:
 			if !ok {
-				return
+				notifications = nil
+				continue
 			}
 			c.handleNotification(note)
-		case sreq, ok := <-demux.ServerRequests():
+		case sreq, ok := <-serverRequests:
 			if !ok {
-				return
+				serverRequests = nil
+				continue
 			}
 			c.handleServerRequest(ctx, demux, sreq)
 		}
 	}
+
+	if ctx.Err() == nil && !c.closed.Load() {
+		// Publish disconnected state before the terminal gap so a consumer that
+		// reacts immediately cannot register a subscription on a dead source.
+		c.connected.Store(false)
+		var cause error
+		select {
+		case cause = <-demux.LoopError():
+		default:
+		}
+		c.failThreadEventSubscriptions(ThreadEventEnvelope{
+			Err: &ThreadEventSourceGapError{Cause: cause},
+		})
+	}
 }
 
 func (c *Client) handleNotification(n jsonrpc.Notification) {
+	if n.DecodeError != nil {
+		c.failThreadEventSubscriptions(ThreadEventEnvelope{
+			Err: &ThreadEventFrameGapError{Cause: n.DecodeError},
+		})
+		c.logger.Warn("decode inbound frame failed", zap.Error(n.DecodeError))
+		return
+	}
+
 	ev, err := events.ParseEvent(n)
 	if err != nil {
+		threadID, _ := extractThreadID(n.Params)
+		c.failThreadEventSubscriptions(ThreadEventEnvelope{
+			ThreadID: threadID,
+			Err: &ThreadEventParseGapError{
+				ThreadID: threadID,
+				Method:   n.Method,
+				Cause:    err,
+			},
+		})
 		c.logger.Warn("parse event failed",
 			zap.String("method", n.Method),
 			zap.Error(err))
@@ -46,8 +89,19 @@ func (c *Client) handleNotification(n jsonrpc.Notification) {
 	if _, ok := ev.(*types.UnknownEvent); ok {
 		c.opts.ObserverOrNop().OnUnknownMessage(n.Method)
 	}
-	threadID := extractThreadIDFromEvent(ev)
+	threadID, identityRequired := threadIdentityFromEvent(ev)
 	if threadID == "" {
+		if identityRequired {
+			c.failThreadEventSubscriptions(ThreadEventEnvelope{
+				Err: &ThreadEventParseGapError{
+					Method: n.Method,
+					Cause:  errThreadEventIdentityMissing,
+				},
+			})
+			c.logger.Warn("thread-scoped notification missing thread ID",
+				zap.String("method", n.Method))
+			return
+		}
 		// Global events — configWarning, account/rateLimits/updated, etc.
 		// Logged at debug; clients that want them must expose a hook in v1.1.
 		c.logger.Debug("unroutable event (no thread_id)",
@@ -57,14 +111,15 @@ func (c *Client) handleNotification(n jsonrpc.Notification) {
 	c.mu.Lock()
 	t := c.threads[threadID]
 	c.mu.Unlock()
-	if t == nil {
-		// Thread may not be registered yet (event arrived before
-		// StartThread stored the Thread). Ignore — the spike transcript
-		// showed mcpServer/startupStatus/updated arriving before thread/
-		// started which we don't route anyway.
-		return
+	if t != nil {
+		// Update registered-thread state before waking global subscribers so a
+		// subscriber can safely act on the event (for example, interrupt the
+		// turn announced by turn/started).
+		t.deliverEvent(ev)
 	}
-	t.deliverEvent(ev)
+	// Unregistered provider-created child threads have no Thread handle, but
+	// their events still belong in the client-wide runtime stream.
+	c.publishThreadEvent(ThreadEventEnvelope{ThreadID: threadID, Event: ev})
 }
 
 func (c *Client) handleServerRequest(ctx context.Context, demux *jsonrpc.Demux, sreq jsonrpc.ServerRequest) {

@@ -152,7 +152,7 @@ func schemaAuthFile() (string, error) {
 
 func startSchemaTestThread(t *testing.T, ctx context.Context, cwd string) *codex.Thread {
 	t.Helper()
-	client, err := codex.NewClient(ctx, types.NewCodexOptions().WithCwd(cwd))
+	client, err := codex.NewClient(ctx, integrationOptions(t).WithCwd(cwd))
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}

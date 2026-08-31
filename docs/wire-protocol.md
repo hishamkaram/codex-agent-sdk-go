@@ -41,7 +41,10 @@ field names preferred in this order: flat > nested.
 | `thread/fork` | `{sourceThreadId,…}` | `{thread:{id,…},model}` | `Client.ForkThread` |
 | `thread/archive` | `{threadId}` | `{}` | `Client.ArchiveThread` |
 | `turn/start` | `{threadId,input:[{type:"text"|"localImage",…}],outputSchema?,collaborationMode?}` | `{turn:{id,…}}` | `Thread.RunStreamed` |
-| `turn/interrupt` | `{threadId,turnId}` | `{}` | `Thread.Interrupt` |
+| `turn/interrupt` | `{threadId,turnId}` | `{}` | `Thread.Interrupt`, `Client.InterruptThreadTurn` |
+| `thread/backgroundTerminals/list` | `{threadId,cursor?,limit}` | `{data:[…],nextCursor?}` | `Client.ListBackgroundTerminals` |
+| `thread/backgroundTerminals/terminate` | `{threadId,processId}` | `{terminated}` | `Client.TerminateBackgroundTerminal` |
+| `thread/backgroundTerminals/clean` | `{threadId}` | `{}` | `Client.CleanBackgroundTerminals`, `Thread.CleanBackgroundTerminals` |
 
 `approvalPolicy` is a wire union. Ordinary policies are JSON strings
 (`"untrusted"`, `"on-failure"`, `"on-request"`, `"never"`). Granular is
@@ -56,6 +59,17 @@ sent as:
   }
 }
 ```
+
+Background terminal methods require the experimental app-server capability.
+Callers must use `DiscoverRuntimeFeatures` and require each schema-proven
+method before exposing its control; CLI versions are informational only.
+The `processId` returned by `thread/backgroundTerminals/list` belongs to a
+shell-tool command and correlates with `CommandExecution.ProcessID` plus the
+same `itemId`. It does not correlate with `process/exited`: that notification
+is reserved for the separate `process/spawn` API and its client-supplied
+`processHandle`. Background-terminal exit is therefore provider-authoritative
+when the thread inventory drains and the corresponding command item reaches a
+terminal lifecycle state.
 
 ## Server-initiated notifications (→ ThreadEvent)
 
@@ -136,6 +150,15 @@ Parser coverage is guarded by the vendored schema drift tests. After a
 Codex upgrade, run `make check-schema-drift`; new thread-scoped methods
 must either gain typed parser support or an intentional route/drop policy.
 
+`Client.SubscribeThreadEvents` publishes these parsed events in FIFO order
+for every provider thread, including child threads that do not have an SDK
+`Thread` handle. A bounded subscriber that falls behind receives
+`ErrThreadEventStreamGap` and closes, so callers cannot mistake a partial
+stream for a complete transcript. An unexpected app-server event-source close
+also emits a terminal gap after buffered notifications drain; `Client.Close`
+closes subscriptions without a gap. For registered threads, local turn state
+is updated before the event is published to client-wide subscribers.
+
 ## Server-initiated requests (approvals)
 
 These are REQUESTS (with `id`), not notifications. The client MUST
@@ -173,7 +196,8 @@ tries flat first, falls back to nested.
 Early design used `agent_message`, `user_message`, `command_execution`
 etc. The real wire uses camelCase: `agentMessage`, `userMessage`,
 `commandExecution`, `fileChange`, `mcpToolCall`, `webSearch`,
-`memoryRead`, `memoryWrite`, `plan`, `reasoning`, `systemError`. The
+`memoryRead`, `memoryWrite`, `plan`, `reasoning`, `subAgentActivity`,
+`systemError`. The
 types package matches this ground truth.
 
 ### Field names are camelCase too

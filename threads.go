@@ -153,15 +153,8 @@ func (t *Thread) Interrupt(ctx context.Context) error {
 	if tid == "" {
 		return fmt.Errorf("codex.Thread.Interrupt: %w", ErrNoActiveTurn)
 	}
-	resp, err := t.client.demux.Send(ctx, "turn/interrupt", map[string]any{
-		"threadId": t.id,
-		"turnId":   tid,
-	})
-	if err != nil {
+	if err := t.client.InterruptThreadTurn(ctx, t.id, tid); err != nil {
 		return fmt.Errorf("codex.Thread.Interrupt: %w", err)
-	}
-	if resp.Error != nil {
-		return types.NewRPCError(resp.Error.Code, resp.Error.Message, resp.Error.Data)
 	}
 	return nil
 }

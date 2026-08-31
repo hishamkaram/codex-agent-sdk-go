@@ -23,9 +23,13 @@ type ApprovalRequest interface {
 //
 // Wire method: "item/commandExecution/requestApproval".
 type CommandExecutionApprovalRequest struct {
-	Command string `json:"command"`
-	Cwd     string `json:"cwd,omitempty"`
-	Reason  string `json:"reason,omitempty"`
+	Command     string `json:"command"`
+	Cwd         string `json:"cwd,omitempty"`
+	Reason      string `json:"reason,omitempty"`
+	ThreadID    string `json:"threadId"`
+	TurnID      string `json:"turnId"`
+	ItemID      string `json:"itemId"`
+	StartedAtMS int64  `json:"startedAtMs"`
 }
 
 func (*CommandExecutionApprovalRequest) isApprovalRequest() {}
@@ -39,10 +43,14 @@ func (*CommandExecutionApprovalRequest) ApprovalMethod() string {
 //
 // Wire method: "item/fileChange/requestApproval".
 type FileChangeApprovalRequest struct {
-	Path      string `json:"path"`
-	Operation string `json:"operation"` // "create" | "modify" | "delete"
-	Diff      string `json:"diff,omitempty"`
-	Reason    string `json:"reason,omitempty"`
+	Path        string `json:"path"`
+	Operation   string `json:"operation"` // "create" | "modify" | "delete"
+	Diff        string `json:"diff,omitempty"`
+	Reason      string `json:"reason,omitempty"`
+	ThreadID    string `json:"threadId"`
+	TurnID      string `json:"turnId"`
+	ItemID      string `json:"itemId"`
+	StartedAtMS int64  `json:"startedAtMs"`
 }
 
 func (*FileChangeApprovalRequest) isApprovalRequest() {}
@@ -55,9 +63,17 @@ func (*FileChangeApprovalRequest) ApprovalMethod() string {
 //
 // Wire method: "item/permissions/requestApproval".
 type PermissionsApprovalRequest struct {
-	Permission string `json:"permission"`
+	Cwd           string          `json:"cwd"`
+	Permissions   json.RawMessage `json:"permissions"`
+	EnvironmentID string          `json:"environmentId,omitempty"`
+	Reason        string          `json:"reason,omitempty"`
+	ThreadID      string          `json:"threadId"`
+	TurnID        string          `json:"turnId"`
+	ItemID        string          `json:"itemId"`
+	StartedAtMS   int64           `json:"startedAtMs"`
+	// Permission and Scope preserve compatibility with pre-schema payloads.
+	Permission string `json:"permission,omitempty"`
 	Scope      string `json:"scope,omitempty"`
-	Reason     string `json:"reason,omitempty"`
 }
 
 func (*PermissionsApprovalRequest) isApprovalRequest() {}

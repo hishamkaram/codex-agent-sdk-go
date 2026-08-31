@@ -164,6 +164,70 @@ func TestDemux_DeliversNotifications(t *testing.T) {
 	}
 }
 
+func TestDemux_DecodeGapPrecedesLaterNotification(t *testing.T) {
+	t.Parallel()
+
+	d, s := makeDemux(t)
+	defer func() {
+		_ = d.Close()
+		s.close()
+	}()
+
+	s.sendToClient(t, `{"method":`)
+	s.sendToClient(t, `{"method":`)
+	s.sendToClient(t, `{"method":"turn/started","params":{"threadId":"child"}}`)
+	s.sendToClient(t, `{"method":`)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	gap := expectNotification(t, ctx, d)
+	if gap.DecodeError == nil {
+		t.Fatalf("first notification = %+v, want decode gap", gap)
+	}
+	if strings.Contains(gap.DecodeError.Error(), `{"method":`) {
+		t.Fatalf("decode gap leaked raw frame: %v", gap.DecodeError)
+	}
+
+	note := expectNotification(t, ctx, d)
+	if note.DecodeError != nil || note.Method != "turn/started" {
+		t.Fatalf("second notification = %+v, want turn/started", note)
+	}
+
+	gap = expectNotification(t, ctx, d)
+	if gap.DecodeError == nil {
+		t.Fatalf("third notification = %+v, want decode gap", gap)
+	}
+}
+
+func TestDemux_UnclassifiableGapPrecedesLaterNotification(t *testing.T) {
+	t.Parallel()
+
+	d, s := makeDemux(t)
+	defer func() {
+		_ = d.Close()
+		s.close()
+	}()
+
+	s.sendToClient(t, `{"params":{"threadId":"child"}}`)
+	s.sendToClient(t, `{"params":{"threadId":"child"}}`)
+	s.sendToClient(t, `{"method":"turn/started","params":{"threadId":"child"}}`)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	gap := expectNotification(t, ctx, d)
+	if gap.DecodeError == nil {
+		t.Fatalf("first notification = %+v, want frame gap", gap)
+	}
+	if strings.Contains(gap.DecodeError.Error(), `{"params":`) {
+		t.Fatalf("frame gap leaked raw frame: %v", gap.DecodeError)
+	}
+
+	note := expectNotification(t, ctx, d)
+	if note.DecodeError != nil || note.Method != "turn/started" {
+		t.Fatalf("second notification = %+v, want turn/started", note)
+	}
+}
+
 func TestDemux_DeliversServerRequestAndCallerResponds(t *testing.T) {
 	t.Parallel()
 	d, s := makeDemux(t)

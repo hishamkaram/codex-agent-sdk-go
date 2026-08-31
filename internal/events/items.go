@@ -53,6 +53,7 @@ var itemDecoders = map[string]func(string, json.RawMessage) (types.ThreadItem, e
 	"hookPrompt":          decodeItem[types.HookPrompt],
 	"dynamicToolCall":     decodeItem[types.DynamicToolCall],
 	"collabAgentToolCall": decodeItem[types.CollabAgentToolCall],
+	"subAgentActivity":    decodeItem[types.SubAgentActivity],
 	"imageView":           decodeItem[types.ImageView],
 	"imageGeneration":     decodeItem[types.ImageGeneration],
 	"enteredReviewMode":   decodeItem[types.EnteredReviewMode],

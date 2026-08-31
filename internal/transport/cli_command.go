@@ -30,6 +30,7 @@ func RunCLICommand(
 		stderrBuffer.Reset()
 
 		cmd := exec.CommandContext(ctx, cliPath, args...)
+		configureCLICommandCancellation(cmd)
 		cmd.WaitDelay = waitDelay
 		cmd.Env = BuildRuntimeEnvironment(env)
 		cmd.Stdout = &stdoutBuffer

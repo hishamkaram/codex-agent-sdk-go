@@ -20,6 +20,9 @@ type Request struct {
 type Notification struct {
 	Method string          `json:"method"`
 	Params json.RawMessage `json:"params,omitempty"`
+	// DecodeError marks a synthetic, stream-ordered gap emitted when an
+	// inbound frame cannot be decoded or classified. It is never serialized.
+	DecodeError error `json:"-"`
 }
 
 // Response is a reply to a client-initiated Request. Exactly one of Result

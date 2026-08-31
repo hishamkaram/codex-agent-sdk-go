@@ -10,6 +10,8 @@ Requires:
 - Go 1.25+
 - Codex CLI 0.144.1 (verified 2026-07-12; lower versions work but
   trigger a soft warning — see `docs/wire-protocol.md`).
+  Optional child-agent and background-terminal controls are discovered from
+  the installed CLI schemas and are never enabled from the version alone.
   - `npm install -g @openai/codex` — or Homebrew, per your OS.
 - Authentication: one of
   - `OPENAI_API_KEY=sk-…` in the environment (pay-per-token), or
@@ -72,6 +74,15 @@ fmt.Println(turn2.FinalResponse)
 
 `Thread.Run` is buffered — it blocks until `turn/completed`. For
 streaming (deltas as they arrive), use `Thread.RunStreamed`.
+
+Provider-created child threads do not have an SDK `Thread` handle. Subscribe
+with `Client.SubscribeThreadEvents` to receive their typed activity and output,
+and use the envelope's `ThreadID` when invoking the low-level
+`Client.InterruptThreadTurn` request. Check `DiscoverRuntimeFeatures` before
+using child interruption or experimental background-terminal methods. RPC
+acceptance is not terminal lifecycle: wait for correlated events or a fresh
+terminal inventory, and do not expose child interruption as delegated-agent
+Stop unless the spawning parent's wait is also proven to end.
 
 ## Streaming
 

@@ -598,6 +598,34 @@ func TestParseItem_CollabAgentToolCall(t *testing.T) {
 	}
 }
 
+func TestParseItem_SubAgentActivity(t *testing.T) {
+	t.Parallel()
+
+	for _, kind := range []types.SubAgentActivityKind{
+		types.SubAgentActivityStarted,
+		types.SubAgentActivityInteracted,
+		types.SubAgentActivityInterrupted,
+		types.SubAgentActivityCompleted,
+	} {
+		kind := kind
+		t.Run(string(kind), func(t *testing.T) {
+			t.Parallel()
+
+			it, err := ParseItem(json.RawMessage(`{"type":"subAgentActivity","id":"activity-1","agentPath":"agents/reviewer","agentThreadId":"child-1","kind":"` + string(kind) + `"}`))
+			if err != nil {
+				t.Fatalf("ParseItem: %v", err)
+			}
+			activity, ok := it.(*types.SubAgentActivity)
+			if !ok {
+				t.Fatalf("ParseItem returned %T", it)
+			}
+			if activity.ID != "activity-1" || activity.AgentPath != "agents/reviewer" || activity.AgentThreadID != "child-1" || activity.Kind != kind {
+				t.Fatalf("activity = %+v", activity)
+			}
+		})
+	}
+}
+
 func TestParseItem_CollabAgentToolCall_LegacyArrayAgentsStates(t *testing.T) {
 	t.Parallel()
 
@@ -789,6 +817,7 @@ func TestParseItem_Switch_CoversAllSchemaVariants(t *testing.T) {
 		"hookPrompt":          `{"type":"hookPrompt","id":"test","fragments":[]}`,
 		"dynamicToolCall":     `{"type":"dynamicToolCall","id":"test","tool":"t","arguments":{},"status":"inProgress"}`,
 		"collabAgentToolCall": `{"type":"collabAgentToolCall","id":"test","tool":"t","status":"inProgress","agentsStates":[],"senderThreadId":"s","receiverThreadIds":[]}`,
+		"subAgentActivity":    `{"type":"subAgentActivity","id":"test","agentPath":"agents/reviewer","agentThreadId":"child","kind":"started"}`,
 		"imageView":           `{"type":"imageView","id":"test","path":"/x"}`,
 		"imageGeneration":     `{"type":"imageGeneration","id":"test","status":"completed","result":{}}`,
 		"enteredReviewMode":   `{"type":"enteredReviewMode","id":"test","review":{}}`,

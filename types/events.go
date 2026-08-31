@@ -120,9 +120,14 @@ func (*TokenUsageUpdated) EventMethod() string { return "thread/tokenUsage/updat
 // ErrorEvent is emitted for any non-fatal server-side error that the server
 // wants the client to observe without terminating the turn.
 type ErrorEvent struct {
-	Code    string          `json:"code,omitempty"`
-	Message string          `json:"message"`
-	Context json.RawMessage `json:"context,omitempty"`
+	ThreadID          string          `json:"thread_id,omitempty"`
+	TurnID            string          `json:"turn_id,omitempty"`
+	WillRetry         bool            `json:"will_retry,omitempty"`
+	Code              string          `json:"code,omitempty"`
+	Message           string          `json:"message"`
+	AdditionalDetails *string         `json:"additional_details,omitempty"`
+	CodexErrorInfo    json.RawMessage `json:"codex_error_info,omitempty"`
+	Context           json.RawMessage `json:"context,omitempty"`
 }
 
 func (*ErrorEvent) isThreadEvent()      {}

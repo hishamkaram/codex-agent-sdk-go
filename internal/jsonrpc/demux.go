@@ -26,6 +26,10 @@ const DefaultMaxConsecutiveParseErrors uint = 10
 // gives up after crossing the consecutive-parse-error threshold.
 var ErrParseGiveUp = errors.New("jsonrpc: too many consecutive decode errors, giving up")
 
+// ErrUnclassifiableFrame marks valid JSON that cannot be assigned to any
+// supported JSON-RPC frame shape.
+var ErrUnclassifiableFrame = errors.New("jsonrpc: unclassifiable inbound frame")
+
 // Demux reads JSON-RPC frames from a LineReader and classifies each one:
 //   - {id, result|error}      → response to a client-initiated request →
 //     delivered to the pending[id] channel created by Send.
@@ -265,6 +269,7 @@ func (d *Demux) readLoop(ctx context.Context) {
 	loopStart := time.Now()
 	firstMessage := true
 	var consecutiveParseErrors uint
+	gapQueued := false
 
 	for {
 		line, err := d.reader.ReadLine()
@@ -281,12 +286,15 @@ func (d *Demux) readLoop(ctx context.Context) {
 
 		var frame rawFrame
 		if err := json.Unmarshal(line, &frame); err != nil {
-			// Emit telemetry AFTER incrementing so the count is the running total.
 			consecutiveParseErrors++
-			if giveUpErr := d.recordParseFailure(line, consecutiveParseErrors, err); giveUpErr != nil {
-				exitErr = giveUpErr
+			continueLoop, nextGapQueued, decodeExitErr := d.handleDecodeFailure(
+				ctx, line, err, consecutiveParseErrors, gapQueued,
+			)
+			if !continueLoop {
+				exitErr = decodeExitErr
 				return
 			}
+			gapQueued = nextGapQueued
 			continue
 		}
 
@@ -297,10 +305,38 @@ func (d *Demux) readLoop(ctx context.Context) {
 			d.observer.OnFirstMessage(time.Since(loopStart))
 		}
 
-		if !d.classifyAndRoute(ctx, frame, line) {
+		continueLoop, nextGapQueued := d.classifyAndRoute(ctx, frame, line, gapQueued)
+		if !continueLoop {
 			return
 		}
+		gapQueued = nextGapQueued
 	}
+}
+
+func (d *Demux) handleDecodeFailure(
+	ctx context.Context,
+	line []byte,
+	decodeErr error,
+	consecutive uint,
+	gapQueued bool,
+) (continueLoop, nextGapQueued bool, exitErr error) {
+	// recordParseFailure receives the incremented value so telemetry reports the
+	// running consecutive count.
+	giveUpErr := d.recordParseFailure(line, consecutive, decodeErr)
+	if !gapQueued {
+		frameErr := fmt.Errorf("jsonrpc.Demux.readLoop: decode inbound frame: %w", decodeErr)
+		// One marker covers a consecutive malformed-frame run. Coalescing keeps a
+		// high give-up threshold from filling the queue before Connect starts its
+		// dispatcher; the next classifiable frame remains FIFO behind the marker.
+		if !d.deliverNotification(ctx, Notification{DecodeError: frameErr}) {
+			return false, false, nil
+		}
+		gapQueued = true
+	}
+	if giveUpErr != nil {
+		return false, gapQueued, giveUpErr
+	}
+	return true, gapQueued, nil
 }
 
 // recordParseFailure emits parse-error telemetry for a malformed inbound frame
@@ -334,20 +370,27 @@ func (d *Demux) recordParseFailure(line []byte, consecutive uint, err error) err
 
 // classifyAndRoute dispatches a successfully decoded frame to the correct
 // outbound channel: a server-initiated request, a notification, a response to a
-// pending client request, or an unclassifiable frame (telemetry only). It
-// returns false only when readLoop must exit — i.e. an outbound delivery
-// observed stop or ctx cancellation.
-func (d *Demux) classifyAndRoute(ctx context.Context, frame rawFrame, line []byte) bool {
+// pending client request, or an unclassifiable frame (telemetry plus an ordered
+// notification-stream gap). It
+// The second result reports whether a coalesced frame-gap marker remains
+// pending for the current malformed run. The first result is false only when
+// readLoop must exit because an outbound delivery observed stop or cancellation.
+func (d *Demux) classifyAndRoute(
+	ctx context.Context,
+	frame rawFrame,
+	line []byte,
+	gapQueued bool,
+) (continueLoop, nextGapQueued bool) {
 	switch {
 	case frame.Method != nil && frame.ID != nil:
 		// Server-initiated request.
 		req := ServerRequest{ID: *frame.ID, Method: *frame.Method, Params: frame.Params}
-		return d.deliverServerRequest(ctx, req)
+		return d.deliverServerRequest(ctx, req), false
 
 	case frame.Method != nil:
 		// Notification.
 		note := Notification{Method: *frame.Method, Params: frame.Params}
-		return d.deliverNotification(ctx, note)
+		return d.deliverNotification(ctx, note), false
 
 	case frame.ID != nil:
 		// Response to a client-initiated request.
@@ -358,20 +401,25 @@ func (d *Demux) classifyAndRoute(ctx context.Context, frame rawFrame, line []byt
 		if !ok {
 			d.logger.Warn("jsonrpc.Demux: unsolicited response",
 				zap.Uint64("id", *frame.ID))
-			return true
+			return true, false
 		}
 		// ch is buffered size 1; this never blocks.
 		ch <- resp
-		return true
+		return true, false
 
 	default:
 		// Unclassifiable frame — no id, no method, no result. Either codex
-		// wire-format drift or corruption. Surface as telemetry; not a parse
-		// error (the JSON decoded fine).
+		// wire-format drift or corruption. Surface telemetry and an ordered gap;
+		// the JSON decoded, but it may have been a damaged notification.
 		d.observer.OnUnknownMessage("unclassifiable-frame")
 		d.logger.Warn("jsonrpc.Demux: unclassifiable frame",
 			zap.ByteString("line", truncate(line, 512)))
-		return true
+		if gapQueued {
+			return true, true
+		}
+		return d.deliverNotification(ctx, Notification{
+			DecodeError: fmt.Errorf("jsonrpc.Demux.classifyAndRoute: %w", ErrUnclassifiableFrame),
+		}), true
 	}
 }
 

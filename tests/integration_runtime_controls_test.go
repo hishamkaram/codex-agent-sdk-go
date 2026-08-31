@@ -11,10 +11,9 @@ import (
 )
 
 func TestIntegration_RuntimeControlDiscovery(t *testing.T) {
-	requireCodex(t)
 	controls, err := codex.DiscoverRuntimeControls(
 		context.Background(),
-		types.NewCodexOptions(),
+		integrationOptions(t),
 		nil,
 	)
 	if err != nil {
@@ -31,10 +30,9 @@ func TestIntegration_RuntimeControlDiscovery(t *testing.T) {
 }
 
 func TestIntegration_ExperimentalRuntimeControlDiscovery(t *testing.T) {
-	requireCodex(t)
 	controls, err := codex.DiscoverRuntimeControls(
 		context.Background(),
-		types.NewCodexOptions().WithExperimentalAPI(true),
+		integrationOptions(t).WithExperimentalAPI(true),
 		nil,
 	)
 	if err != nil {
@@ -56,7 +54,7 @@ func TestIntegration_ConfigRequirementsConstrainRuntimeControls(t *testing.T) {
 	}
 	controls, err := codex.DiscoverRuntimeControls(
 		context.Background(),
-		types.NewCodexOptions(),
+		integrationOptions(t),
 		requirements,
 	)
 	if err != nil {

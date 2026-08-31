@@ -15,13 +15,13 @@ func TestParseApprovalRequest_CommandExecution(t *testing.T) {
 	t.Parallel()
 	r, err := ParseApprovalRequest(
 		"item/commandExecution/requestApproval",
-		json.RawMessage(`{"command":"rm -rf /","cwd":"/tmp","reason":"destructive"}`),
+		json.RawMessage(`{"command":"rm -rf /","cwd":"/tmp","reason":"destructive","threadId":"thread-1","turnId":"turn-1","itemId":"item-1","startedAtMs":1782904297561}`),
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	c := r.(*types.CommandExecutionApprovalRequest)
-	if c.Command != "rm -rf /" || c.Cwd != "/tmp" || c.Reason != "destructive" {
+	if c.Command != "rm -rf /" || c.Cwd != "/tmp" || c.Reason != "destructive" || c.ThreadID != "thread-1" || c.TurnID != "turn-1" || c.ItemID != "item-1" || c.StartedAtMS != 1782904297561 {
 		t.Fatalf("%+v", c)
 	}
 	if r.ApprovalMethod() != "item/commandExecution/requestApproval" {
@@ -33,23 +33,29 @@ func TestParseApprovalRequest_FileChange(t *testing.T) {
 	t.Parallel()
 	r, _ := ParseApprovalRequest(
 		"item/fileChange/requestApproval",
-		json.RawMessage(`{"path":"/a.go","operation":"delete","diff":"...","reason":"cleanup"}`),
+		json.RawMessage(`{"path":"/a.go","operation":"delete","diff":"...","reason":"cleanup","threadId":"thread-2","turnId":"turn-2","itemId":"item-2","startedAtMs":1782904297562}`),
 	)
 	f := r.(*types.FileChangeApprovalRequest)
-	if f.Path != "/a.go" || f.Operation != "delete" {
+	if f.Path != "/a.go" || f.Operation != "delete" || f.ThreadID != "thread-2" || f.TurnID != "turn-2" || f.ItemID != "item-2" || f.StartedAtMS != 1782904297562 {
 		t.Fatalf("%+v", f)
 	}
 }
 
 func TestParseApprovalRequest_Permissions(t *testing.T) {
 	t.Parallel()
-	r, _ := ParseApprovalRequest(
+	r, err := ParseApprovalRequest(
 		"item/permissions/requestApproval",
-		json.RawMessage(`{"permission":"network","scope":"api.example.com"}`),
+		json.RawMessage(`{"cwd":"/work","permissions":{"network":{"enabled":true}},"reason":"network access","threadId":"thread-child","turnId":"turn-child","itemId":"item-child","startedAtMs":1782904297563}`),
 	)
+	if err != nil {
+		t.Fatal(err)
+	}
 	p := r.(*types.PermissionsApprovalRequest)
-	if p.Permission != "network" || p.Scope != "api.example.com" {
+	if p.Cwd != "/work" || p.Reason != "network access" || p.ThreadID != "thread-child" || p.TurnID != "turn-child" || p.ItemID != "item-child" || p.StartedAtMS != 1782904297563 {
 		t.Fatalf("%+v", p)
+	}
+	if string(p.Permissions) != `{"network":{"enabled":true}}` {
+		t.Fatalf("Permissions = %s", p.Permissions)
 	}
 }
 

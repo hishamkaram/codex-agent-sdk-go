@@ -20,6 +20,18 @@ type RuntimeControlCapabilities struct {
 	CLIVersion       string                 `json:"cli_version,omitempty"`
 }
 
+// RuntimeFeatureCapabilities contains provider surfaces proven from the
+// installed app-server's generated JSON schemas. Callers must require the
+// specific field they use; CLI version strings are informational only.
+type RuntimeFeatureCapabilities struct {
+	SubAgentActivity            bool   `json:"sub_agent_activity"`
+	TurnInterrupt               bool   `json:"turn_interrupt"`
+	BackgroundTerminalInventory bool   `json:"background_terminal_inventory"`
+	BackgroundTerminalTerminate bool   `json:"background_terminal_terminate"`
+	BackgroundTerminalsClean    bool   `json:"background_terminals_clean"`
+	CLIVersion                  string `json:"cli_version,omitempty"`
+}
+
 // ConfigRequirementsReadResult is returned by configRequirements/read.
 type ConfigRequirementsReadResult struct {
 	Requirements *ConfigRequirements `json:"requirements"`

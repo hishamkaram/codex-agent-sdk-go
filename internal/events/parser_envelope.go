@@ -43,6 +43,8 @@ type identifiersEnvelope struct {
 	TokensFreed int64             `json:"tokens_freed,omitempty"`
 	Strategy    string            `json:"strategy,omitempty"`
 	Context     json.RawMessage   `json:"context,omitempty"`
+	ErrorObj    json.RawMessage   `json:"error,omitempty"`
+	WillRetry   bool              `json:"willRetry,omitempty"`
 }
 
 type idWrapper struct {
@@ -82,11 +84,29 @@ func parseErrorEvent(raw json.RawMessage) (types.ThreadEvent, error) {
 	if err := unmarshalEnvelope(raw, &env); err != nil {
 		return nil, err
 	}
-	ev := &types.ErrorEvent{Code: env.Code, Message: env.Message}
+	threadID, turnID, _ := env.resolveIDs()
+	ev := &types.ErrorEvent{
+		ThreadID:  threadID,
+		TurnID:    turnID,
+		WillRetry: env.WillRetry,
+		Code:      env.Code,
+		Message:   env.Message,
+	}
+	if len(env.ErrorObj) > 0 {
+		var turnError struct {
+			Message           string          `json:"message"`
+			AdditionalDetails *string         `json:"additionalDetails"`
+			CodexErrorInfo    json.RawMessage `json:"codexErrorInfo"`
+		}
+		if err := json.Unmarshal(env.ErrorObj, &turnError); err != nil {
+			return nil, types.NewJSONDecodeError(string(raw), err)
+		}
+		ev.Message = turnError.Message
+		ev.AdditionalDetails = turnError.AdditionalDetails
+		ev.CodexErrorInfo = cloneRaw(turnError.CodexErrorInfo)
+	}
 	if len(env.Context) > 0 {
-		cp := make(json.RawMessage, len(env.Context))
-		copy(cp, env.Context)
-		ev.Context = cp
+		ev.Context = cloneRaw(env.Context)
 	}
 	return ev, nil
 }
