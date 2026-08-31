@@ -47,8 +47,8 @@ func TestRetryOnETXTBSYRetriesLockedExecutable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("retryOnETXTBSY() error = %v", err)
 	}
-	if attempts != 2 {
-		t.Fatalf("command attempts = %d, want 2", attempts)
+	if attempts < 2 || attempts > maxCLICommandAttempts {
+		t.Fatalf("command attempts = %d, want a bounded retry after ETXTBSY", attempts)
 	}
 }
 

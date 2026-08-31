@@ -35,11 +35,10 @@ func TestIntCmd_ReadConfig_Happy(t *testing.T) {
 }
 
 func TestIntCmd_ReadConfig_ClosedClient(t *testing.T) {
-	requireCodex(t)
 	requireAuth(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	c, _ := codex.NewClient(ctx, types.NewCodexOptions())
+	c, _ := codex.NewClient(ctx, integrationOptions(t))
 	if err := c.Connect(ctx); err != nil {
 		t.Fatalf("Connect: %v", err)
 	}
@@ -112,11 +111,10 @@ func TestIntCmd_ListModels_Happy(t *testing.T) {
 }
 
 func TestIntCmd_ListModels_ClosedClient(t *testing.T) {
-	requireCodex(t)
 	requireAuth(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	c, _ := codex.NewClient(ctx, types.NewCodexOptions())
+	c, _ := codex.NewClient(ctx, integrationOptions(t))
 	_ = c.Connect(ctx)
 	_ = c.Close(context.Background())
 	_, err := c.ListModels(context.Background())
@@ -178,9 +176,8 @@ func TestIntCmd_ListExperimentalFeatures_Happy(t *testing.T) {
 }
 
 func TestIntCmd_ListExperimentalFeatures_ClosedClient(t *testing.T) {
-	requireCodex(t)
 	requireAuth(t)
-	c, _ := codex.NewClient(context.Background(), types.NewCodexOptions())
+	c, _ := codex.NewClient(context.Background(), integrationOptions(t))
 	_ = c.Connect(context.Background())
 	_ = c.Close(context.Background())
 	if _, err := c.ListExperimentalFeatures(context.Background()); err == nil {
@@ -212,9 +209,8 @@ func TestIntCmd_ListMCPServerStatus_Happy(t *testing.T) {
 }
 
 func TestIntCmd_ListMCPServerStatus_ClosedClient(t *testing.T) {
-	requireCodex(t)
 	requireAuth(t)
-	c, _ := codex.NewClient(context.Background(), types.NewCodexOptions())
+	c, _ := codex.NewClient(context.Background(), integrationOptions(t))
 	_ = c.Connect(context.Background())
 	_ = c.Close(context.Background())
 	if _, err := c.ListMCPServerStatus(context.Background()); err == nil {
@@ -223,14 +219,13 @@ func TestIntCmd_ListMCPServerStatus_ClosedClient(t *testing.T) {
 }
 
 func TestIntCmd_ListMCPServerStatus_OAuthPending(t *testing.T) {
-	requireCodex(t)
 	requireAuth(t)
 	safetyNetCodexConfig(t)
 	fixture := newOAuthRequiredMCPFixture(t)
 
 	configCtx, configCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	t.Cleanup(configCancel)
-	configClient, err := codex.NewClient(configCtx, types.NewCodexOptions())
+	configClient, err := codex.NewClient(configCtx, integrationOptions(t))
 	if err != nil {
 		t.Fatalf("NewClient(config): %v", err)
 	}
@@ -258,7 +253,7 @@ func TestIntCmd_ListMCPServerStatus_OAuthPending(t *testing.T) {
 
 	statusCtx, statusCancel := context.WithTimeout(context.Background(), 45*time.Second)
 	t.Cleanup(statusCancel)
-	c, err := codex.NewClient(statusCtx, types.NewCodexOptions())
+	c, err := codex.NewClient(statusCtx, integrationOptions(t))
 	if err != nil {
 		t.Fatalf("NewClient(status): %v", err)
 	}
@@ -312,9 +307,8 @@ func TestIntCmd_ListApps_HappyOrAuthError(t *testing.T) {
 }
 
 func TestIntCmd_ListApps_ClosedClient(t *testing.T) {
-	requireCodex(t)
 	requireAuth(t)
-	c, _ := codex.NewClient(context.Background(), types.NewCodexOptions())
+	c, _ := codex.NewClient(context.Background(), integrationOptions(t))
 	_ = c.Connect(context.Background())
 	_ = c.Close(context.Background())
 	if _, err := c.ListApps(context.Background()); err == nil {
@@ -351,9 +345,8 @@ func TestIntCmd_ListSkills_Happy(t *testing.T) {
 }
 
 func TestIntCmd_ListSkills_ClosedClient(t *testing.T) {
-	requireCodex(t)
 	requireAuth(t)
-	c, _ := codex.NewClient(context.Background(), types.NewCodexOptions())
+	c, _ := codex.NewClient(context.Background(), integrationOptions(t))
 	_ = c.Connect(context.Background())
 	_ = c.Close(context.Background())
 	if _, err := c.ListSkills(context.Background()); err == nil {
@@ -382,9 +375,8 @@ func TestIntCmd_ReadAccount_Happy(t *testing.T) {
 }
 
 func TestIntCmd_ReadAccount_ClosedClient(t *testing.T) {
-	requireCodex(t)
 	requireAuth(t)
-	c, _ := codex.NewClient(context.Background(), types.NewCodexOptions())
+	c, _ := codex.NewClient(context.Background(), integrationOptions(t))
 	_ = c.Connect(context.Background())
 	_ = c.Close(context.Background())
 	if _, err := c.ReadAccount(context.Background()); err == nil {
@@ -419,9 +411,8 @@ func TestIntCmd_ReadRateLimits_Happy(t *testing.T) {
 }
 
 func TestIntCmd_ReadRateLimits_ClosedClient(t *testing.T) {
-	requireCodex(t)
 	requireAuth(t)
-	c, _ := codex.NewClient(context.Background(), types.NewCodexOptions())
+	c, _ := codex.NewClient(context.Background(), integrationOptions(t))
 	_ = c.Connect(context.Background())
 	_ = c.Close(context.Background())
 	if _, err := c.ReadRateLimits(context.Background()); err == nil {
@@ -453,9 +444,8 @@ func TestIntCmd_GetAuthStatus_Happy(t *testing.T) {
 }
 
 func TestIntCmd_GetAuthStatus_ClosedClient(t *testing.T) {
-	requireCodex(t)
 	requireAuth(t)
-	c, _ := codex.NewClient(context.Background(), types.NewCodexOptions())
+	c, _ := codex.NewClient(context.Background(), integrationOptions(t))
 	_ = c.Connect(context.Background())
 	_ = c.Close(context.Background())
 	if _, err := c.GetAuthStatus(context.Background()); err == nil {

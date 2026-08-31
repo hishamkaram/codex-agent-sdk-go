@@ -3,7 +3,7 @@
 [![Go 1.25](https://img.shields.io/badge/Go-1.25-00add8?logo=go&logoColor=white)](https://go.dev/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Go SDK for the OpenAI Codex CLI **app-server** transport — spawns `codex app-server` as a child process, speaks JSON-RPC 2.0 over stdio, and exposes a typed Go API for threads, turns, streaming events, approvals, and MCP configuration.
+Go SDK for the OpenAI Codex CLI **app-server** transport — spawns `codex app-server` as a child process, speaks JSON-RPC 2.0 over stdio, and exposes a typed Go API for threads, turns, provider-created child activity, streaming events, approvals, background terminals, and MCP configuration.
 
 > **Status**: preview (`v0.x`). API may change before `v1.0.0`. Feedback welcome.
 
@@ -22,7 +22,7 @@ Codex's app-server exposes a JSON-RPC 2.0 protocol over stdio — bidirectional,
 | Thread start / resume / fork / archive / list | ✅ |
 | `thread.Run()` (buffered) + `thread.RunStreamed()` (channel) | ✅ |
 | Streaming events: turn/item lifecycle, token usage, thread lifecycle/goals, process output, model/account/warning events, hooks, realtime, and unknown-event fallback | ✅ |
-| ThreadItem variants: agentMessage, userMessage, commandExecution, fileChange, mcpToolCall, webSearch, memoryRead/Write, plan, reasoning, systemError | ✅ |
+| ThreadItem variants: agentMessage, userMessage, commandExecution, fileChange, mcpToolCall, webSearch, memoryRead/Write, plan, reasoning, subAgentActivity, systemError | ✅ |
 | Input variants: text, localImage | ✅ |
 | Sandbox modes: read-only, workspace-write, danger-full-access | ✅ |
 | Approval policies: untrusted, on-failure, on-request, granular, never | ✅ |
@@ -31,6 +31,8 @@ Codex's app-server exposes a JSON-RPC 2.0 protocol over stdio — bidirectional,
 | JSON-schema structured output | ✅ |
 | Typed errors with `Is*()` helpers | ✅ |
 | Turn interrupt | ✅ |
+| Client-wide thread event stream, including provider-created child threads | ✅ schema-gated |
+| Background terminal inventory, exact termination request, and stop-all request | ✅ schema-gated experimental API |
 | CLI discovery + soft version probe | ✅ |
 | Goroutine leak detection (goleak) | ✅ |
 | Hook observer events (HookStarted / HookCompleted) | ✅ v0.2.0 — via `WithHooks(true)` |
@@ -43,6 +45,7 @@ Codex's app-server exposes a JSON-RPC 2.0 protocol over stdio — bidirectional,
 - Go 1.25+
 - Codex CLI installed: `npm install -g @openai/codex` (or your distro's equivalent)
   - Recommended/tested CLI: `0.144.1` (verified 2026-07-12); older versions run with a soft warning and receive version-compatible hook flags.
+  - Optional child-agent and background-terminal controls are enabled only when `DiscoverRuntimeFeatures` proves their exact methods and response shapes from the installed CLI schemas. A version string alone never enables them.
 - Auth (one of):
   - `OPENAI_API_KEY` environment variable (pay-per-token)
   - `~/.codex/auth.json` (ChatGPT Plus/Pro subscription; run `codex login` once outside the daemon)
@@ -97,7 +100,8 @@ func main() {
 ```go
 client, err := codex.NewClient(ctx, opts)
 if err != nil { log.Fatal(err) }
-defer client.Close(ctx)
+if err := client.Connect(ctx); err != nil { log.Fatal(err) }
+defer client.Close(context.Background())
 
 thread, err := client.StartThread(ctx, &types.ThreadOptions{Cwd: "/my/project"})
 if err != nil { log.Fatal(err) }
@@ -108,6 +112,55 @@ for event := range events { /* ... */ }
 events2, _ := thread.RunStreamed(ctx, "Now implement the plan", nil)
 for event := range events2 { /* ... */ }
 ```
+
+### Provider-created children and background terminals
+
+```go
+runtimeOpts := types.NewCodexOptions().WithExperimentalAPI(true)
+features, err := codex.DiscoverRuntimeFeatures(ctx, runtimeOpts)
+if err != nil { log.Fatal(err) }
+
+runtimeClient, err := codex.NewClient(ctx, runtimeOpts)
+if err != nil { log.Fatal(err) }
+if err := runtimeClient.Connect(ctx); err != nil { log.Fatal(err) }
+defer runtimeClient.Close(context.Background())
+
+eventsCtx, stopEvents := context.WithCancel(ctx)
+runtimeEvents, err := runtimeClient.SubscribeThreadEvents(eventsCtx, 256)
+if err != nil { log.Fatal(err) }
+runtimeDone := make(chan struct{})
+go func() {
+    defer close(runtimeDone)
+    for event := range runtimeEvents {
+        // event.ThreadID also identifies provider-created child threads.
+        // Treat event.Err as a terminal stream gap.
+        fmt.Printf("thread=%s event=%T err=%v\n", event.ThreadID, event.Event, event.Err)
+    }
+}()
+defer func() { stopEvents(); <-runtimeDone }()
+
+runtimeThread, err := runtimeClient.StartThread(ctx, nil)
+if err != nil { log.Fatal(err) }
+
+if features.BackgroundTerminalInventory {
+    terminals, err := runtimeClient.ListBackgroundTerminals(ctx, runtimeThread.ID())
+    if err != nil { log.Fatal(err) }
+    if len(terminals) > 0 && features.BackgroundTerminalTerminate {
+        if err := runtimeClient.TerminateBackgroundTerminal(
+            ctx, runtimeThread.ID(), terminals[0].ProcessID,
+        ); err != nil { log.Fatal(err) }
+    }
+}
+```
+
+`Client.InterruptThreadTurn`, `Client.TerminateBackgroundTerminal`, and
+`Client.CleanBackgroundTerminals` expose provider transport primitives. A
+successful RPC means the provider accepted the request; it does not by itself
+prove terminal state. Wait for the correlated child lifecycle or a fresh
+background-terminal inventory before updating user-visible state. In
+particular, interrupting a child turn does not guarantee that its spawning
+parent has stopped waiting, so do not present it as delegated-agent Stop
+without proving both lifecycles against the installed CLI.
 
 ### Approval callback
 
@@ -131,6 +184,8 @@ opts = opts.WithApprovalCallback(func(ctx context.Context, req types.ApprovalReq
 - Serializes per-thread `Run()` calls via `turnMu` to preserve turn boundaries
 - Maintains a 2 MiB read buffer for large notification payloads
 - Translates raw JSON-RPC notifications into typed Go events with schema drift checks for Codex upgrades
+- Publishes a bounded client-wide event stream so provider-created child threads remain observable
+- Discovers optional runtime controls from the installed app-server's generated schemas
 - Handles CLI discovery (PATH, `~/.codex/bin`, brew, npm install paths) and soft version probe
 - Emits structured logs via zap
 

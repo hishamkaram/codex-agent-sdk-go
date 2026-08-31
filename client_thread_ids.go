@@ -20,12 +20,33 @@ var threadIDExtractors = []func(types.ThreadEvent) (string, bool){
 // that carries one. Returns "" for events that don't, including global
 // warnings and UnknownEvent values whose payload did not expose a thread ID.
 func extractThreadIDFromEvent(ev types.ThreadEvent) string {
+	threadID, _ := threadIdentityFromEvent(ev)
+	return threadID
+}
+
+// threadIdentityFromEvent returns the event's thread ID and whether its
+// concrete event family requires that identity. Optional-identity events are
+// routed when an ID exists but remain valid global events when it does not.
+func threadIdentityFromEvent(ev types.ThreadEvent) (string, bool) {
 	for _, extract := range threadIDExtractors {
 		if id, ok := extract(ev); ok {
-			return id
+			return id, threadIdentityRequired(ev)
 		}
 	}
-	return ""
+	return "", false
+}
+
+func threadIdentityRequired(ev types.ThreadEvent) bool {
+	switch ev.(type) {
+	case *types.ErrorEvent,
+		*types.MCPServerOAuthLoginCompleted,
+		*types.MCPServerStartupStatusUpdated,
+		*types.UnknownEvent,
+		*types.Warning:
+		return false
+	default:
+		return true
+	}
 }
 
 func threadIDFromThreadLifecycleEvent(ev types.ThreadEvent) (string, bool) {
@@ -133,6 +154,8 @@ func threadIDFromMCPEvent(ev types.ThreadEvent) (string, bool) {
 func threadIDFromMiscEvent(ev types.ThreadEvent) (string, bool) {
 	switch e := ev.(type) {
 	case *types.TokenUsageUpdated:
+		return e.ThreadID, true
+	case *types.ErrorEvent:
 		return e.ThreadID, true
 	case *types.HookStarted:
 		return e.ThreadID, true

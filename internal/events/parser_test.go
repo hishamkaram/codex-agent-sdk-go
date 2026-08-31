@@ -316,9 +316,28 @@ func TestParseEvent_ErrorEvent(t *testing.T) {
 	t.Parallel()
 	n := jsonrpc.Notification{
 		Method: "error",
+		Params: json.RawMessage(`{"threadId":"T-error","turnId":"U-error","willRetry":true,"error":{"message":"connection lost","additionalDetails":"retrying","codexErrorInfo":{"httpConnectionFailed":{"httpStatusCode":502}}}}`),
+	}
+	ev, err := ParseEvent(n)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ee := ev.(*types.ErrorEvent)
+	if ee.ThreadID != "T-error" || ee.TurnID != "U-error" || !ee.WillRetry || ee.Message != "connection lost" || ee.AdditionalDetails == nil || *ee.AdditionalDetails != "retrying" || len(ee.CodexErrorInfo) == 0 {
+		t.Fatalf("%+v", ee)
+	}
+}
+
+func TestParseEvent_ErrorEventLegacyFlatShape(t *testing.T) {
+	t.Parallel()
+	n := jsonrpc.Notification{
+		Method: "error",
 		Params: json.RawMessage(`{"code":"CTX_OVERFLOW","message":"too big","context":{"tokens":9000}}`),
 	}
-	ev, _ := ParseEvent(n)
+	ev, err := ParseEvent(n)
+	if err != nil {
+		t.Fatal(err)
+	}
 	ee := ev.(*types.ErrorEvent)
 	if ee.Code != "CTX_OVERFLOW" || ee.Message != "too big" || len(ee.Context) == 0 {
 		t.Fatalf("%+v", ee)

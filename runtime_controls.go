@@ -12,7 +12,7 @@ import (
 	"github.com/hishamkaram/codex-agent-sdk-go/types"
 )
 
-const runtimeControlCommandWaitDelay = 500 * time.Millisecond
+const runtimeControlCommandWaitDelay = 2 * time.Second
 
 var approvalChoiceRE = regexp.MustCompile(`^\s*-\s+([a-z][a-z0-9-]*):`)
 

@@ -138,8 +138,6 @@ func TestClient_CloseWaitsForDispatcherBeforeClosingCompactSubscription(t *testi
 }
 
 func TestClient_CloseDuringConnectCancelsHungInitialize(t *testing.T) {
-	t.Parallel()
-
 	marker := filepath.Join(t.TempDir(), "started")
 	helper := filepath.Join(t.TempDir(), "codex-helper")
 	script := fmt.Sprintf(`#!/bin/sh
@@ -266,8 +264,6 @@ while IFS= read -r line; do :; done
 }
 
 func TestClient_InitializeTimeoutIsCLIConnectionError(t *testing.T) {
-	t.Parallel()
-
 	helper := filepath.Join(t.TempDir(), "codex-helper")
 	secret := "sk-test-secret-in-stderr"
 	secretSuffix := "tail-secret-from-long-line"

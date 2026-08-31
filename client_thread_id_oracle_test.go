@@ -9,8 +9,8 @@ import (
 func sp(s string) *string { return &s }
 
 // TestExtractThreadIDFromEvent_Oracle is the behavior-equivalence safety net for
-// the extractThreadIDFromEvent refactor (a 38-case type switch, cyclomatic 41,
-// split into category helpers). Every event type the switch recognizes is
+// the extractThreadIDFromEvent refactor, split into category helpers. Every
+// event type the switch recognizes is
 // constructed with ThreadID "T" and must extract "T"; a dropped or
 // mis-categorized case regresses to "" and fails here. The *types.Warning
 // nil-guard and a deliberately-unrecognized type pin the "" outcomes.
@@ -31,6 +31,7 @@ func TestExtractThreadIDFromEvent_Oracle(t *testing.T) {
 		{"ItemUpdated", &types.ItemUpdated{ThreadID: id}, id},
 		{"ItemCompleted", &types.ItemCompleted{ThreadID: id}, id},
 		{"TokenUsageUpdated", &types.TokenUsageUpdated{ThreadID: id}, id},
+		{"ErrorEvent", &types.ErrorEvent{ThreadID: id}, id},
 		{"ContextCompacted", &types.ContextCompacted{ThreadID: id}, id},
 		{"HookStarted", &types.HookStarted{ThreadID: id}, id},
 		{"HookCompleted", &types.HookCompleted{ThreadID: id}, id},

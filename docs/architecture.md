@@ -94,7 +94,8 @@ When `Client.Connect` succeeds, a single goroutine starts:
       case note := <-demux.Notifications():
           ev := events.ParseEvent(note)
           threadID := extractThreadID(ev)             // includes UnknownEvent best-effort IDs
-          client.threads[threadID].deliverEvent(ev)   // drop only when no thread route exists
+          client.threads[threadID].deliverEvent(ev)   // when an SDK Thread is registered
+          client.publishThreadEvent(threadID, ev)     // includes provider-created child threads
 
       case sreq := <-demux.ServerRequests():
           req := events.ParseApprovalRequest(sreq.Method, sreq.Params)
@@ -106,8 +107,13 @@ When `Client.Connect` succeeds, a single goroutine starts:
     }
 ```
 
-One dispatcher across all threads. Each Thread owns a buffered inbox
-(256 events) so a slow consumer can't stall the dispatcher.
+One dispatcher serves all threads. Each registered Thread owns a buffered
+inbox (256 events). `Client.SubscribeThreadEvents` adds bounded client-wide
+subscriptions for provider-created child threads that have no `Thread` handle.
+A subscriber overflow, rejected notification, or unexpected app-server event
+source close emits a terminal gap error and closes instead of silently
+presenting an incomplete transcript. Intentional client shutdown closes the
+subscription without a gap.
 
 ## The turn lock
 
@@ -130,6 +136,8 @@ channel that closes when the turn completes.
 | `Thread.Run` / `Thread.RunStreamed` on the SAME thread | Serialized via turnMu — later calls block |
 | `Thread.Run` / `Thread.RunStreamed` on DIFFERENT threads of one Client | Yes — they share the dispatcher but have independent inboxes |
 | `Thread.Interrupt` | Yes |
+| `Client.SubscribeThreadEvents` | Yes; each subscription is FIFO and independently bounded |
+| `Client.{ListBackgroundTerminals, TerminateBackgroundTerminal, CleanBackgroundTerminals, InterruptThreadTurn}` | Yes |
 | `Client.Close` | Yes (idempotent) |
 | `ApprovalCallback` invocation | Serialized per Client — one request at a time |
 

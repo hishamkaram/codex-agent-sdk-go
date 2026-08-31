@@ -74,11 +74,10 @@ func TestIntCmd_CleanBackgroundTerminals_FeatureNotEnabled(t *testing.T) {
 }
 
 func TestIntCmd_CleanBackgroundTerminals_HappyWithCapability(t *testing.T) {
-	requireCodex(t)
 	requireAuth(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	opts := types.NewCodexOptions().WithExperimentalAPI(true)
+	opts := integrationOptions(t).WithExperimentalAPI(true)
 	c, err := codex.NewClient(ctx, opts)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)

@@ -116,6 +116,7 @@ ReviewTarget variants:
 | `/status` — usage | `Client.ReadRateLimits()` | Dual shape: legacy + `rateLimitsByLimitId` map |
 | `/status` — auth | `Client.GetAuthStatus()` | **SECURITY:** AuthToken is a live JWT — don't log |
 | `/mcp` | `Client.ListMCPServerStatus()` | Returns `{data, nextCursor}`; tools is a map keyed by name |
+| `/ps` | `Client.ListBackgroundTerminals(ctx, threadID)` | Complete bounded pagination; requires the schema-proven experimental inventory capability |
 | `/apps` | `Client.ListApps()` | **Caveat:** often 403s on ChatGPT auth (upstream Cloudflare) |
 | `/plugins` | `Client.ListSkills()` | Grouped by cwd; iterate `[]SkillsCwdGroup` |
 | `/debug-config` | `Client.ReadConfig()` | Wrapped under `config.*`; use `Config.Raw` map for fields the SDK doesn't curate. Object-form `approval_policy` is normalized to curated `"granular"` while the raw JSON stays in `Config.Raw["approval_policy"]` |
@@ -127,7 +128,8 @@ ReviewTarget variants:
 | `/new` | `Client.StartThread()` | Already available pre-v0.4.0 |
 | `/resume` | `Client.ResumeThread()` | Already available; Thread.Cwd() now returns the start-time cwd |
 | `/fork` | `Client.ForkThread()` | Already available |
-| `/stop` (background terminals) | `Thread.CleanBackgroundTerminals()` | **Requires** `WithExperimentalAPI(true)` at NewClient |
+| `/stop` (one background terminal) | `Client.TerminateBackgroundTerminal(ctx, threadID, processID)` | Requests termination of one schema-proven live process; verify a fresh inventory |
+| `/stop` (all background terminals) | `Client.CleanBackgroundTerminals(ctx, threadID)` or `Thread.CleanBackgroundTerminals()` | Requests cleanup in one provider thread; verify the inventory drains |
 | — (rollback) | `Thread.Rollback(ctx, numTurns)` | Drops last N turns; does NOT revert file changes |
 | — (rename) | `Thread.SetName(ctx, name)` | Emits `thread/name/updated` notification |
 | — (steer) | `Thread.Steer(ctx, text)` | Appends to in-flight turn; errors with "no active turn" otherwise |
@@ -188,10 +190,16 @@ mapping. Callers compose them locally if needed.
 | `/mention` | File picker UI; equivalent is `RunOptions.Images` or including file path in prompt text |
 | `/plan` | Narrative instruction; compose into prompt text |
 | `/personality` | Config write of personality key; use `Client.WriteConfigValue` |
-| `/ps` | TUI background-terminal list — not exposed over the wire |
 | `/statusline`, `/title` | Config writes; use `Client.WriteConfigValue` |
 | `/sandbox-add-read-dir` | Windows-sandbox config; use `Client.WriteConfigValue` |
 | `/agent` | Multi-thread TUI switcher; SDK already exposes thread switching via StartThread |
+
+Background terminal methods require `WithExperimentalAPI(true)` on the
+client and must be exposed only after `DiscoverRuntimeFeatures` reports the
+corresponding inventory, terminate, or clean capability. This prevents a CLI
+version guess from becoming a misleading control. Method success is only a
+provider acknowledgement; user-visible terminal state remains inventory- or
+event-authoritative.
 
 ## Design principle: TUI helpers
 

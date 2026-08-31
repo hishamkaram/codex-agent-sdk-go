@@ -149,7 +149,6 @@ func TestListener_PreToolUseAskIsSilent(t *testing.T) {
 }
 
 func TestListener_CallbackTimeout(t *testing.T) {
-	t.Parallel()
 	dir := t.TempDir()
 	socket := filepath.Join(dir, "s.sock")
 

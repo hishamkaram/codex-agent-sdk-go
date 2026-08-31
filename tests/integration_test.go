@@ -1,8 +1,8 @@
 //go:build integration
 
 // Package tests contains integration tests gated by the `integration` build
-// tag. They require a real codex CLI on PATH + either OPENAI_API_KEY or a
-// populated ~/.codex/auth.json.
+// tag. They require a real codex CLI on PATH (or CODEX_CLI_PATH) + either
+// OPENAI_API_KEY or a populated ~/.codex/auth.json.
 //
 // Run:
 //
@@ -28,11 +28,20 @@ import (
 
 func requireCodex(t *testing.T) string {
 	t.Helper()
-	path, err := exec.LookPath("codex")
+	candidate := strings.TrimSpace(os.Getenv("CODEX_CLI_PATH"))
+	if candidate == "" {
+		candidate = "codex"
+	}
+	path, err := exec.LookPath(candidate)
 	if err != nil {
-		t.Skipf("codex CLI not found: %v", err)
+		t.Skipf("codex CLI %q not found: %v", candidate, err)
 	}
 	return path
+}
+
+func integrationOptions(t *testing.T) *types.CodexOptions {
+	t.Helper()
+	return types.NewCodexOptions().WithCLIPath(requireCodex(t))
 }
 
 func requireAuth(t *testing.T) {
@@ -47,20 +56,34 @@ func requireAuth(t *testing.T) {
 	t.Skip("no OPENAI_API_KEY and no ~/.codex/auth.json — cannot auth")
 }
 
-// TestIntegration_FindCLIAndVersion exercises FindCLI + ProbeCLIVersion
-// against the real binary. No subprocess lifecycle; no billing.
+func TestIntegrationOptionsUsesCLIPathOverride(t *testing.T) {
+	testBinary, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable: %v", err)
+	}
+	t.Setenv("CODEX_CLI_PATH", testBinary)
+
+	options := integrationOptions(t)
+	if options.CLIPath != testBinary {
+		t.Fatalf("CLIPath = %q, want override %q", options.CLIPath, testBinary)
+	}
+}
+
+// TestIntegration_FindCLIAndVersion exercises default discovery when no
+// override is configured, then probes the exact CLI selected by the harness.
+// No subprocess lifecycle; no billing.
 func TestIntegration_FindCLIAndVersion(t *testing.T) {
 	path := requireCodex(t)
-
-	found, err := transport.FindCLI()
-	if err != nil {
-		t.Fatalf("FindCLI: %v", err)
+	if strings.TrimSpace(os.Getenv("CODEX_CLI_PATH")) == "" {
+		found, err := transport.FindCLI()
+		if err != nil {
+			t.Fatalf("FindCLI: %v", err)
+		}
+		if found != path {
+			t.Logf("FindCLI returned %q, exec.LookPath returned %q (different install locations OK)", found, path)
+		}
 	}
-	if found != path {
-		t.Logf("FindCLI returned %q, exec.LookPath returned %q (different install locations OK)", found, path)
-	}
-
-	v, err := transport.ProbeCLIVersion(found)
+	v, err := transport.ProbeCLIVersion(path)
 	if err != nil {
 		t.Fatalf("ProbeCLIVersion: %v", err)
 	}
@@ -80,13 +103,12 @@ func TestIntegration_FindCLIAndVersion(t *testing.T) {
 // thread/archive → close. Verifies our handshake, demux, and shutdown
 // ladder survive contact with the real server. No billing.
 func TestIntegration_ConnectAndArchive(t *testing.T) {
-	requireCodex(t)
 	requireAuth(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	client, err := codex.NewClient(ctx, types.NewCodexOptions().WithVerbose(false))
+	client, err := codex.NewClient(ctx, integrationOptions(t).WithVerbose(false))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +153,6 @@ func TestIntegration_ConnectAndArchive(t *testing.T) {
 // real quota. Gated by CODEX_SDK_RUN_TURNS=1 so PR CI doesn't burn
 // the secret budget.
 func TestIntegration_OneMinimalTurn(t *testing.T) {
-	requireCodex(t)
 	requireAuth(t)
 	if os.Getenv("CODEX_SDK_RUN_TURNS") != "1" {
 		t.Skip("set CODEX_SDK_RUN_TURNS=1 to run real turns")
@@ -140,7 +161,7 @@ func TestIntegration_OneMinimalTurn(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 
-	client, err := codex.NewClient(ctx, types.NewCodexOptions())
+	client, err := codex.NewClient(ctx, integrationOptions(t))
 	if err != nil {
 		t.Fatal(err)
 	}

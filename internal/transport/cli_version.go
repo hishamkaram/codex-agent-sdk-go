@@ -14,7 +14,7 @@ import (
 // v0.1.0 design. Callers can inspect the version via ProbeCLIVersion.
 const (
 	RecommendedCLIVersion = "0.144.1"
-	cliVersionWaitDelay   = 500 * time.Millisecond
+	cliVersionWaitDelay   = 2 * time.Second
 )
 
 // SemVer is a minimal semantic version struct.

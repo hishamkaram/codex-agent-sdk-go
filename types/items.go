@@ -286,6 +286,30 @@ type CollabAgentToolCall struct {
 func (*CollabAgentToolCall) isThreadItem()    {}
 func (*CollabAgentToolCall) ItemType() string { return "collabAgentToolCall" }
 
+// SubAgentActivity is the provider-authored lifecycle item for one Codex
+// child-agent thread. AgentThreadID is the child thread identity; AgentPath is
+// the provider role path that launched it.
+type SubAgentActivity struct {
+	ID            string               `json:"id"`
+	AgentPath     string               `json:"agentPath"`
+	AgentThreadID string               `json:"agentThreadId"`
+	Kind          SubAgentActivityKind `json:"kind"`
+}
+
+func (*SubAgentActivity) isThreadItem()    {}
+func (*SubAgentActivity) ItemType() string { return "subAgentActivity" }
+
+// SubAgentActivityKind is the exact lifecycle vocabulary emitted by current
+// Codex app-server schemas.
+type SubAgentActivityKind string
+
+const (
+	SubAgentActivityStarted     SubAgentActivityKind = "started"
+	SubAgentActivityInteracted  SubAgentActivityKind = "interacted"
+	SubAgentActivityInterrupted SubAgentActivityKind = "interrupted"
+	SubAgentActivityCompleted   SubAgentActivityKind = "completed"
+)
+
 // AgentStates is the current codex app-server agentsStates wire field. Codex
 // app-server 0.128.0 declares an object keyed by agent/thread ID. Older
 // fixtures used an array, so UnmarshalJSON accepts both and normalizes arrays to

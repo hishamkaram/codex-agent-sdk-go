@@ -22,6 +22,7 @@ func TestItemType_EveryKnownItem(t *testing.T) {
 		{&Plan{}, "plan"},
 		{&Reasoning{}, "reasoning"},
 		{&SystemError{}, "systemError"},
+		{&SubAgentActivity{}, "subAgentActivity"},
 		{&UnknownItem{Type: "future"}, "future"},
 	}
 	for _, c := range cases {

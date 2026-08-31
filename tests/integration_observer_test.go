@@ -56,14 +56,13 @@ func (o *integrationObserver) OnSubprocessExit(_ int, requested bool, _ error) {
 //   - Health() reports Connected + Ready + a live PID
 //   - after a clean Close, OnSubprocessExit fired once with requested=true
 func TestIntegration_ObserverConnectAndHealth(t *testing.T) {
-	requireCodex(t)
 	requireAuth(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	obs := &integrationObserver{}
-	client, err := codex.NewClient(ctx, types.NewCodexOptions().
+	client, err := codex.NewClient(ctx, integrationOptions(t).
 		WithVerbose(false).
 		WithObserver(obs))
 	if err != nil {
