@@ -36,6 +36,7 @@ type Client struct {
 	mu                          sync.Mutex
 	threads                     map[string]*Thread
 	latestThreadID              string
+	fileApprovals               map[fileApprovalKey]fileApprovalContext // guarded by mu
 	threadEventSubscribers      map[uint64]*threadEventSubscriber
 	nextThreadEventSubscriberID uint64
 	cliCompatibility            atomic.Pointer[cliCompatibilityState]

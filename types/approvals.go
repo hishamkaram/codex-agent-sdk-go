@@ -37,20 +37,26 @@ func (*CommandExecutionApprovalRequest) ApprovalMethod() string {
 	return "item/commandExecution/requestApproval"
 }
 
-// FileChangeApprovalRequest asks the user to approve a file modification.
+// FileChangeApprovalRequest asks the user to approve file changes or a write root.
 // Emitted when the model wants to create/modify/delete a file that
 // approval policy does not auto-approve.
 //
 // Wire method: "item/fileChange/requestApproval".
 type FileChangeApprovalRequest struct {
-	Path        string `json:"path"`
-	Operation   string `json:"operation"` // "create" | "modify" | "delete"
-	Diff        string `json:"diff,omitempty"`
-	Reason      string `json:"reason,omitempty"`
-	ThreadID    string `json:"threadId"`
-	TurnID      string `json:"turnId"`
-	ItemID      string `json:"itemId"`
-	StartedAtMS int64  `json:"startedAtMs"`
+	// Changes is the latest active file set resolved before the callback.
+	// Path/Operation/Diff remain a compatibility projection for single-file requests.
+	Changes []FileChangePart `json:"changes,omitempty"`
+	// GrantRoot proposes session-wide writes under this root. The upstream field
+	// is unstable; its presence is a permission request, not a guarantee of access.
+	GrantRoot   *string `json:"grantRoot,omitempty"`
+	Path        string  `json:"path"`
+	Operation   string  `json:"operation"` // "create" | "modify" | "delete"
+	Diff        string  `json:"diff,omitempty"`
+	Reason      string  `json:"reason,omitempty"`
+	ThreadID    string  `json:"threadId"`
+	TurnID      string  `json:"turnId"`
+	ItemID      string  `json:"itemId"`
+	StartedAtMS int64   `json:"startedAtMs"`
 }
 
 func (*FileChangeApprovalRequest) isApprovalRequest() {}
