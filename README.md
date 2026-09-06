@@ -221,6 +221,11 @@ Eight runnable examples under [`examples/`](examples/):
 
 Build all: `make examples`. Run any: `go run ./examples/<name>`.
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for checks and
+[SECURITY.md](SECURITY.md) for private vulnerability reporting.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
