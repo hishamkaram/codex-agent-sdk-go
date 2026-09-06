@@ -17,11 +17,12 @@ registered, the SDK uses `DefaultDenyApprovalCallback` — every request
 is denied. This is a safer default than silent auto-approve; if your
 use-case is "auto-approve everything", you must say so explicitly.
 
-The callback runs on the Client's single dispatcher goroutine — **do
-not block**. Never call `Run`, `RunStreamed`, or any other SDK method
-from inside the callback; that will deadlock. Defer user-interaction
-(e.g., prompting a human) to another goroutine and respond via a
-channel, or return a decision based solely on the request data.
+The callback runs on the client's single dispatcher goroutine. Keep it short
+when possible. For human approval, send the request to an independent UI and
+wait on a decision channel with a `select` that also handles `ctx.Done()`;
+return a denial on cancellation. Other notifications are paused while the
+callback waits. Do not call `Run`, `RunStreamed`, or `Close`, or wait for SDK events from
+inside the callback: those need the same dispatcher to make progress.
 
 ## Request taxonomy
 
@@ -32,7 +33,8 @@ switch r := req.(type) {
 case *types.CommandExecutionApprovalRequest:
     // r.Command, r.Cwd, r.Reason
 case *types.FileChangeApprovalRequest:
-    // r.Path, r.Operation ("create"|"modify"|"delete"), r.Diff, r.Reason
+    // r.Changes: every path, operation, diff, and optional rename destination
+    // r.GrantRoot: optional proposed session-wide write root
 case *types.PermissionsApprovalRequest:
     // r.Permission, r.Scope, r.Reason  (e.g., network egress)
 case *types.ElicitationRequest:
@@ -43,6 +45,19 @@ case *types.UnknownApprovalRequest:
     // r.Method, r.Params  (server introduced a method the SDK doesn't yet type)
 }
 ```
+
+For file approvals, inspect every entry in `Changes`. The SDK resolves the
+active file-change item by thread, turn, and item ID, including the latest
+patch-update event, before calling you.
+Missing or invalid context is denied without invoking the callback. For a
+single-file request, `Path`, `Operation`, and `Diff` remain populated for older
+callers; they cannot describe a multi-file request.
+
+If `GrantRoot` is non-nil, also review that proposed write root for the remainder
+of the session. A root-only request can have no file changes. The upstream field
+is unstable and whether the CLI honors it depends on the CLI implementation;
+do not treat it as a guarantee that access was granted. Invalid cached patch
+context is still denied even when a root is supplied.
 
 ## Decision taxonomy
 

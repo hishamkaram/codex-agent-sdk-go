@@ -153,6 +153,7 @@ func (t *AppServer) doConnect(ctx context.Context) error {
 	}
 	lr := jsonrpc.NewLineReaderWithSize(proc.stdout, bufSize)
 	demux := jsonrpc.NewDemux(lr, lw, t.logger,
+		jsonrpc.WithOrderedServerMessages(),
 		jsonrpc.WithObserver(t.observer),
 		jsonrpc.WithMaxParseErrors(t.cfg.MaxConsecutiveParseErrors),
 		jsonrpc.WithUnrecoverableHandler(t.terminateOnUnrecoverableError),

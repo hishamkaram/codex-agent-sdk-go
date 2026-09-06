@@ -186,10 +186,11 @@ func TestAppServer_DemuxSurvivesConnectContextCancel(t *testing.T) {
 		t.Fatalf("Notify: %v", err)
 	}
 	select {
-	case note, ok := <-app.Demux().Notifications():
-		if !ok {
+	case message, ok := <-app.Demux().ServerMessages():
+		if !ok || message.Notification == nil {
 			t.Fatal("notifications channel closed after connect context cancellation")
 		}
+		note := message.Notification
 		if note.Method != "ready" {
 			t.Fatalf("note.Method = %q, want ready", note.Method)
 		}
@@ -273,10 +274,11 @@ func TestAppServer_ReadBufferSize_WiredToReader(t *testing.T) {
 	// 20s tolerates the awk blob build + race-detector + parallel-package CPU
 	// contention; the assertion is correctness, not latency.
 	select {
-	case note, ok := <-app.Demux().Notifications():
-		if !ok {
+	case message, ok := <-app.Demux().ServerMessages():
+		if !ok || message.Notification == nil {
 			t.Fatal("notifications channel closed before the big frame arrived (line cap not raised?)")
 		}
+		note := message.Notification
 		if note.Method != "big" {
 			t.Fatalf("note.Method = %q, want big", note.Method)
 		}

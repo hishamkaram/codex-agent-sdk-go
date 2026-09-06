@@ -60,6 +60,7 @@ type Demux struct {
 
 	notifications  chan Notification
 	serverRequests chan ServerRequest
+	serverMessages chan ServerMessage
 	loopErr        chan error
 
 	stopOnce sync.Once
@@ -68,6 +69,21 @@ type Demux struct {
 
 // DemuxOption configures optional Demux behavior (observability, reliability).
 type DemuxOption func(*Demux)
+
+// ServerMessage preserves arrival order between notifications and approvals.
+// Exactly one field is non-nil.
+type ServerMessage struct {
+	Notification *Notification
+	Request      *ServerRequest
+}
+
+// WithOrderedServerMessages routes both kinds to ServerMessages instead of
+// the separate legacy channels. It must be selected before Run.
+func WithOrderedServerMessages() DemuxOption {
+	return func(d *Demux) { d.serverMessages = make(chan ServerMessage, 64) }
+}
+
+func (d *Demux) ServerMessages() <-chan ServerMessage { return d.serverMessages }
 
 // WithObserver injects the telemetry Observer. nil restores NopObserver
 // semantics.
@@ -264,6 +280,9 @@ func (d *Demux) readLoop(ctx context.Context) {
 		d.loopErr <- exitErr
 		close(d.notifications)
 		close(d.serverRequests)
+		if d.serverMessages != nil {
+			close(d.serverMessages) // owner: demux read loop
+		}
 	}()
 
 	loopStart := time.Now()
@@ -429,6 +448,9 @@ func (d *Demux) classifyAndRoute(
 // succeeds, the demux stops, or ctx is canceled. Returns false only when the
 // loop must exit.
 func (d *Demux) deliverNotification(ctx context.Context, note Notification) bool {
+	if d.serverMessages != nil {
+		return d.deliverServerMessage(ctx, ServerMessage{Notification: &note})
+	}
 	select {
 	case d.notifications <- note:
 		return true
@@ -452,6 +474,9 @@ func (d *Demux) deliverNotification(ctx context.Context, note Notification) bool
 
 // deliverServerRequest is the server-request analog of deliverNotification.
 func (d *Demux) deliverServerRequest(ctx context.Context, req ServerRequest) bool {
+	if d.serverMessages != nil {
+		return d.deliverServerMessage(ctx, ServerMessage{Request: &req})
+	}
 	select {
 	case d.serverRequests <- req:
 		return true

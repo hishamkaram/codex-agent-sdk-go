@@ -18,15 +18,23 @@ func (c *Client) dispatch(ctx context.Context, demux *jsonrpc.Demux, done chan s
 	defer func() {
 		c.connected.Store(false)
 		c.closeThreadEventSubscriptions()
+		c.clearFileApprovals()
 		close(done)
 	}()
 
 	notifications := demux.Notifications()
 	serverRequests := demux.ServerRequests()
-	for notifications != nil || serverRequests != nil {
+	serverMessages := demux.ServerMessages()
+	for notifications != nil || serverRequests != nil || serverMessages != nil {
 		select {
 		case <-ctx.Done():
 			return
+		case message, ok := <-serverMessages:
+			if !ok {
+				serverMessages = nil
+				continue
+			}
+			c.handleServerMessage(ctx, demux, message)
 		case note, ok := <-notifications:
 			if !ok {
 				notifications = nil
@@ -57,8 +65,17 @@ func (c *Client) dispatch(ctx context.Context, demux *jsonrpc.Demux, done chan s
 	}
 }
 
+func (c *Client) handleServerMessage(ctx context.Context, demux *jsonrpc.Demux, message jsonrpc.ServerMessage) {
+	if message.Notification != nil {
+		c.handleNotification(*message.Notification)
+	} else if message.Request != nil {
+		c.handleServerRequest(ctx, demux, *message.Request)
+	}
+}
+
 func (c *Client) handleNotification(n jsonrpc.Notification) {
 	if n.DecodeError != nil {
+		c.clearFileApprovals()
 		c.failThreadEventSubscriptions(ThreadEventEnvelope{
 			Err: &ThreadEventFrameGapError{Cause: n.DecodeError},
 		})
@@ -68,6 +85,7 @@ func (c *Client) handleNotification(n jsonrpc.Notification) {
 
 	ev, err := events.ParseEvent(n)
 	if err != nil {
+		c.clearFileApprovals()
 		threadID, _ := extractThreadID(n.Params)
 		c.failThreadEventSubscriptions(ThreadEventEnvelope{
 			ThreadID: threadID,
@@ -92,6 +110,7 @@ func (c *Client) handleNotification(n jsonrpc.Notification) {
 	threadID, identityRequired := threadIdentityFromEvent(ev)
 	if threadID == "" {
 		if identityRequired {
+			c.clearFileApprovals()
 			c.failThreadEventSubscriptions(ThreadEventEnvelope{
 				Err: &ThreadEventParseGapError{
 					Method: n.Method,
@@ -108,6 +127,7 @@ func (c *Client) handleNotification(n jsonrpc.Notification) {
 			zap.String("method", ev.EventMethod()))
 		return
 	}
+	c.rememberFileApproval(ev)
 	c.mu.Lock()
 	t := c.threads[threadID]
 	c.mu.Unlock()
@@ -135,6 +155,10 @@ func (c *Client) handleServerRequest(ctx context.Context, demux *jsonrpc.Demux, 
 		return
 	}
 	cb := c.opts.ApprovalCallback
+	if file, ok := req.(*types.FileChangeApprovalRequest); ok && !c.resolveFileApproval(file) {
+		cb = types.DefaultDenyApprovalCallback
+		c.logger.Warn("file approval context unavailable; denying")
+	}
 	if cb == nil {
 		cb = types.DefaultDenyApprovalCallback
 	}

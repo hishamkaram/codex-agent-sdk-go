@@ -143,7 +143,7 @@ func setupMockClient(t *testing.T, opts *types.CodexOptions, handleRequest func(
 	lr := jsonrpc.NewLineReader(srv.serverIn)
 	lw := jsonrpc.NewLineWriter(srv.clientOut)
 	logger := sdklog.NewLoggerFromZap(nil)
-	demux := jsonrpc.NewDemux(lr, lw, logger)
+	demux := jsonrpc.NewDemux(lr, lw, logger, jsonrpc.WithOrderedServerMessages())
 	demux.Run(context.Background())
 
 	c := &Client{
