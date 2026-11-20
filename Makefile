@@ -78,18 +78,8 @@ fmt:
 
 lint:
 	@echo "Running linters..."
-	@set -eu; \
-		expected=$$(cat .golangci-lint-version); \
-		command -v golangci-lint >/dev/null || { echo "Install golangci-lint $$expected and put it on PATH" >&2; exit 1; }; \
-		actual=v$$(golangci-lint version --short); \
-		if [ "$$actual" != "$$expected" ]; then echo "Install golangci-lint $$expected (found $$actual)" >&2; exit 1; fi; \
-		go_version=$$(go env GOVERSION); \
-		lint_build=$$(go version "$$(command -v golangci-lint)"); \
-		printf '%s\n' "$$lint_build" | awk -v go_version="$$go_version" '\
-			BEGIN { split(substr(go_version, 3), sdk, ".") } \
-			{ split(substr($$NF, 3), lint, ".") } \
-			END { if (lint[1]+0 < sdk[1]+0 || (lint[1]+0 == sdk[1]+0 && lint[2]+0 < sdk[2]+0)) exit 1 }' \
-		|| { echo "Install the official golangci-lint $$expected binary or rebuild it with $$go_version or newer (found $$lint_build)" >&2; exit 1; }
+	@command -v python3 >/dev/null || { echo "Python 3.11+ is required for make lint" >&2; exit 1; }
+	python3 -B scripts/check_lint_tool.py
 	go vet ./...
 	golangci-lint config verify
 	golangci-lint run ./...
@@ -113,8 +103,9 @@ verify-coverage: coverage-profile
 		}'
 
 govulncheck:
-	@echo "Scanning for known vulnerabilities..."
-	go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
+	@toolchain=$$(go env GOVERSION) && \
+		echo "Scanning for known vulnerabilities with $$toolchain..." && \
+		GOTOOLCHAIN="$$toolchain" go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
 
 clean:
 	@echo "Cleaning build artifacts..."

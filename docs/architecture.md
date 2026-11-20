@@ -23,13 +23,55 @@ and guides in the map show the corresponding public use cases.
 
 | Task | Owner, state and boundary | Focused checks and consumers |
 | --- | --- | --- |
-| Connect, close, route or subscribe | [Client](../client.go) owns the registry, connection attempt, and post-connect dispatcher. [Dispatch](../client_dispatch.go) reads ordered server messages, delivers to registered threads, and publishes [subscriptions](../client_thread_events.go) for provider-created child activity. Teardown belongs to Client. | `go test -race -short . -run 'Test(Client_.*Connect\|Client_Close\|SubscribeThreadEvents)'`. See the [streaming example](../examples/streaming/main.go). |
-| Start, resume, fork, run, or control a thread | [Thread](../threads.go) owns active turn identity, per-handle turn serialization, and bounded event delivery. Client registers handles by provider thread ID. [Thread commands](../threads_commands.go) use the same handle, and [background terminal controls](../background_terminals.go) send exact provider IDs through the Client's RPC session. | `go test -race -short . -run 'Test(Client_StartThreadAndRun\|Thread_Interrupt\|Thread_ActiveTurnID\|BuildThreadStartParams\|TerminateBackgroundTerminalAndInterruptThreadTurn)'`. See [commands](commands.md), the [fork example](../examples/fork/main.go) and [MCP example](../examples/with_mcp/main.go). |
-| Frame, correlate, parse or reply | [LineWriter](../internal/jsonrpc/framing.go) owns frame serialization. [Demux](../internal/jsonrpc/demux.go) owns pending requests by ID. [Approval parsing and encoding](../internal/events/approvals.go) are protocol translations. The root dispatcher owns callback invocation, ordered file-approval context, and sending the reply on the request ID. | `go test -race -short ./internal/jsonrpc ./internal/events` and `go test -race -short . -run 'TestClient_ApprovalCallback\|TestFileApprovalOrderedDispatch'`. See [wire protocol](wire-protocol.md), [approvals](approvals.md) and the [approval example](../examples/with_approvals/main.go). |
-| Change a public event, option, usage counter, error, or history record | [types](../types) defines the public values. [The parser](../internal/events/parser.go) maps notifications and preserves unknown shapes. [Usage parsing](../internal/events/parser_lifecycle.go) reads provider snapshots. Thread.Run assembles the buffered result ([threads.go](../threads.go)), and [history](../thread_history.go) reads persisted records by RPC. | `go test -race -short ./types ./internal/events` and `go test -race -short . -run 'TestClient_ThreadRun\|TestReadThreadAndMessages\|TestListThreadsPage'`. See the [wire protocol guide](wire-protocol.md) and [streaming example](../examples/streaming/main.go). |
-| Change executable discovery, spawn, environment, or optional capability detection | [transport](../internal/transport) owns executable resolution, child environment, pipes and reaping. The root's [runtime feature probe](../runtime_features.go) validates provider schemas. The [runtime control probe](../runtime_controls.go) checks CLI help, optionally checks the experimental schema, and applies supplied provider requirements. A CLI version alone cannot prove support. | `go test -race -short ./internal/transport` and `go test -race -short . -run 'TestDiscoverRuntime(Features\|Controls)'`. See [runtime prerequisites](../README.md#prerequisites) and [commands](commands.md). |
-| Change runtime hook configuration or execution | [Client hook setup](../client_hookbridge.go) owns generated config, backups, and cleanup. The [listener](../internal/hookbridge/listener.go) owns its socket and serves the shim. Close stops the app-server before tearing down the listener and removing or restoring the config. | `go test -race -short ./internal/hookbridge ./cmd/codex-sdk-hook-shim` and `go test -race -short . -run 'TestSetupHookBridge\|TestInstallHooksJSON\|TestRestoreUserHooksJSON'`. See [hooks](hooks.md) and the [hooks example](../examples/with_hooks/main.go). |
+| Connect, close, route or subscribe | [Client](../client.go) owns the registry, connection attempt, and post-connect dispatcher. [Dispatch](../client_dispatch.go) reads ordered server messages, delivers to registered threads, and publishes [subscriptions](../client_thread_events.go) for provider-created child activity. Teardown belongs to Client. | [Checks](#client-lifecycle-and-subscriptions). See the [streaming example](../examples/streaming/main.go). |
+| Start, resume, fork, run, or control a thread | [Thread](../threads.go) owns active turn identity, per-handle turn serialization, and bounded event delivery. Client registers handles by provider thread ID. [Thread commands](../threads_commands.go) use the same handle, and [background terminal controls](../background_terminals.go) send exact provider IDs through the Client's RPC session. | [Checks](#threads-and-turn-controls). See [commands](commands.md), the [fork example](../examples/fork/main.go) and [MCP example](../examples/with_mcp/main.go). |
+| Frame, correlate, parse or reply | [LineWriter](../internal/jsonrpc/framing.go) owns frame serialization. [Demux](../internal/jsonrpc/demux.go) owns pending requests by ID. [Approval parsing and encoding](../internal/events/approvals.go) are protocol translations. The root dispatcher owns callback invocation, ordered file-approval context, and sending the reply on the request ID. | [Checks](#framing-and-approvals). See [wire protocol](wire-protocol.md), [approvals](approvals.md) and the [approval example](../examples/with_approvals/main.go). |
+| Change a public event, option, usage counter, error, or history record | [types](../types) defines the public values. [The parser](../internal/events/parser.go) maps notifications and preserves unknown shapes. [Usage parsing](../internal/events/parser_lifecycle.go) reads provider snapshots. Thread.Run assembles the buffered result ([threads.go](../threads.go)), and [history](../thread_history.go) reads persisted records by RPC. | [Checks](#public-types-and-history). See the [wire protocol guide](wire-protocol.md) and [streaming example](../examples/streaming/main.go). |
+| Change executable discovery, spawn, environment, or optional capability detection | [transport](../internal/transport) owns executable resolution, child environment, pipes and reaping. The root's [runtime feature probe](../runtime_features.go) validates provider schemas. The [runtime control probe](../runtime_controls.go) checks CLI help, optionally checks the experimental schema, and applies supplied provider requirements. A CLI version alone cannot prove support. | [Checks](#transport-and-capability-probes). See [runtime prerequisites](../README.md#prerequisites) and [commands](commands.md). |
+| Change runtime hook configuration or execution | [Client hook setup](../client_hookbridge.go) owns generated config, backups, and cleanup. The [listener](../internal/hookbridge/listener.go) owns its socket and serves the shim. Close stops the app-server before tearing down the listener and removing or restoring the config. | [Checks](#runtime-hooks). See [hooks](hooks.md) and the [hooks example](../examples/with_hooks/main.go). |
 | Validate a behavior or update its guidance | The owning package keeps deterministic regression tests. Root-level [fake peer tests](../client_flow_test.go) exercise public flows and wire requests together. [Integration tests](../tests) cover real CLI boundaries. The consumer-facing example and guide follow the API or wire behavior. | Start with the owning row's focused tests, use `make examples` for changed examples, and finish with `make verify`. See [contributing](../CONTRIBUTING.md) for optional schema and live checks. |
+
+### Focused checks
+
+#### Client lifecycle and subscriptions
+
+```bash
+go test -race -short . -run 'Test(Client_.*Connect|Client_Close|SubscribeThreadEvents)'
+```
+
+#### Threads and turn controls
+
+```bash
+go test -race -short . -run 'Test(Client_StartThreadAndRun|Thread_Interrupt|Thread_ActiveTurnID|BuildThreadStartParams|TerminateBackgroundTerminalAndInterruptThreadTurn)'
+```
+
+#### Framing and approvals
+
+```bash
+go test -race -short ./internal/jsonrpc ./internal/events
+go test -race -short . -run 'TestClient_ApprovalCallback|TestFileApprovalOrderedDispatch'
+```
+
+#### Public types and history
+
+```bash
+go test -race -short ./types ./internal/events
+go test -race -short . -run 'TestClient_ThreadRun|TestReadThreadAndMessages|TestListThreadsPage'
+```
+
+#### Transport and capability probes
+
+```bash
+go test -race -short ./internal/transport
+go test -race -short . -run 'TestDiscoverRuntime(Features|Controls)'
+```
+
+#### Runtime hooks
+
+```bash
+go test -race -short ./internal/hookbridge ./cmd/codex-sdk-hook-shim
+go test -race -short . -run 'TestSetupHookBridge|TestInstallHooksJSON|TestRestoreUserHooksJSON'
+```
 
 ## Boundaries and known gaps
 
