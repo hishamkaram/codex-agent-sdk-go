@@ -30,9 +30,16 @@ go.work.sum
 # Scratch / experiments
 scratch/
 
-# Codex CLI working state created by integration tests
+# Keep generated Codex state ignored, including in integration test workdirs.
 .codex
 .codex/
+!/.codex/
+/.codex/*
+!/.codex/agents/
+/.codex/agents/*
+!/.codex/agents/researcher.toml
+!/.codex/agents/implementer.toml
+!/.codex/agents/reviewer.toml
 
 # Graphify local generated state
 /graphify-out/
