@@ -248,23 +248,29 @@ shape:
  "tokenUsage":{"total":{"totalTokens":12632,"inputTokens":12615,
                         "cachedInputTokens":4480,"outputTokens":17,
                         "reasoningOutputTokens":10},
-               "last":{"…per-turn-slice…"},
+               "last":{"totalTokens":12632,"inputTokens":12615,
+                       "cachedInputTokens":4480,"outputTokens":17,
+                       "reasoningOutputTokens":10},
                "modelContextWindow":258400}}
 ```
 
-The SDK keeps `total` (running thread total) on `TokenUsageUpdated.Usage`
-for compatibility, exposes the per-turn `last` snapshot on
-`TokenUsageUpdated.LastUsage`, and preserves explicit cumulative `total` on
-`TokenUsageUpdated.TotalUsage`. `modelContextWindow` is surfaced on
-`TokenUsageUpdated.ModelContextWindow`. `Thread.Run` prefers explicit usage
-on completion and falls back to the latest streaming `Usage`. Buffered
-per-turn accounting and cache-write tokens are tracked in
-[#47](https://github.com/hishamkaram/codex-agent-sdk-go/issues/47).
+The SDK exposes the wire `last` and `total` fields as `LastUsage` and
+`TotalUsage` on `TokenUsageUpdated`. For compatibility, streaming `Usage`
+uses the cumulative thread `total` when present, then `last` or a flat
+`usage` field. The reported window size is available as `ModelContextWindow`.
+Dividing a lifetime total by that size mixes lifetime usage with context
+occupancy.
 
-Important: `total` is a cumulative per-thread counter, not a
-current-context occupancy metric. It is safe for lifetime cost/token
-accounting, but callers MUST NOT derive context-window percentage from
-`total / modelContextWindow`.
+The [Codex 0.121.0 capture](../internal/events/testdata/spike-transcript.jsonl)
+shows a new turn replaying the previous turn's usage. It also shows a single
+turn repeating one snapshot before the thread total increases again. Taking
+only the final `last` can omit earlier work in that turn. Adding every
+`last` can count a replay twice.
+
+`Thread.Run` prefers explicit usage on completion and currently falls back
+to the latest streaming `Usage`. Buffered per-turn accounting and cache-write
+tokens are tracked in
+[#47](https://github.com/hishamkaram/codex-agent-sdk-go/issues/47).
 
 ### `item/agentMessage/delta` is a per-item-type delta method
 
