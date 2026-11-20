@@ -124,6 +124,12 @@ class HarnessTest(unittest.TestCase):
                 ),
                 "make missing-target",
             ),
+            (
+                "Unknown Make goal after a word-internal hash",
+                "AGENTS.md",
+                ENTRY.replace("make verify-harness", "GOWORK=cache#local make missing-target"),
+                "make missing-target",
+            ),
             ("Make variable is not a target", "Makefile", "verify-harness:=true\n", "make verify-harness does not exist"),
         )
         with tempfile.TemporaryDirectory() as directory:
@@ -155,6 +161,10 @@ class HarnessTest(unittest.TestCase):
                 "make -C elsewhere foreign-target && make verify-harness",
                 "echo docs; GOWORK=off make verify-harness",
                 "make verify-harness || make help",
+                "echo '&&' make bogus && make verify-harness",
+                'echo "||" make bogus || make verify-harness',
+                r"echo \; make bogus; make verify-harness",
+                "make verify-harness # && make bogus",
             )
             for command in valid_commands:
                 with self.subTest(command=command):

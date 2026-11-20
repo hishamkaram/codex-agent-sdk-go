@@ -43,7 +43,11 @@ SHELL_FENCE_LANGUAGES = {"", "bash", "sh", "shell", "zsh"}
 SHELL_VARIABLE = r"[A-Za-z_][A-Za-z0-9_]*="
 SHELL_ASSIGNMENT = re.compile(rf"{SHELL_VARIABLE}.*")
 SHELL_PUNCTUATION = "();<>|&"
-SHELL_CHAIN_OPERATORS = {"&&", "||", ";"}
+# Consume whole words so quoted operators and word-internal hashes stay literal.
+SHELL_CHUNK = re.compile(
+    r"""(?P<chain>&&|\|\||;)|(?P<comment>\#.*)|[ \t]+|"""
+    r"""(?:'[^']*'|"(?:\\.|[^"\\])*"|\\.|[^ \t'"\\();<>&|])+|."""
+)
 MAKE_COMMAND = re.compile(rf"(?:^|&&|\|\||;)[ \t]*(?:{SHELL_VARIABLE}\S*[ \t]+)*make[ \t]+")
 MAKE_GOAL = re.compile(r"[\w./-]+")
 MAKE_TARGET = re.compile(rf"^({MAKE_GOAL.pattern}):(?!=)", re.MULTILINE)
@@ -145,21 +149,26 @@ def documented_make_snippets(text: str) -> Iterator[str]:
                 yield snippet
 
 
-def shell_commands(source: Path, snippet: str) -> Iterator[list[str]]:
-    lexer = shlex.shlex(snippet, posix=True, punctuation_chars=SHELL_PUNCTUATION)
+def shell_segments(snippet: str) -> Iterator[str]:
+    start = 0
+    for chunk in SHELL_CHUNK.finditer(snippet):
+        if chunk.lastgroup is None:
+            continue
+        yield snippet[start:chunk.start()]
+        if chunk.lastgroup == "comment":
+            return
+        start = chunk.end()
+    yield snippet[start:]
+
+
+def shell_words(source: Path, segment: str) -> list[str]:
+    lexer = shlex.shlex(segment, posix=True, punctuation_chars=SHELL_PUNCTUATION)
     lexer.whitespace_split = True
-    words = []
+    lexer.commenters = ""
     try:
-        for word in lexer:
-            if word in SHELL_CHAIN_OPERATORS:
-                yield words
-                words = []
-            else:
-                words.append(word)
+        return list(lexer)
     except ValueError as error:
         raise HarnessError(f"{source}: malformed make command: {error}") from error
-    if words:
-        yield words
 
 
 def make_goals(command: list[str]) -> list[str]:
@@ -196,8 +205,8 @@ def make_goals(command: list[str]) -> list[str]:
 
 def documented_make_goals(source: Path, text: str) -> Iterator[str]:
     for snippet in documented_make_snippets(text):
-        for command in shell_commands(source, snippet):
-            yield from make_goals(command)
+        for segment in shell_segments(snippet):
+            yield from make_goals(shell_words(source, segment))
 
 
 def verify(root: Path) -> None:
