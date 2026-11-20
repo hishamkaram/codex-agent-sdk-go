@@ -21,7 +21,9 @@ HARNESS_DOCUMENTS = (
     "AGENTS.md",
     "README.md",
     "CONTRIBUTING.md",
+    "docs/approvals.md",
     "docs/architecture.md",
+    "docs/wire-protocol.md",
     ".github/pull_request_template.md",
 )
 INLINE_LINK = re.compile(r"\]\((<[^>\r\n]+>|[^\s)]+)\)")

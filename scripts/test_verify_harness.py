@@ -16,7 +16,10 @@ VALID_FILES = {
     "CLAUDE.md": "@AGENTS.md\n",
     "README.md": "[Architecture](docs/architecture.md)\n",
     "CONTRIBUTING.md": "```bash\nGOWORK=off make verify-harness\n```\n",
+    "docs/approvals.md": "[Protocol](wire-protocol.md#approvals)\n",
     "docs/architecture.md": "[Manifest](../go.mod)\n",
+    "docs/wire-protocol.md": "[Usage transcript](../internal/events/testdata/transcript.jsonl)\n",
+    "internal/events/testdata/transcript.jsonl": "{}\n",
     ".github/pull_request_template.md": "[Contributor guidance](../CONTRIBUTING.md)\n",
     "go.mod": "module example.com/sdk\n",
     "Makefile": "verify-harness:\n\t@true\n",
@@ -39,6 +42,12 @@ class HarnessTest(unittest.TestCase):
         cases = (
             ("Claude import", "CLAUDE.md", "@missing.md\n", "expected @AGENTS.md"),
             ("Missing doc", "README.md", "[Architecture](docs/missing.md)\n", "link target does not exist"),
+            (
+                "Missing protocol evidence",
+                "docs/wire-protocol.md",
+                VALID_FILES["docs/wire-protocol.md"].replace("transcript.jsonl", "missing.jsonl"),
+                "docs/wire-protocol.md: link target does not exist",
+            ),
             ("Absolute path", "README.md", "[Private plan](/private/plan.md)\n", "repository-relative"),
             ("Parent checkout", "README.md", "[Sibling SDK](../sdk)\n", "leaves the repository"),
             ("Missing skill route", "AGENTS.md", f"[Reviewer]({ROLE})\n", f"missing route to {SKILL}"),
