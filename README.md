@@ -19,7 +19,7 @@ Codex's app-server exposes a JSON-RPC 2.0 protocol over stdio — bidirectional,
 |---|---|
 | `codex app-server` transport | ✅ |
 | `codex exec --json` one-shot | ❌ deferred to v2 |
-| Thread start / resume / fork / archive / list | ✅ |
+| Thread start / resume / fork / archive / list | ✅ APIs available. See the [known fork protocol mismatch](https://github.com/hishamkaram/codex-agent-sdk-go/issues/50). |
 | `thread.Run()` (buffered) + `thread.RunStreamed()` (channel) | ✅ |
 | Streaming events: turn/item lifecycle, token usage, thread lifecycle/goals, process output, model/account/warning events, hooks, realtime, and unknown-event fallback | ✅ |
 | ThreadItem variants: agentMessage, userMessage, commandExecution, fileChange, mcpToolCall, webSearch, memoryRead/Write, plan, reasoning, subAgentActivity, systemError | ✅ |
@@ -42,7 +42,7 @@ Codex's app-server exposes a JSON-RPC 2.0 protocol over stdio — bidirectional,
 
 ## Prerequisites
 
-- Go 1.25+
+- Go at or above the minimum declared by the `go` directive in [go.mod](go.mod)
 - Codex CLI installed: `npm install -g @openai/codex` (or your distro's equivalent)
   - Recommended/tested CLI: `0.144.1` (verified 2026-07-12); older versions run with a soft warning and receive version-compatible hook flags.
   - Optional child-agent and background-terminal controls are enabled only when `DiscoverRuntimeFeatures` proves their exact methods and response shapes from the installed CLI schemas. A version string alone never enables them.
@@ -180,8 +180,8 @@ opts = opts.WithApprovalCallback(func(ctx context.Context, req types.ApprovalReq
 - Spawns `codex app-server` as a subprocess with stdin/stdout pipes
 - Frames JSON-RPC 2.0 messages with LF termination (`jsonrpc` field omitted on wire)
 - Demultiplexes responses (id → pending chan), notifications (→ events chan), server-initiated requests (→ approval callback)
-- Serializes all stdin writes via single `stdinMu` to prevent frame interleave
-- Serializes per-thread `Run()` calls via `turnMu` to preserve turn boundaries
+- Serializes all stdin writes through one line writer to prevent interleaved frames
+- Serializes per-thread `Run()` and `RunStreamed()` calls via `turnMu`
 - Maintains a 2 MiB read buffer for large notification payloads
 - Translates raw JSON-RPC notifications into typed Go events with schema drift checks for Codex upgrades
 - Publishes a bounded client-wide event stream so provider-created child threads remain observable
@@ -198,7 +198,7 @@ opts = opts.WithApprovalCallback(func(ctx context.Context, req types.ApprovalReq
 ## Docs
 
 - [`docs/getting-started.md`](docs/getting-started.md) — install, first query, multi-turn, streaming, resume, approvals in ~2 pages
-- [`docs/architecture.md`](docs/architecture.md) — the four layers, dispatcher goroutine, turn lock, concurrency contract, shutdown ladder
+- [`docs/architecture.md`](docs/architecture.md) — package ownership, change map, dispatcher, turn lifecycle, and shutdown
 - [`docs/wire-protocol.md`](docs/wire-protocol.md) — JSON-RPC method reference, wire quirks (flat vs nested IDs, per-item delta methods), known-unknown methods
 - [`docs/approvals.md`](docs/approvals.md) — approval request/decision taxonomy, sandbox × policy matrix, deadlock warning
 - [`docs/hooks.md`](docs/hooks.md) — observer mode + auto-wired programmatic callbacks via `WithHookCallback` (v0.3.0)
@@ -223,8 +223,10 @@ Build all: `make examples`. Run any: `go run ./examples/<name>`.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for checks and
-[SECURITY.md](SECURITY.md) for private vulnerability reporting.
+Start with [AGENTS.md](AGENTS.md) for contributor and agent guidance and
+[CONTRIBUTING.md](CONTRIBUTING.md) for development setup. Run `make verify`
+before opening a pull request. See [SECURITY.md](SECURITY.md) for private
+vulnerability reporting.
 
 ## License
 

@@ -10,7 +10,7 @@ quirks.
 - `"jsonrpc":"2.0"` field is OMITTED on both directions. The server
   tolerates its absence; omitting saves bytes and matches the upstream
   Python SDK.
-- Client→server reader buffer minimum 2 MiB. User input cap is 1 MiB;
+- SDK read buffer minimum 2 MiB. User input cap is 1 MiB;
   envelope overhead pushes some notifications past that.
 
 ## Three frame classes
@@ -38,7 +38,7 @@ field names preferred in this order: flat > nested.
 | `thread/start` | `{cwd?,model?,sandbox?,approvalPolicy?}` | `{thread:{id,…},model}` | `Client.StartThread` |
 | `thread/resume` | `{threadId,cwd?}` | `{thread:{id,…},model}` | `Client.ResumeThread` |
 | `thread/list` | `{}` | `{threads:[…]}` | `Client.ListThreads` |
-| `thread/fork` | `{sourceThreadId,…}` | `{thread:{id,…},model}` | `Client.ForkThread` |
+| `thread/fork` | `{sourceThreadId,…}` | `{thread:{id,…},model}` | `Client.ForkThread` ([#50](https://github.com/hishamkaram/codex-agent-sdk-go/issues/50)) |
 | `thread/archive` | `{threadId}` | `{}` | `Client.ArchiveThread` |
 | `turn/start` | `{threadId,input:[{type:"text"|"localImage",…}],outputSchema?,collaborationMode?}` | `{turn:{id,…}}` | `Thread.RunStreamed` |
 | `turn/interrupt` | `{threadId,turnId}` | `{}` | `Thread.Interrupt`, `Client.InterruptThreadTurn` |
@@ -173,8 +173,12 @@ decision back.
 | `mcpServer/elicitation/request` | `*types.ElicitationRequest` |
 | `item/tool/requestUserInput` | `*types.ToolRequestUserInputRequest` |
 
-Decision wire shape: `{decision: "accept"|"acceptForSession"|"decline"|"cancel", reason?}`.
-`item/tool/requestUserInput` uses `{answers:{[questionId]:{answers:[...]}}}` instead.
+The SDK currently encodes generic decisions as
+`{decision: "accept"|"acceptForSession"|"decline"|"cancel", reason?}` and
+user input as `{answers:{[questionId]:{answers:[...]}}}`. The permission and
+MCP elicitation methods require their own response contracts. Those known
+gaps are tracked in [#48](https://github.com/hishamkaram/codex-agent-sdk-go/issues/48)
+and [#49](https://github.com/hishamkaram/codex-agent-sdk-go/issues/49).
 
 ## Wire quirks (derived from real transcripts)
 
@@ -252,8 +256,10 @@ The SDK keeps `total` (running thread total) on `TokenUsageUpdated.Usage`
 for compatibility, exposes the per-turn `last` snapshot on
 `TokenUsageUpdated.LastUsage`, and preserves explicit cumulative `total` on
 `TokenUsageUpdated.TotalUsage`. `modelContextWindow` is surfaced on
-`TokenUsageUpdated.ModelContextWindow`. `Thread.Run` tracks the latest
-snapshot and assigns it to `Turn.Usage` when the turn terminates.
+`TokenUsageUpdated.ModelContextWindow`. `Thread.Run` prefers explicit usage
+on completion and falls back to the latest streaming `Usage`. Buffered
+per-turn accounting and cache-write tokens are tracked in
+[#47](https://github.com/hishamkaram/codex-agent-sdk-go/issues/47).
 
 Important: `total` is a cumulative per-thread counter, not a
 current-context occupancy metric. It is safe for lifetime cost/token
