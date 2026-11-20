@@ -1,7 +1,11 @@
 LEFTHOOK_MODULE  ?= github.com/evilmartians/lefthook/v2
 LEFTHOOK_VERSION ?= v2.1.5
 
+# This SDK is checked as a standalone module even inside a parent go.work.
+override export GOWORK := off
+
 .PHONY: help build test test-all test-integration test-codex-livecli verify-module bench fmt lint clean coverage govulncheck hooks examples regen-schema check-schema-drift shim install-shim
+.PHONY: verify verify-harness coverage-profile verify-coverage
 
 help:
 	@echo "Codex Agent SDK for Go - Development Tasks"
@@ -11,6 +15,8 @@ help:
 	@echo "  make test            - Run unit tests (default, fast)"
 	@echo "  make test-all        - Run ALL tests including integration (requires codex CLI authentication)"
 	@echo "  make test-integration - Run integration tests only"
+	@echo "  make verify         - Run the standalone development and CI checks"
+	@echo "  make verify-harness - Check contributor guidance, skill routes and roles"
 	@echo "  make verify-module   - Verify standalone module metadata"
 	@echo "  make bench           - Run benchmarks"
 	@echo "  make fmt             - Format code with gofmt"
@@ -49,10 +55,17 @@ test-codex-livecli:
 		test -n "$${OPENAI_API_KEY}" || test -f "$$auth_file" || { echo "Codex authentication required: set OPENAI_API_KEY or run codex login"; exit 1; }
 	go test -tags=integration -race -count=5 -run TestIntegrationSchema ./tests/...
 
+verify: verify-harness verify-module lint verify-coverage build govulncheck
+
+verify-harness:
+	@command -v python3 >/dev/null || { echo "Python 3.11+ is required for make verify-harness" >&2; exit 1; }
+	python3 -B scripts/verify_harness.py
+	python3 -B -m unittest discover -s scripts -p 'test_*.py'
+
 verify-module:
 	@echo "Verifying standalone module metadata..."
-	@GOWORK=off go mod tidy -diff
-	@GOWORK=off go list -mod=readonly -m all > /dev/null
+	@go mod tidy -diff
+	@go list -mod=readonly -m all > /dev/null
 
 bench:
 	@echo "Running benchmarks..."
@@ -65,18 +78,34 @@ fmt:
 
 lint:
 	@echo "Running linters..."
+	@command -v python3 >/dev/null || { echo "Python 3.11+ is required for make lint" >&2; exit 1; }
+	python3 -B scripts/check_lint_tool.py
 	go vet ./...
-	@if command -v golangci-lint > /dev/null; then golangci-lint run ./...; else echo "golangci-lint not installed, skipping"; fi
+	golangci-lint config verify
+	golangci-lint run ./...
 
-coverage:
+coverage-profile:
 	@echo "Running tests with coverage (short mode)..."
 	go test -race -short -count=1 -p 4 -coverprofile=coverage.out ./...
+
+coverage: coverage-profile
 	go tool cover -func=coverage.out
 	@echo "HTML report: go tool cover -html=coverage.out -o coverage.html"
 
+verify-coverage: coverage-profile
+	@report=$$(go tool cover -func=coverage.out) && printf '%s\n' "$$report" | awk '\
+		$$1 == "total:" { total = $$NF; sub(/%$$/, "", total) } \
+		END { \
+			if (total !~ /^[0-9]+([.][0-9]+)?$$/ || total+0 < 54) { \
+				print "Total coverage " total "% is missing or below the 54% minimum" > "/dev/stderr"; exit 1 \
+			} \
+			print "Total coverage: " total "%" \
+		}'
+
 govulncheck:
-	@echo "Scanning for known vulnerabilities..."
-	govulncheck ./...
+	@toolchain=$$(go env GOVERSION) && \
+		echo "Scanning for known vulnerabilities with $$toolchain..." && \
+		GOTOOLCHAIN="$$toolchain" go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
 
 clean:
 	@echo "Cleaning build artifacts..."

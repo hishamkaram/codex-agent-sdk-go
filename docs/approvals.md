@@ -75,8 +75,10 @@ types.ToolRequestUserInputResponse{  // answer Codex request_user_input
 }
 ```
 
-Unknown decision types are treated as `Deny` by the encoder — safer
-than accept.
+The encoder treats unknown decision types as `Deny`. The permission and
+MCP elicitation methods require distinct responses. See the
+[wire protocol notes](wire-protocol.md#server-initiated-requests-approvals)
+for the current gaps.
 
 ## Approval policies
 
@@ -144,7 +146,10 @@ denies them too.
 `turn/completed{Status:"cancelled"}` notification shortly after. Your
 running `Thread.Run` will return a `*Turn` with `Status == "cancelled"`.
 Subsequent `Run` calls on the same thread are unaffected; the turn lock
-releases normally on terminus.
+releases normally on terminus. This describes a callback decision sent to the
+provider. Canceling the context of an active Go turn currently ends local
+consumption without interrupting the provider. See
+[#45](https://github.com/hishamkaram/codex-agent-sdk-go/issues/45).
 
 ## What the SDK does NOT do
 
