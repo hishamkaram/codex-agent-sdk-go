@@ -19,7 +19,12 @@ VALID_FILES = {
         "[Contributing](CONTRIBUTING.md 'Contributor guide')\n"
         "[Approvals](docs/approvals.md (Approval decisions))\n"
     ),
-    "CONTRIBUTING.md": "```bash\nGOWORK=off make verify-harness\n```\n",
+    "CONTRIBUTING.md": (
+        "Before handing off the change,\nmake sure the guide stays accurate.\n\n"
+        "For a narrow repair,\nmake the change small and don't widen it.\n\n"
+        "```yaml\nmake a non-shell example\n```\n\n"
+        "```bash\nGOWORK=off make verify-harness\n```\n"
+    ),
     "docs/approvals.md": "[Protocol](wire-protocol.md#approvals)\n",
     "docs/architecture.md": "[Manifest](../go.mod)\n",
     "docs/wire-protocol.md": "[Usage transcript](../internal/events/testdata/transcript.jsonl)\n",
@@ -99,9 +104,24 @@ class HarnessTest(unittest.TestCase):
                 "make missing-target",
             ),
             (
+                "Unknown Make goal in an ordinary fenced block",
+                "CONTRIBUTING.md",
+                "~~~\nmake verify-harness missing-target\n~~~\n",
+                "make missing-target",
+            ),
+            (
                 "Unknown inline env-prefixed Make goal",
                 "AGENTS.md",
                 ENTRY.replace("make verify-harness", "GOWORK=off GOTOOLCHAIN=auto make verify-harness missing-target"),
+                "make missing-target",
+            ),
+            (
+                "Unknown goal in a second chained Make command",
+                "AGENTS.md",
+                ENTRY.replace(
+                    "make verify-harness",
+                    "GOWORK=off make verify-harness && GOWORK=off make missing-target",
+                ),
                 "make missing-target",
             ),
             ("Make variable is not a target", "Makefile", "verify-harness:=true\n", "make verify-harness does not exist"),
@@ -131,6 +151,10 @@ class HarnessTest(unittest.TestCase):
                 "make --jobs=2 --no-print-directory verify-harness help",
                 "GOWORK=off make -j 2 verify-harness help",
                 "make verify-harness help && echo done",
+                "make verify-harness && echo 'text && make ignored' && GOWORK=off make help",
+                "make -C elsewhere foreign-target && make verify-harness",
+                "echo docs; GOWORK=off make verify-harness",
+                "make verify-harness || make help",
             )
             for command in valid_commands:
                 with self.subTest(command=command):

@@ -3,11 +3,13 @@
 The link check covers simple inline Markdown destinations, including optional
 titles. External links and heading fragments are outside this check.
 
-The Make check reads literal goals in single-line inline or fenced commands.
-It handles assignments, flags, and common option values. Commands selecting an
-alternate Makefile or directory and dynamically expanded goals are outside scope.
+The Make check reads literal goals in single-line inline code and shell or
+unlabelled fenced code blocks. It handles assignments, flags, common option
+values, and simple &&, ||, and ; chains. Alternate Makefiles or directories
+and expanded goals are outside scope.
 """
 
+from collections.abc import Iterator
 import json
 from pathlib import Path, PureWindowsPath
 import re
@@ -35,10 +37,14 @@ INLINE_LINK = re.compile(
     r"""(?:[ \t]+(?:"(?:\\.|[^"\\\r\n])*"|'(?:\\.|[^'\\\r\n])*'|\((?:\\.|[^()\\\r\n])*\)))?"""
     r"""[ \t]*\)"""
 )
-MAKE_COMMAND = re.compile(
-    r"(?:^[ \t]*|`)[ \t]*(?:(?:GOWORK|GOTOOLCHAIN)=\S+[ \t]+)*make[ \t]+([^`\r\n]+)",
-    re.MULTILINE,
-)
+INLINE_CODE = re.compile(r"(?<!`)(`+)([^`\r\n]+)\1(?!`)")
+CODE_FENCE = re.compile(r" {0,3}(`{3,}|~{3,})[ \t]*(.*)")
+SHELL_FENCE_LANGUAGES = {"", "bash", "sh", "shell", "zsh"}
+SHELL_VARIABLE = r"[A-Za-z_][A-Za-z0-9_]*="
+SHELL_ASSIGNMENT = re.compile(rf"{SHELL_VARIABLE}.*")
+SHELL_PUNCTUATION = "();<>|&"
+SHELL_CHAIN_OPERATORS = {"&&", "||", ";"}
+MAKE_COMMAND = re.compile(rf"(?:^|&&|\|\||;)[ \t]*(?:{SHELL_VARIABLE}\S*[ \t]+)*make[ \t]+")
 MAKE_GOAL = re.compile(r"[\w./-]+")
 MAKE_TARGET = re.compile(rf"^({MAKE_GOAL.pattern}):(?!=)", re.MULTILINE)
 MAKE_NUMERIC_OPTION = {"-j", "--jobs", "-l", "--load-average", "--max-load"}
@@ -113,34 +119,85 @@ def read_role(root: Path, path: Path) -> str:
     return role["developer_instructions"]
 
 
-def make_goals(source: Path, arguments: str) -> list[str]:
-    lexer = shlex.shlex(arguments, posix=True, punctuation_chars=True)
+def documented_make_snippets(text: str) -> Iterator[str]:
+    fence = ""
+    in_shell = False
+    for line in text.splitlines():
+        marker = CODE_FENCE.fullmatch(line)
+        if marker:
+            delimiter, info = marker.groups()
+            info = info.strip()
+            if not fence:
+                fence = delimiter
+                language = info.split(maxsplit=1)[0] if info else ""
+                in_shell = language.lower() in SHELL_FENCE_LANGUAGES
+                continue
+            if delimiter[0] == fence[0] and len(delimiter) >= len(fence) and not info:
+                fence = ""
+                continue
+
+        if fence:
+            snippets = (line,) if in_shell else ()
+        else:
+            snippets = (match[2] for match in INLINE_CODE.finditer(line))
+        for snippet in snippets:
+            if MAKE_COMMAND.search(snippet):
+                yield snippet
+
+
+def shell_commands(source: Path, snippet: str) -> Iterator[list[str]]:
+    lexer = shlex.shlex(snippet, posix=True, punctuation_chars=SHELL_PUNCTUATION)
     lexer.whitespace_split = True
+    words = []
+    try:
+        for word in lexer:
+            if word in SHELL_CHAIN_OPERATORS:
+                yield words
+                words = []
+            else:
+                words.append(word)
+    except ValueError as error:
+        raise HarnessError(f"{source}: malformed make command: {error}") from error
+    if words:
+        yield words
+
+
+def make_goals(command: list[str]) -> list[str]:
+    arguments = iter(command)
+    program = next(arguments, "")
+    while SHELL_ASSIGNMENT.fullmatch(program):
+        program = next(arguments, "")
+    if program != "make":
+        return []
+
     goals = []
     previous_option = ""
     options = True
-    try:
-        for word in lexer:
-            if word and all(character in lexer.punctuation_chars for character in word):
-                break
-            if previous_option in MAKE_VALUE_OPTION or (
-                previous_option in MAKE_NUMERIC_OPTION and MAKE_OPTION_NUMBER.fullmatch(word)
-            ):
-                previous_option = ""
-                continue
+    for word in arguments:
+        if word and all(character in SHELL_PUNCTUATION for character in word):
+            break
+        if previous_option in MAKE_VALUE_OPTION or (
+            previous_option in MAKE_NUMERIC_OPTION and MAKE_OPTION_NUMBER.fullmatch(word)
+        ):
             previous_option = ""
-            if options and word.startswith("-"):
-                if word == "--":
-                    options = False
-                elif word.startswith(("-C", "-f")) or word.partition("=")[0] in MAKE_OTHER_CONTEXT:
-                    return []
-                else:
-                    previous_option = word
-            elif MAKE_GOAL.fullmatch(word):
-                goals.append(word)
-    except ValueError as error:
-        raise HarnessError(f"{source}: malformed make command: {error}") from error
+            continue
+        previous_option = ""
+        if options and word.startswith("-"):
+            if word == "--":
+                options = False
+            elif word.startswith(("-C", "-f")) or word.partition("=")[0] in MAKE_OTHER_CONTEXT:
+                return []
+            else:
+                previous_option = word
+        elif MAKE_GOAL.fullmatch(word):
+            goals.append(word)
     return goals
+
+
+def documented_make_goals(source: Path, text: str) -> Iterator[str]:
+    for snippet in documented_make_snippets(text):
+        for command in shell_commands(source, snippet):
+            yield from make_goals(command)
 
 
 def verify(root: Path) -> None:
@@ -161,10 +218,9 @@ def verify(root: Path) -> None:
         if path == entry:
             for missing in sorted((skills | roles) - links):
                 raise HarnessError(f"{entry}: missing route to {missing}")
-        for command in MAKE_COMMAND.finditer(text):
-            for target in make_goals(path, command[1]):
-                if target not in targets:
-                    raise HarnessError(f"{path}: make {target} does not exist")
+        for target in documented_make_goals(path, text):
+            if target not in targets:
+                raise HarnessError(f"{path}: make {target} does not exist")
 
 
 if __name__ == "__main__":
