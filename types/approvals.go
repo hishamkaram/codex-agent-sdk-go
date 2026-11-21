@@ -385,9 +385,9 @@ type ToolRequestUserInputAnswer struct {
 }
 
 // ApprovalCallback is the signature for the user-supplied approval handler.
-// The callback MUST return promptly (a blocking approval stalls the turn)
-// and MUST NOT panic. The context is canceled when the dispatcher stops.
-// If it fires Done, the callback should return ApprovalCancel promptly.
+// One Client invokes callbacks serially. Honor ctx.Done and return promptly
+// when canceled. Use the supplied context for SDK calls so reentry protection
+// can reject work that would wait for this Client's approval worker.
 type ApprovalCallback func(ctx context.Context, req ApprovalRequest) ApprovalDecision
 
 // DefaultDenyApprovalCallback is a safe no-op approval handler that denies

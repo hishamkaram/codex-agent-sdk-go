@@ -39,7 +39,7 @@ func (t *Thread) Rollback(ctx context.Context, numTurns int) error {
 	if numTurns < 1 {
 		return fmt.Errorf("codex.Thread.Rollback: numTurns must be >= 1, got %d", numTurns)
 	}
-	if t.closed.Load() {
+	if t.isClosed() {
 		return fmt.Errorf("codex.Thread.Rollback: thread closed")
 	}
 	_, err := t.client.sendRaw(ctx, "Thread.Rollback", "thread/rollback", map[string]any{
@@ -60,7 +60,7 @@ func (t *Thread) SetName(ctx context.Context, name string) error {
 	if name == "" {
 		return fmt.Errorf("codex.Thread.SetName: name must not be empty")
 	}
-	if t.closed.Load() {
+	if t.isClosed() {
 		return fmt.Errorf("codex.Thread.SetName: thread closed")
 	}
 	_, err := t.client.sendRaw(ctx, "Thread.SetName", "thread/name/set", map[string]any{
@@ -85,10 +85,13 @@ func (t *Thread) Steer(ctx context.Context, text string) error {
 	if text == "" {
 		return fmt.Errorf("codex.Thread.Steer: text must not be empty")
 	}
-	if t.closed.Load() {
+	if t.isClosed() {
 		return fmt.Errorf("codex.Thread.Steer: thread closed")
 	}
-	tid, _ := t.activeTurnID.Load().(string)
+	tid := ""
+	if t.threadExecution != nil {
+		tid = t.activeID()
+	}
 	if tid == "" {
 		return fmt.Errorf("codex.Thread.Steer: no active turn")
 	}
@@ -110,7 +113,7 @@ func (t *Thread) Steer(ctx context.Context, text string) error {
 // construction time. Without it, this method returns
 // *types.FeatureNotEnabledError.
 func (t *Thread) CleanBackgroundTerminals(ctx context.Context) error {
-	if t.closed.Load() {
+	if t.isClosed() {
 		return fmt.Errorf("codex.Thread.CleanBackgroundTerminals: thread closed")
 	}
 	err := t.client.CleanBackgroundTerminals(ctx, t.id)
@@ -121,72 +124,26 @@ func (t *Thread) CleanBackgroundTerminals(ctx context.Context) error {
 	return err
 }
 
-// Compact requests that codex summarize the thread's earlier turns
-// into a concise handoff, freeing context for future turns. Equivalent
-// to TUI `/compact`.
+// Compact requests that codex summarize the thread's earlier turns. The
+// returned CompactResult acknowledges receipt. Wait can observe the legacy
+// thread/compacted notification with its own context.
 //
-// Compact is hybrid sync/async: the RPC acknowledges receipt
-// immediately (empty `{}`), but the actual compaction runs in the
-// background and is signaled by a `thread/compacted` notification.
-// The returned *CompactResult lets callers EITHER fire-and-forget
-// (just ignore the result) OR block via CompactResult.Wait(ctx).
-//
-// Compact pre-installs a one-shot subscription on the Thread BEFORE
-// sending the RPC, so the `*types.ContextCompacted` notification
-// cannot race the receiver. The notification is ALSO delivered to
-// the normal inbox so any running RunStreamed observer still sees
-// it.
-//
-// UPSTREAM QUIRK (codex 0.121.0, verified live 2026-04-19):
-// thread/compact/start reliably ACKS the RPC, but codex does NOT
-// reliably emit the `thread/compacted` notification that Wait
-// depends on. On populated threads the notification has been
-// observed to never arrive — and after ~30s, the subprocess
-// transport has been observed to enter an unresponsive state
-// ("write: file already closed" on subsequent RPCs). Callers that
-// need strict end-to-end compaction should EITHER use fire-and-forget
-// (ignore the *CompactResult) OR set a short Wait timeout and treat
-// timeout as "might have worked." This is not an SDK bug — it's an
-// upstream gap tracked for v0.4.x follow-up.
-//
-// On a brand-new thread with no rollout file, thread/compact/start
-// returns `{}` cleanly (no error) but no notification ever fires.
-// Compact on empty threads is effectively a no-op.
-//
-// Only one Compact may be in flight at a time per Thread. Calling
-// Compact while a prior CompactResult has not yet been drained by
-// Wait returns an error.
+// The Client keeps execution reserved until correlated completion. After
+// five seconds without confirmation, a new operation returns
+// ErrThreadExecutionUnconfirmed. The admission deadline does not bound Wait.
 func (t *Thread) Compact(ctx context.Context, opts *types.CompactOptions) (*CompactResult, error) {
-	if t.closed.Load() {
-		return nil, fmt.Errorf("codex.Thread.Compact: thread closed")
+	if t.isClosed() {
+		return nil, fmt.Errorf("codex.Thread.Compact: %w", types.ErrThreadClosed)
 	}
-
-	// Install the subscription BEFORE sending the RPC. Buffer of 1
-	// so the dispatcher's tee never blocks (even if caller is slow
-	// to call Wait).
-	ch := make(chan *types.ContextCompacted, 1)
-	chPtr := &ch
-	if !t.compactSub.CompareAndSwap(nil, chPtr) {
-		return nil, fmt.Errorf("codex.Thread.Compact: another compaction already in flight")
-	}
-
 	params := types.CompactStartParams{ThreadID: t.id}
 	if opts != nil && opts.Strategy != "" {
 		params.Strategy = opts.Strategy
 	}
-
-	_, err := t.client.sendRaw(ctx, "Thread.Compact", "thread/compact/start", params)
+	op, _, err := t.beginOperation(ctx, executeCompact, false, "thread/compact/start", params)
 	if err != nil {
-		// RPC failed — detach the subscription so the next Compact
-		// attempt can install its own.
-		t.compactSub.CompareAndSwap(chPtr, nil)
-		return nil, err
+		return nil, fmt.Errorf("codex.Thread.Compact: %w", err)
 	}
-	return &CompactResult{
-		ThreadID: t.id,
-		thread:   t,
-		chPtr:    chPtr,
-	}, nil
+	return &CompactResult{ThreadID: t.id, thread: t, chPtr: op.compactCh}, nil
 }
 
 // Summarize is sugar for `Compact(ctx, nil)` — a discoverable alias
@@ -212,26 +169,32 @@ func (t *Thread) Summarize(ctx context.Context) (*CompactResult, error) {
 //
 // Target is REQUIRED — use one of the ReviewTarget* constructors.
 func (t *Thread) StartReview(ctx context.Context, opts types.ReviewOptions) (*types.ReviewStartResult, error) {
-	if t.closed.Load() {
-		return nil, fmt.Errorf("codex.Thread.StartReview: thread closed")
+	if t.isClosed() {
+		return nil, fmt.Errorf("codex.Thread.StartReview: %w", types.ErrThreadClosed)
 	}
 	if opts.Target.Type == "" {
 		return nil, fmt.Errorf("codex.Thread.StartReview: opts.Target.Type is required (use ReviewTarget* constructors)")
 	}
-	params := types.ReviewStartParams{
-		ThreadID: t.id,
-		Target:   opts.Target,
-		Delivery: opts.Delivery,
+	params := types.ReviewStartParams{ThreadID: t.id, Target: opts.Target, Delivery: opts.Delivery}
+	var result json.RawMessage
+	var err error
+	if opts.Delivery == types.ReviewDetached {
+		if reentryErr := t.client.checkApprovalReentry(ctx); reentryErr != nil {
+			return nil, reentryErr
+		}
+		result, err = t.client.sendRaw(ctx, "Thread.StartReview", "review/start", params)
+	} else {
+		_, reply, startErr := t.beginOperation(ctx, executeReview, false, "review/start", params)
+		result, err = reply.Result, startErr
 	}
-	resp, err := t.client.sendRaw(ctx, "Thread.StartReview", "review/start", params)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("codex.Thread.StartReview: %w", err)
 	}
-	var result types.ReviewStartResult
-	if err := json.Unmarshal(resp, &result); err != nil {
+	var review types.ReviewStartResult
+	if err := json.Unmarshal(result, &review); err != nil {
 		return nil, fmt.Errorf("codex.Thread.StartReview: decode response: %w", err)
 	}
-	return &result, nil
+	return &review, nil
 }
 
 // StartReviewStreamed invokes codex's reviewer on the current thread and
@@ -243,7 +206,7 @@ func (t *Thread) StartReview(ctx context.Context, opts types.ReviewOptions) (*ty
 // review creates another thread; callers that need detached review output must
 // use StartReview and explicitly attach to the returned ReviewThreadID.
 func (t *Thread) StartReviewStreamed(ctx context.Context, opts types.ReviewOptions) (<-chan types.ThreadEvent, error) {
-	if t.closed.Load() {
+	if t.isClosed() {
 		return nil, fmt.Errorf("codex.Thread.StartReviewStreamed: thread closed")
 	}
 	if opts.Target.Type == "" {
@@ -253,26 +216,10 @@ func (t *Thread) StartReviewStreamed(ctx context.Context, opts types.ReviewOptio
 		return nil, fmt.Errorf("codex.Thread.StartReviewStreamed: detached review delivery is not streamable from the current thread")
 	}
 
-	t.turnMu.Lock()
-	unlockOnError := true
-	defer func() {
-		if unlockOnError {
-			t.turnMu.Unlock()
-		}
-	}()
-
-	result, err := t.StartReview(ctx, opts)
+	params := types.ReviewStartParams{ThreadID: t.id, Target: opts.Target, Delivery: opts.Delivery}
+	op, _, err := t.beginOperation(ctx, executeReview, true, "review/start", params)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("codex.Thread.StartReviewStreamed: %w", err)
 	}
-
-	turnID := result.Turn.ID
-	if turnID != "" {
-		t.activeTurnID.Store(turnID)
-	}
-
-	out := make(chan types.ThreadEvent, ThreadInboxBuffer)
-	unlockOnError = false
-	go t.streamLoop(ctx, turnID, out)
-	return out, nil
+	return t.streamOperation(ctx, op), nil
 }

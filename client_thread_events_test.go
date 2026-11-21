@@ -135,11 +135,11 @@ func TestSubscribeThreadEventsObserveRegisteredThreadStateBeforeEvent(t *testing
 
 	thread := newThread(c, "registered-thread")
 	c.registerThread(thread)
-	thread.eventMu.Lock()
+	thread.mu.Lock()
 	locked := true
 	defer func() {
 		if locked {
-			thread.eventMu.Unlock()
+			thread.mu.Unlock()
 		}
 	}()
 
@@ -154,14 +154,14 @@ func TestSubscribeThreadEventsObserveRegisteredThreadStateBeforeEvent(t *testing
 
 	select {
 	case event := <-events:
-		thread.eventMu.Unlock()
+		thread.mu.Unlock()
 		locked = false
 		<-notificationDone
 		t.Fatalf("subscriber observed event before registered thread state: %+v", event)
 	case <-time.After(250 * time.Millisecond):
 	}
 
-	thread.eventMu.Unlock()
+	thread.mu.Unlock()
 	locked = false
 	select {
 	case event := <-events:

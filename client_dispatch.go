@@ -15,10 +15,17 @@ var errThreadEventIdentityMissing = errors.New("thread-scoped notification is mi
 // dispatch runs the event-routing goroutine. Reads notifications and
 // server-initiated requests from the demux and fans them out.
 func (c *Client) dispatch(ctx context.Context, demux *jsonrpc.Demux, done chan struct{}) {
+	workerCtx, cancel := context.WithCancel(ctx)
+	jobs := make(chan approvalJob, approvalQueueSize)
+	workerDone := make(chan struct{})
+	go c.runApprovalWorker(workerCtx, demux, jobs, workerDone)
 	defer func() {
+		cancel()
 		c.connected.Store(false)
 		c.closeThreadEventSubscriptions()
 		c.clearFileApprovals()
+		c.closeThreadExecutions()
+		<-workerDone
 		close(done)
 	}()
 
@@ -34,7 +41,7 @@ func (c *Client) dispatch(ctx context.Context, demux *jsonrpc.Demux, done chan s
 				serverMessages = nil
 				continue
 			}
-			c.handleServerMessage(ctx, demux, message)
+			c.routeServerMessage(workerCtx, demux, jobs, message)
 		case note, ok := <-notifications:
 			if !ok {
 				notifications = nil
@@ -46,7 +53,7 @@ func (c *Client) dispatch(ctx context.Context, demux *jsonrpc.Demux, done chan s
 				serverRequests = nil
 				continue
 			}
-			c.handleServerRequest(ctx, demux, sreq)
+			c.enqueueApproval(workerCtx, demux, jobs, sreq)
 		}
 	}
 
@@ -65,16 +72,17 @@ func (c *Client) dispatch(ctx context.Context, demux *jsonrpc.Demux, done chan s
 	}
 }
 
-func (c *Client) handleServerMessage(ctx context.Context, demux *jsonrpc.Demux, message jsonrpc.ServerMessage) {
+func (c *Client) routeServerMessage(ctx context.Context, demux *jsonrpc.Demux, jobs chan<- approvalJob, message jsonrpc.ServerMessage) {
 	if message.Notification != nil {
 		c.handleNotification(*message.Notification)
 	} else if message.Request != nil {
-		c.handleServerRequest(ctx, demux, *message.Request)
+		c.enqueueApproval(ctx, demux, jobs, *message.Request)
 	}
 }
 
 func (c *Client) handleNotification(n jsonrpc.Notification) {
 	if n.DecodeError != nil {
+		c.invalidateThreadExecutions("")
 		c.clearFileApprovals()
 		c.failThreadEventSubscriptions(ThreadEventEnvelope{
 			Err: &ThreadEventFrameGapError{Cause: n.DecodeError},
@@ -87,6 +95,7 @@ func (c *Client) handleNotification(n jsonrpc.Notification) {
 	if err != nil {
 		c.clearFileApprovals()
 		threadID, _ := extractThreadID(n.Params)
+		c.invalidateThreadExecutions(threadID)
 		c.failThreadEventSubscriptions(ThreadEventEnvelope{
 			ThreadID: threadID,
 			Err: &ThreadEventParseGapError{
@@ -110,6 +119,7 @@ func (c *Client) handleNotification(n jsonrpc.Notification) {
 	threadID, identityRequired := threadIdentityFromEvent(ev)
 	if threadID == "" {
 		if identityRequired {
+			c.invalidateThreadExecutions("")
 			c.clearFileApprovals()
 			c.failThreadEventSubscriptions(ThreadEventEnvelope{
 				Err: &ThreadEventParseGapError{
@@ -129,67 +139,37 @@ func (c *Client) handleNotification(n jsonrpc.Notification) {
 	}
 	c.rememberFileApproval(ev)
 	c.mu.Lock()
-	t := c.threads[threadID]
+	execution := c.executions[threadID]
 	c.mu.Unlock()
-	if t != nil {
-		// Update registered-thread state before waking global subscribers so a
-		// subscriber can safely act on the event (for example, interrupt the
-		// turn announced by turn/started).
-		t.deliverEvent(ev)
+	if execution != nil {
+		// Record lifecycle evidence before any lossy event delivery.
+		execution.observe(ev)
 	}
 	// Unregistered provider-created child threads have no Thread handle, but
 	// their events still belong in the client-wide runtime stream.
 	c.publishThreadEvent(ThreadEventEnvelope{ThreadID: threadID, Event: ev})
 }
 
-func (c *Client) handleServerRequest(ctx context.Context, demux *jsonrpc.Demux, sreq jsonrpc.ServerRequest) {
-	req, err := events.ParseApprovalRequest(sreq.Method, sreq.Params)
-	if err != nil {
-		c.logger.Warn("parse server-request failed",
-			zap.String("method", sreq.Method))
-		if writeErr := demux.RespondServerRequest(sreq.ID, nil, &jsonrpc.RPCError{
-			Code:    -32000,
-			Message: "client could not parse approval request parameters",
-		}); writeErr != nil {
-			c.logger.Warn("approval error response write failed", zap.String("method", sreq.Method), zap.Error(writeErr))
+func (c *Client) invalidateThreadExecutions(threadID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if threadID != "" {
+		if execution := c.executions[threadID]; execution != nil {
+			execution.invalidate()
 		}
 		return
 	}
-	cb := c.opts.ApprovalCallback
-	if file, ok := req.(*types.FileChangeApprovalRequest); ok && !c.resolveFileApproval(file) {
-		cb = types.DefaultDenyApprovalCallback
-		c.logger.Warn("file approval context unavailable; denying")
-	}
-	if cb == nil {
-		cb = types.DefaultDenyApprovalCallback
-	}
-	replyReq := approvalReplyRequest(req)
-	// Use dispatcherCtx so callbacks get canceled on Close.
-	decision := cb(ctx, req)
-	if ctx.Err() != nil {
-		switch req.(type) {
-		case *types.PermissionsApprovalRequest, *types.ElicitationRequest:
-			decision = types.ApprovalCancel{}
-		}
-	}
-	result, err := events.EncodeApprovalDecision(replyReq, decision)
-	if err != nil {
-		c.logger.Warn("invalid approval decision; denying", zap.String("method", sreq.Method), zap.Error(err))
-	}
-	if err := demux.RespondServerRequest(sreq.ID, result, nil); err != nil {
-		c.logger.Warn("approval response write failed",
-			zap.String("method", sreq.Method),
-			zap.Error(err))
+	for _, execution := range c.executions {
+		execution.invalidate()
 	}
 }
 
-// approvalReplyRequest captures the provider discriminator the encoder reads.
-// The callback can edit its request without changing the reply contract.
-func approvalReplyRequest(req types.ApprovalRequest) types.ApprovalRequest {
-	if elicitation, ok := req.(*types.ElicitationRequest); ok {
-		return &types.ElicitationRequest{Mode: elicitation.Mode}
+func (c *Client) closeThreadExecutions() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, execution := range c.executions {
+		execution.close()
 	}
-	return req
 }
 
 // registerThread stores a Thread in the client's routing table. The caller
@@ -198,10 +178,26 @@ func approvalReplyRequest(req types.ApprovalRequest) types.ApprovalRequest {
 func (c *Client) registerThread(t *Thread) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.threads != nil {
-		c.threads[t.id] = t
-		c.latestThreadID = t.id
+	if c.threads == nil {
+		t.markClosed()
+		return
 	}
+	if c.executions == nil {
+		c.executions = make(map[string]*threadExecution)
+	}
+	if existing := c.executions[t.id]; existing != nil {
+		t.threadExecution = existing
+	} else {
+		if t.threadExecution == nil {
+			t.threadExecution = newThreadExecution()
+		}
+		if !c.connected.Load() {
+			t.markClosed()
+		}
+		c.executions[t.id] = t.threadExecution
+	}
+	c.threads[t.id] = t
+	c.latestThreadID = t.id
 }
 
 // unregisterThread removes a Thread from routing. Called when the thread
@@ -211,8 +207,10 @@ func (c *Client) registerThread(t *Thread) {
 func (c *Client) unregisterThread(threadID string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.threads != nil {
-		delete(c.threads, threadID)
+	delete(c.threads, threadID)
+	if execution := c.executions[threadID]; execution != nil {
+		// Keep unresolved activity for handles that still refer to this ID.
+		execution.invalidate()
 	}
 	if c.latestThreadID == threadID {
 		c.latestThreadID = ""

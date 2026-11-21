@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"strings"
 	"sync"
 	"testing"
@@ -19,8 +20,8 @@ import (
 // Client reads from serverOut and writes to clientOut. The test drives
 // scripted responses via handleRequest + pushes notifications via send.
 type mockCodexServer struct {
-	clientIn  *io.PipeReader // client writes here (server reads)
-	clientOut *io.PipeWriter
+	clientIn  net.Conn // client writes here (server reads)
+	clientOut net.Conn
 	serverIn  *io.PipeReader // server writes here (client reads)
 	serverOut *io.PipeWriter
 
@@ -37,7 +38,7 @@ type mockCodexServer struct {
 }
 
 func newMockCodexServer() *mockCodexServer {
-	cir, ciw := io.Pipe()
+	cir, ciw := net.Pipe()
 	sor, sow := io.Pipe()
 	s := &mockCodexServer{
 		clientIn: cir, clientOut: ciw,

@@ -52,7 +52,7 @@ func TestThreadCommands_InputValidation(t *testing.T) {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			th := &Thread{id: "test"}
+			th := newThread(nil, "test")
 			th.activeTurnID.Store("")
 			err := tt.call(th)
 			if err == nil {
@@ -69,7 +69,7 @@ func TestThread_Steer_NoActiveTurn(t *testing.T) {
 	t.Parallel()
 	// Thread with empty activeTurnID and a non-empty input should
 	// return "no active turn" — same precondition as Interrupt.
-	th := &Thread{id: "test"}
+	th := newThread(nil, "test")
 	th.activeTurnID.Store("")
 	err := th.Steer(context.Background(), "extend the plan")
 	if err == nil {
@@ -113,7 +113,7 @@ func TestThread_SteerSendsExpectedTurnID(t *testing.T) {
 func TestThread_Interrupt_NoActiveTurnIsRecoverableSentinel(t *testing.T) {
 	t.Parallel()
 
-	th := &Thread{id: "test"}
+	th := newThread(nil, "test")
 	th.activeTurnID.Store("")
 	err := th.Interrupt(context.Background())
 	if err == nil {
@@ -127,8 +127,7 @@ func TestThread_Interrupt_NoActiveTurnIsRecoverableSentinel(t *testing.T) {
 func TestThread_ActiveTurnIDClearsOnTerminalTurnEvent(t *testing.T) {
 	t.Parallel()
 
-	th := &Thread{id: "test"}
-	th.inbox = make(chan types.ThreadEvent, 1)
+	th := newThread(nil, "test")
 	th.activeTurnID.Store("turn-1")
 	th.deliverEvent(&types.TurnCompleted{ThreadID: "test", TurnID: "turn-1", Status: "success"})
 
@@ -141,8 +140,7 @@ func TestThread_ActiveTurnIDClearsOnTerminalTurnEvent(t *testing.T) {
 func TestThread_ActiveTurnIDIgnoresOlderTerminalTurnEvent(t *testing.T) {
 	t.Parallel()
 
-	th := &Thread{id: "test"}
-	th.inbox = make(chan types.ThreadEvent, 1)
+	th := newThread(nil, "test")
 	th.activeTurnID.Store("turn-2")
 	th.deliverEvent(&types.TurnCompleted{ThreadID: "test", TurnID: "turn-1", Status: "success"})
 
@@ -183,7 +181,7 @@ func TestThread_Mutating_ClosedThread(t *testing.T) {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			th := &Thread{id: "test"}
+			th := newThread(nil, "test")
 			th.activeTurnID.Store("turn-1") // bypass Steer's "no active turn" check
 			th.markClosed()
 			err := tt.call(th)
@@ -200,7 +198,7 @@ func TestThread_Mutating_ClosedThread(t *testing.T) {
 func TestThread_StartReview_TargetRequired(t *testing.T) {
 	t.Parallel()
 	// Target zero-value → reject before reaching transport.
-	th := &Thread{id: "test"}
+	th := newThread(nil, "test")
 	_, err := th.StartReview(context.Background(), types.ReviewOptions{})
 	if err == nil {
 		t.Fatal("expected error for empty target")
@@ -212,7 +210,7 @@ func TestThread_StartReview_TargetRequired(t *testing.T) {
 
 func TestThread_StartReviewStreamed_TargetRequired(t *testing.T) {
 	t.Parallel()
-	th := &Thread{id: "test"}
+	th := newThread(nil, "test")
 	_, err := th.StartReviewStreamed(context.Background(), types.ReviewOptions{})
 	if err == nil {
 		t.Fatal("expected error for empty target")
@@ -224,7 +222,7 @@ func TestThread_StartReviewStreamed_TargetRequired(t *testing.T) {
 
 func TestThread_StartReviewStreamed_RejectsDetachedDelivery(t *testing.T) {
 	t.Parallel()
-	th := &Thread{id: "test"}
+	th := newThread(nil, "test")
 	th.activeTurnID.Store("")
 	_, err := th.StartReviewStreamed(context.Background(), types.ReviewOptions{
 		Target:   types.ReviewTargetUncommittedChanges(),
@@ -253,7 +251,7 @@ func TestCompactResult_WaitCtxCancel(t *testing.T) {
 	// never fire. Wait must honor ctx cancellation promptly.
 	ch := make(chan *types.ContextCompacted, 1)
 	chPtr := &ch
-	th := &Thread{id: "test"}
+	th := newThread(nil, "test")
 	th.compactSub.Store(chPtr)
 	r := &CompactResult{ThreadID: "test", thread: th, chPtr: chPtr}
 
@@ -277,7 +275,7 @@ func TestCompactResult_WaitSuccessDetaches(t *testing.T) {
 	t.Parallel()
 	ch := make(chan *types.ContextCompacted, 1)
 	chPtr := &ch
-	th := &Thread{id: "test"}
+	th := newThread(nil, "test")
 	th.compactSub.Store(chPtr)
 	r := &CompactResult{ThreadID: "test", thread: th, chPtr: chPtr}
 	want := &types.ContextCompacted{ThreadID: "test"}
@@ -299,7 +297,7 @@ func TestCompactResult_WaitClosedThread(t *testing.T) {
 	t.Parallel()
 	ch := make(chan *types.ContextCompacted, 1)
 	chPtr := &ch
-	th := &Thread{id: "test"}
+	th := newThread(nil, "test")
 	th.compactSub.Store(chPtr)
 	r := &CompactResult{ThreadID: "test", thread: th, chPtr: chPtr}
 

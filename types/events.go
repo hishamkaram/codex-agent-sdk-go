@@ -29,8 +29,9 @@ func (*ThreadStarted) EventMethod() string { return "thread/started" }
 // TurnStarted is emitted after turn/start is accepted and the agent begins
 // working.
 type TurnStarted struct {
-	ThreadID string `json:"thread_id"`
-	TurnID   string `json:"turn_id"`
+	ThreadID   string `json:"thread_id"`
+	TurnID     string `json:"turn_id"`
+	RootTurnID string `json:"root_turn_id,omitempty"`
 }
 
 func (*TurnStarted) isThreadEvent()      {}
@@ -39,13 +40,14 @@ func (*TurnStarted) EventMethod() string { return "turn/started" }
 // TurnCompleted is emitted when the turn reaches a terminal state. Status
 // is "success" | "failed" | "canceled". Error is the provider-supplied
 // terminal failure message when available. Usage is the final per-turn
-// accounting.
+// accounting when UsagePresent is true.
 type TurnCompleted struct {
-	ThreadID string     `json:"thread_id"`
-	TurnID   string     `json:"turn_id"`
-	Status   string     `json:"status"`
-	Error    string     `json:"error,omitempty"`
-	Usage    TokenUsage `json:"usage"`
+	ThreadID     string     `json:"thread_id"`
+	TurnID       string     `json:"turn_id"`
+	Status       string     `json:"status"`
+	Error        string     `json:"error,omitempty"`
+	Usage        TokenUsage `json:"usage"`
+	UsagePresent bool       `json:"-"`
 }
 
 func (*TurnCompleted) isThreadEvent()      {}
@@ -103,14 +105,17 @@ func (*ItemCompleted) EventMethod() string { return "item/completed" }
 
 // TokenUsageUpdated is emitted periodically with token-usage snapshots.
 //
-// The codex wire carries both "last" (the current turn slice) and "total"
-// (thread cumulative). Usage remains the cumulative total for compatibility
-// with existing callers. New callers that bill per turn should use LastUsage.
+// LastUsage is the most recent provider sample and may be replayed or
+// represent only part of a turn. TotalUsage is cumulative. Usage retains
+// the cumulative total when present and the legacy fallback otherwise.
 type TokenUsageUpdated struct {
 	ThreadID           string     `json:"thread_id"`
+	TurnID             string     `json:"turn_id,omitempty"`
 	Usage              TokenUsage `json:"usage"`
 	LastUsage          TokenUsage `json:"last_usage,omitempty"`
 	TotalUsage         TokenUsage `json:"total_usage,omitempty"`
+	LastUsagePresent   bool       `json:"-"`
+	TotalUsagePresent  bool       `json:"-"`
 	ModelContextWindow int64      `json:"model_context_window,omitempty"`
 }
 

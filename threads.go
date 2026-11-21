@@ -5,18 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sync"
-	"sync/atomic"
 
-	"github.com/hishamkaram/codex-agent-sdk-go/internal/jsonrpc"
 	"github.com/hishamkaram/codex-agent-sdk-go/types"
-	"go.uber.org/zap"
 )
 
-// ThreadInboxBuffer is the size of each Thread's internal event inbox.
-// Events flow: dispatcher → Thread.inbox → per-Run filter goroutine →
-// caller's channel. 256 accommodates bursty streaming without blocking the
-// dispatcher for realistic turn sizes.
+// ThreadInboxBuffer bounds the queued events of a streamed provider operation.
 const ThreadInboxBuffer = 256
 
 // ErrNoActiveTurn is returned by Thread.Interrupt when no turn is currently
@@ -24,13 +17,8 @@ const ThreadInboxBuffer = 256
 var ErrNoActiveTurn = errors.New("codex: no active turn")
 
 // Thread is a handle to a single codex conversation. Construct via
-// Client.StartThread or Client.ResumeThread. A Thread is NOT safe for
-// concurrent Run/RunStreamed calls — use a sync.Mutex on the caller side
-// if you need that, or create a second Thread.
-//
-// Internally Run serializes concurrent calls via a per-thread turnMu.
-// Concurrent turns on the same thread collapse their event boundaries
-// server-side; client serialization is mandatory.
+// Client.StartThread or Client.ResumeThread. Operations across handles for
+// the same provider thread ID share admission in the Client.
 type Thread struct {
 	client *Client
 	id     string
@@ -44,36 +32,12 @@ type Thread struct {
 	// means "no cwd known" — helpers that need one will error.
 	cwd string
 
-	turnMu sync.Mutex
-	// eventMu serializes dispatcher delivery against close-time channel teardown.
-	eventMu sync.RWMutex
-	inbox   chan types.ThreadEvent
-	done    chan struct{}
-
-	closed atomic.Bool
-
-	// activeTurnID holds the most recent turn/started id observed during
-	// the current Run. Used by Interrupt to fire turn/interrupt.
-	activeTurnID atomic.Value // string
-
-	// compactSub is a one-shot subscription for *types.ContextCompacted
-	// events, installed by Thread.Compact BEFORE its RPC is sent so
-	// the notification can't race the subscription. Nil when no
-	// Compact is in flight. See compact_result.go.
-	compactSub atomic.Pointer[chan *types.ContextCompacted]
+	*threadExecution
 }
 
-// newThread constructs a Thread owned by c. Does not register it; caller
-// must call c.registerThread.
+// newThread constructs a Thread owned by c. Register before exposing it.
 func newThread(c *Client, id string) *Thread {
-	t := &Thread{
-		client: c,
-		id:     id,
-		inbox:  make(chan types.ThreadEvent, ThreadInboxBuffer),
-		done:   make(chan struct{}),
-	}
-	t.activeTurnID.Store("")
-	return t
+	return &Thread{client: c, id: id, threadExecution: newThreadExecution()}
 }
 
 // ID returns the server-assigned thread identifier.
@@ -83,63 +47,12 @@ func (t *Thread) ID() string { return t.id }
 // thread. Empty means the connected CLI did not report one.
 func (t *Thread) Model() string { return t.model }
 
-// deliverEvent pushes an event to the thread's inbox. Called from the
-// Client's dispatcher goroutine. Never blocks — drops events if the inbox
-// is full, which only happens if the caller stalls consuming the channel.
-//
-// Tees *types.ContextCompacted to any installed compactSub BEFORE
-// pushing to inbox, so a running RunStreamed consumer still observes
-// the event normally. The tee is non-blocking (select-default) — a
-// caller that forgot to Wait does not stall the dispatcher.
-func (t *Thread) deliverEvent(ev types.ThreadEvent) {
-	t.eventMu.RLock()
-	defer t.eventMu.RUnlock()
-	if t.closed.Load() {
-		return
-	}
-	// Track the active turn ID for Interrupt.
-	if ts, ok := ev.(*types.TurnStarted); ok {
-		t.activeTurnID.Store(ts.TurnID)
-	}
-	if isTurnTerminus(ev, "") {
-		t.clearActiveTurnID(turnIDFromTerminus(ev))
-	}
-	// Tee to any installed compact subscription.
-	if cc, ok := ev.(*types.ContextCompacted); ok {
-		if sub := t.compactSub.Load(); sub != nil {
-			select {
-			case *sub <- cc:
-			default:
-				// Subscriber buffer full or gone — skip.
-			}
-		}
-	}
-	select {
-	case t.inbox <- ev:
-	default:
-		t.client.logger.Warn("thread inbox full, dropping event",
-			zap.String("thread_id", t.id),
-			zap.String("method", ev.EventMethod()))
-	}
-}
+// deliverEvent records state before exposing the event to stream readers.
+func (t *Thread) deliverEvent(ev types.ThreadEvent) { t.observe(ev) }
 
-// markClosed signals that the thread should stop accepting new events.
-// Idempotent. Does NOT close the inbox channel (dispatcher may still be
-// writing; closer coordinates with Run's filter goroutine).
-//
-// Signals any pending Compact.Wait by closing the subscription
-// channel — Wait observes the close via the zero-value receive.
 func (t *Thread) markClosed() {
-	t.eventMu.Lock()
-	defer t.eventMu.Unlock()
-	if !t.closed.CompareAndSwap(false, true) {
-		return // already closed
-	}
-	if t.done != nil {
-		close(t.done)
-	}
-	if sub := t.compactSub.Swap(nil); sub != nil {
-		close(*sub)
+	if t.threadExecution != nil {
+		t.close()
 	}
 }
 
@@ -159,104 +72,125 @@ func (t *Thread) Interrupt(ctx context.Context) error {
 	return nil
 }
 
-func (t *Thread) clearActiveTurnID(turnID string) {
-	current, _ := t.activeTurnID.Load().(string)
-	if current == "" {
-		return
-	}
-	if turnID == "" || current == turnID {
-		t.activeTurnID.Store("")
-	}
+// RunStreamed sends a user prompt and returns the matching provider events.
+// The channel closes on completion, cancellation, or client shutdown. A
+// canceled stream closes locally without waiting for provider termination.
+// Use the supplied context to distinguish cancellation from completion.
+func (t *Thread) RunStreamed(ctx context.Context, prompt string, opts *types.RunOptions) (<-chan types.ThreadEvent, error) {
+	events, _, err := t.runStreamed(ctx, prompt, opts)
+	return events, err
 }
 
-// RunStreamed sends a user prompt and returns a channel of events produced
-// during the turn. The channel closes after a TurnCompleted (or TurnFailed)
-// for the current turn is observed, or on error/ctx-cancel.
-//
-// Concurrent RunStreamed calls on the same thread serialize via turnMu —
-// later calls block until the earlier one's channel is fully drained and
-// its internal goroutine releases the lock.
-func (t *Thread) RunStreamed(ctx context.Context, prompt string, opts *types.RunOptions) (<-chan types.ThreadEvent, error) {
-	if t.closed.Load() {
-		return nil, fmt.Errorf("codex.Thread.RunStreamed: %w", types.ErrThreadClosed)
+func (t *Thread) runStreamed(ctx context.Context, prompt string, opts *types.RunOptions) (<-chan types.ThreadEvent, *threadOperation, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
 	}
-
-	t.turnMu.Lock()
-	unlockOnError := true
-	defer func() {
-		if unlockOnError {
-			t.turnMu.Unlock()
-		}
-	}()
-
 	input, err := buildTurnInput(prompt, opts)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	params := buildTurnStartParams(t.id, input, opts)
-
-	resp, err := t.client.demux.Send(ctx, "turn/start", params)
+	op, _, err := t.beginOperation(ctx, executeTurn, true, "turn/start", params)
 	if err != nil {
-		return nil, fmt.Errorf("codex.Thread.RunStreamed: turn/start: %w", err)
+		return nil, nil, fmt.Errorf("codex.Thread.RunStreamed: turn/start: %w", err)
 	}
-	if resp.Error != nil {
-		return nil, types.NewRPCError(resp.Error.Code, resp.Error.Message, resp.Error.Data)
-	}
-
-	// turn/start response typically carries {"turn":{"id":"..."}}. Best
-	// effort — if we don't get a turnID from the response, the turn/started
-	// notification will set it via deliverEvent.
-	var startResp struct {
-		Turn struct {
-			ID string `json:"id"`
-		} `json:"turn"`
-	}
-	_ = json.Unmarshal(resp.Result, &startResp)
-	if startResp.Turn.ID != "" {
-		t.activeTurnID.Store(startResp.Turn.ID)
-	}
-
-	out := make(chan types.ThreadEvent, ThreadInboxBuffer)
-	unlockOnError = false
-	go t.streamLoop(ctx, startResp.Turn.ID, out)
-	return out, nil
+	return t.streamOperation(ctx, op), op, nil
 }
 
-// streamLoop is the per-Run filter goroutine. Forwards events from the
-// thread's inbox into the caller's channel until TurnCompleted or
-// TurnFailed matches the current turnID. Releases turnMu on exit.
-func (t *Thread) streamLoop(ctx context.Context, expectedTurnID string, out chan<- types.ThreadEvent) {
-	defer t.turnMu.Unlock()
+func (t *Thread) streamOperation(ctx context.Context, op *threadOperation) <-chan types.ThreadEvent {
+	out := make(chan types.ThreadEvent, ThreadInboxBuffer)
+	go t.streamLoop(ctx, op, out)
+	return out
+}
+
+func (t *Thread) streamLoop(ctx context.Context, op *threadOperation, out chan<- types.ThreadEvent) {
 	defer close(out)
+	defer t.consumeDone(op)
+	expected := op.ackID
 	for {
 		select {
 		case <-ctx.Done():
+			t.startExecutionCleanup(ctx, op, nil)
 			return
 		case <-t.done:
 			return
-		case ev, ok := <-t.inbox:
+		case ev, ok := <-op.events:
 			if !ok {
+				t.forwardStreamEvent(ctx, out, op.terminal)
 				return
 			}
-			// Forward everything to the caller.
-			select {
-			case out <- ev:
-			case <-ctx.Done():
-				return
-			case <-t.done:
-				return
-			}
-			// Detect turn terminus. If we don't yet know the turnID from
-			// the turn/start response, use the turn/started notification.
-			if expectedTurnID == "" {
-				if ts, ok := ev.(*types.TurnStarted); ok {
-					expectedTurnID = ts.TurnID
+			if expected == "" {
+				if started, ok := ev.(*types.TurnStarted); ok && isRootTurn(started.TurnID, started.RootTurnID) {
+					expected = started.TurnID
 				}
 			}
-			if isTurnTerminus(ev, expectedTurnID) {
+			id := turnIDFromStreamEvent(ev)
+			if (expected == "" || id == "" || id == expected) && !t.forwardStreamEvent(ctx, out, ev) {
+				t.startExecutionCleanup(ctx, op, nil)
 				return
 			}
 		}
+	}
+}
+
+func (t *Thread) forwardStreamEvent(ctx context.Context, out chan<- types.ThreadEvent, ev types.ThreadEvent) bool {
+	if ev == nil {
+		return true
+	}
+	select {
+	case out <- ev:
+		return true
+	case <-ctx.Done():
+	case <-t.done:
+	}
+	return false
+}
+
+func turnIDFromStreamEvent(ev types.ThreadEvent) string {
+	switch event := ev.(type) {
+	case *types.TurnStarted:
+		return event.TurnID
+	case *types.ItemStarted:
+		return event.TurnID
+	case *types.ItemUpdated:
+		return event.TurnID
+	case *types.ItemCompleted:
+		return event.TurnID
+	case *types.TokenUsageUpdated:
+		return event.TurnID
+	case *types.TurnDiffUpdated:
+		return event.TurnID
+	case *types.TurnPlanUpdated:
+		return event.TurnID
+	case *types.TurnModerationMetadata:
+		return event.TurnID
+	case *types.ContextCompacted:
+		return event.TurnID
+	default:
+		return turnIDFromAuxiliaryEvent(ev)
+	}
+}
+
+func turnIDFromAuxiliaryEvent(ev types.ThreadEvent) string {
+	switch event := ev.(type) {
+	case *types.ItemGuardianApprovalReviewStarted:
+		return event.TurnID
+	case *types.ItemGuardianApprovalReviewCompleted:
+		return event.TurnID
+	case *types.FileChangePatchUpdated:
+		return event.TurnID
+	case *types.ModelRerouted:
+		return event.TurnID
+	case *types.ModelVerification:
+		return event.TurnID
+	case *types.ModelSafetyBufferingUpdated:
+		return event.TurnID
+	case *types.ErrorEvent:
+		return event.TurnID
+	case *types.UnknownEvent:
+		return event.TurnID
+	default:
+		return ""
 	}
 }
 
@@ -286,29 +220,26 @@ func turnIDFromTerminus(ev types.ThreadEvent) string {
 // Turn is the buffered result of Thread.Run — all events accumulated
 // in order, with convenience fields for final response text and usage.
 type Turn struct {
-	ID            string
-	ThreadID      string
-	Status        string
-	Items         []types.ThreadItem
-	Events        []types.ThreadEvent
-	Usage         types.TokenUsage
-	FinalResponse string // concatenation of every AgentMessage content
+	ID             string
+	ThreadID       string
+	Status         string
+	Items          []types.ThreadItem
+	Events         []types.ThreadEvent
+	Usage          types.TokenUsage
+	UsageAvailable bool   // Usage was measured for this turn, including a measured zero.
+	FinalResponse  string // concatenation of every AgentMessage content
 }
 
 // Run is a buffered convenience wrapper over RunStreamed. It blocks until
 // the turn completes (or fails / the context is canceled), accumulating
 // every event into a *Turn.
 func (t *Thread) Run(ctx context.Context, prompt string, opts *types.RunOptions) (*Turn, error) {
-	events, err := t.RunStreamed(ctx, prompt, opts)
+	events, op, err := t.runStreamed(ctx, prompt, opts)
 	if err != nil {
 		return nil, err
 	}
-	turn := &Turn{ThreadID: t.id}
-	// Track the latest usage snapshot seen on this thread — codex emits
-	// usage via thread/tokenUsage/updated notifications, NOT on
-	// turn/completed directly. We assign the latest snapshot to
-	// turn.Usage when the turn terminates.
-	var latestUsage types.TokenUsage
+	turn := &Turn{ID: op.ackID, ThreadID: t.id}
+	var turnErr error
 	for ev := range events {
 		turn.Events = append(turn.Events, ev)
 		switch e := ev.(type) {
@@ -319,31 +250,24 @@ func (t *Thread) Run(ctx context.Context, prompt string, opts *types.RunOptions)
 			if msg, ok := e.Item.(*types.AgentMessage); ok {
 				turn.FinalResponse = msg.Text
 			}
-		case *types.TokenUsageUpdated:
-			latestUsage = e.Usage
 		case *types.TurnCompleted:
 			turn.Status = e.Status
-			// Prefer usage on turn/completed (flat shape, forward-compat)
-			// but fall back to the latest tokenUsage snapshot.
-			if e.Usage != (types.TokenUsage{}) {
-				turn.Usage = e.Usage
-			} else {
-				turn.Usage = latestUsage
-			}
 		case *types.TurnFailed:
 			turn.Status = "failed"
-			return turn, types.NewRPCError(-1, e.Message, nil)
+			turnErr = types.NewRPCError(-1, e.Message, nil)
 		}
 	}
-	// If we exited without TurnCompleted (e.g., ctx cancel) but saw
-	// usage snapshots, surface them anyway.
-	if turn.Usage == (types.TokenUsage{}) && latestUsage != (types.TokenUsage{}) {
-		turn.Usage = latestUsage
-	}
+	t.mu.Lock()
+	turn.Usage, turn.UsageAvailable = op.finalUsage, op.usageAvailable
+	completed := op.complete
+	t.mu.Unlock()
 	if ctx.Err() != nil {
 		return turn, fmt.Errorf("codex.Thread.Run: %w", ctx.Err())
 	}
-	return turn, nil
+	if !completed {
+		return turn, fmt.Errorf("codex.Thread.Run: %w", types.ErrThreadClosed)
+	}
+	return turn, turnErr
 }
 
 func buildTurnStartParams(threadID string, input []map[string]any, opts *types.RunOptions) map[string]any {
@@ -423,6 +347,8 @@ func (c *Client) StartThread(ctx context.Context, opts *types.ThreadOptions) (*T
 		return nil, err
 	}
 	t := newThread(c, id)
+	t.private = true
+	t.baseline = usageBaseline{known: true}
 	t.model = extractThreadModel(resp.Result)
 	t.cwd = resolveCwd(c, opts)
 	c.registerThread(t)
@@ -460,6 +386,7 @@ func (c *Client) ResumeThread(ctx context.Context, threadID string, opts *types.
 		id = threadID
 	}
 	t := newThread(c, id)
+	t.seedExternalActivity(resp.Result)
 	t.model = extractThreadModel(resp.Result)
 	if cwd == "" {
 		cwd = c.opts.DefaultCwd
@@ -517,6 +444,7 @@ func (c *Client) ForkThread(ctx context.Context, sourceThreadID string, opts *ty
 		return nil, nil, fmt.Errorf("codex.Client.ForkThread: provider returned the source thread as its child")
 	}
 	t := newThread(c, newID)
+	t.seedExternalActivity(resp.Result)
 	t.model = extractThreadModel(resp.Result)
 	t.cwd = resolveCwd(c, opts)
 	c.registerThread(t)
@@ -627,6 +555,3 @@ func extractThreadModel(result json.RawMessage) string {
 
 // Compile-time check that Thread exposes the stdlib-expected surface.
 var _ = (&Thread{}).ID
-
-// Guard against jsonrpc import being unused if features shrink.
-var _ = jsonrpc.ErrClosed

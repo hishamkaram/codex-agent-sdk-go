@@ -2,11 +2,13 @@ package jsonrpc
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"sync"
+	"time"
 )
 
 // MinReadBufferSize is the minimum buffer size for the line-reading scanner.
@@ -14,61 +16,120 @@ import (
 // notifications past that (e.g., long command_execution output chunks).
 const MinReadBufferSize = 2 * 1024 * 1024
 
-// LineWriter serializes all writes to the underlying writer with a single
-// mutex. This is the single point that enforces the "frames may never
-// interleave on stdin" invariant documented in CLAUDE.md.
+// ErrFramePoisoned means the write side can no longer carry intact frames.
+var ErrFramePoisoned = errors.New("jsonrpc: unusable frame writer")
+
+// LineWriter owns one write slot for subprocess stdin. Admission to the slot
+// is cancellable and no other frame can interleave with a running write.
 type LineWriter struct {
-	mu        sync.Mutex
+	slot      chan struct{}
 	w         io.Writer
 	closer    io.Closer
 	closeOnce sync.Once
+	closed    chan struct{}
 	closeErr  error
 }
 
-// NewLineWriter wraps w. The writer is not buffered; every WriteLine call
-// writes the full frame atomically.
+// NewLineWriter wraps w. A blocking writer must support write deadlines or
+// Close must unblock its Write method, as it does for subprocess stdin.
 func NewLineWriter(w io.Writer) *LineWriter {
-	lw := &LineWriter{w: w}
+	lw := &LineWriter{w: w, slot: make(chan struct{}, 1), closed: make(chan struct{})}
 	if closer, ok := w.(io.Closer); ok {
 		lw.closer = closer
 	}
 	return lw
 }
 
-// WriteFrame marshals v as JSON, appends a newline, and writes the result
-// in one Write call holding the mutex. v MUST marshal to a valid JSON-RPC
-// frame (Request | Notification | Response).
 func (lw *LineWriter) WriteFrame(v any) error {
+	return lw.WriteFrameContext(context.Background(), v)
+}
+
+// WriteFrameContext returns nil if the whole frame was written, even if
+// cancellation raced with completion. Cancellation before writing any bytes
+// leaves a deadline-capable pipe usable. Partial frames are never reusable.
+func (lw *LineWriter) WriteFrameContext(ctx context.Context, v any) error {
 	data, err := json.Marshal(v)
 	if err != nil {
 		return fmt.Errorf("jsonrpc.LineWriter.WriteFrame: marshal: %w", err)
 	}
-	// Append \n in the same buffer so os.Pipe sees one Write. io.Pipe on a
-	// subprocess stdin also honors this; short-writes are still possible on
-	// some OSes, so loop defensively.
-	data = append(data, '\n')
-	lw.mu.Lock()
-	defer lw.mu.Unlock()
-	line := data
-	for len(line) > 0 {
-		n, werr := lw.w.Write(line)
-		if werr != nil {
-			return fmt.Errorf("jsonrpc.LineWriter.WriteFrame: write: %w", werr)
-		}
-		line = line[n:]
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-lw.closed:
+		return ErrFramePoisoned
+	case lw.slot <- struct{}{}:
 	}
-	return nil
+	defer func() { <-lw.slot }()
+	select {
+	case <-lw.closed:
+		return ErrFramePoisoned
+	default:
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ctxErr
+	}
+
+	written, aborted, err := lw.writeContext(ctx, append(data, '\n'))
+	if err == nil && !aborted {
+		return nil
+	}
+	if ctx.Err() != nil && written == 0 && !aborted {
+		return ctx.Err()
+	}
+	_ = lw.Close()
+	return fmt.Errorf("jsonrpc.LineWriter.WriteFrame: %w: %w", ErrFramePoisoned, errors.Join(ctx.Err(), err))
+}
+
+func (lw *LineWriter) writeContext(ctx context.Context, data []byte) (written int, aborted bool, err error) {
+	deadline, _ := lw.w.(interface{ SetWriteDeadline(time.Time) error })
+	interrupted := make(chan bool, 1)
+	stop := context.AfterFunc(ctx, func() {
+		if deadline != nil && deadline.SetWriteDeadline(time.Now()) == nil {
+			interrupted <- false
+			return
+		}
+		// Windows anonymous pipes and in-memory pipes do not necessarily
+		// support deadlines. Close interrupts a blocked native pipe write.
+		_ = lw.Close()
+		interrupted <- true
+	})
+	defer func() {
+		if !stop() {
+			aborted = <-interrupted
+			if !aborted {
+				if clearErr := deadline.SetWriteDeadline(time.Time{}); clearErr != nil {
+					aborted = true
+					err = errors.Join(err, clearErr)
+				}
+			}
+		}
+	}()
+
+	for written < len(data) {
+		n, writeErr := lw.w.Write(data[written:])
+		written += n
+		if writeErr != nil {
+			return written, false, writeErr
+		}
+		if n == 0 {
+			return written, false, io.ErrShortWrite
+		}
+	}
+	return written, false, nil
 }
 
 // Close closes the underlying writer when it is closeable. It intentionally does
 // not take the write mutex: Close must be able to unblock a goroutine currently
 // stuck inside the underlying Write call during shutdown.
 func (lw *LineWriter) Close() error {
-	if lw == nil || lw.closer == nil {
+	if lw == nil {
 		return nil
 	}
 	lw.closeOnce.Do(func() {
-		lw.closeErr = lw.closer.Close()
+		close(lw.closed)
+		if lw.closer != nil {
+			lw.closeErr = lw.closer.Close()
+		}
 	})
 	return lw.closeErr
 }

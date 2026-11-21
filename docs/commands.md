@@ -37,6 +37,11 @@ Wait timeout the subprocess transport may enter an unresponsive
 state ("write: file already closed"). Prefer fire-and-forget OR
 short-timeout Wait with "might have worked" semantics.
 
+Subsequent work shares the compaction reservation. After five seconds
+without correlated completion, starting another operation returns
+`ErrThreadExecutionUnconfirmed`. The admission limit leaves
+`CompactResult.Wait(ctx)` under its caller's context.
+
 ### `/model` → `Client.SetModel` (+ `ListModels` for discovery)
 
 ```go

@@ -63,8 +63,9 @@ type Demux struct {
 	serverMessages chan ServerMessage
 	loopErr        chan error
 
-	stopOnce sync.Once
-	stopped  chan struct{}
+	stopOnce          sync.Once
+	unrecoverableOnce sync.Once
+	stopped           chan struct{}
 }
 
 // DemuxOption configures optional Demux behavior (observability, reliability).
@@ -164,50 +165,103 @@ func (d *Demux) Run(ctx context.Context) {
 // Response is returned as-is (including any server-side error in
 // Response.Error).
 func (d *Demux) Send(ctx context.Context, method string, params any) (Response, error) {
-	id := d.ids.Next()
+	pending, err := d.Post(ctx, method, params)
+	if err != nil {
+		return Response{}, err
+	}
+	defer pending.Release()
+	return pending.Wait(ctx)
+}
 
+// PendingResponse owns the matching reply for a fully dispatched request.
+// Waiting may be retried after context cancellation. The owner must Release it.
+type PendingResponse struct {
+	demux *Demux
+	id    uint64
+	reply chan Response
+}
+
+func (p *PendingResponse) Wait(ctx context.Context) (Response, error) {
+	select {
+	case reply := <-p.reply:
+		return reply, nil
+	default:
+	}
+	select {
+	case reply := <-p.reply:
+		return reply, nil
+	case <-ctx.Done():
+		return Response{}, fmt.Errorf("jsonrpc.Demux.Send: %w", ctx.Err())
+	case <-p.demux.stopped:
+		select {
+		case reply := <-p.reply:
+			return reply, nil
+		default:
+			return Response{}, ErrClosed
+		}
+	}
+}
+
+func (p *PendingResponse) Release() {
+	p.demux.mu.Lock()
+	delete(p.demux.pending, p.id)
+	p.demux.mu.Unlock()
+}
+
+// Post admits the request to the writer and returns its reply handle only
+// when the complete frame is on the wire.
+func (d *Demux) Post(ctx context.Context, method string, params any) (*PendingResponse, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	id := d.ids.Next()
 	var paramsRaw json.RawMessage
 	if params != nil {
 		b, err := json.Marshal(params)
 		if err != nil {
-			return Response{}, fmt.Errorf("jsonrpc.Demux.Send: marshal params: %w", err)
+			return nil, fmt.Errorf("jsonrpc.Demux.Send: marshal params: %w", err)
 		}
 		paramsRaw = b
 	}
-
-	ch := make(chan Response, 1)
-
+	pending := &PendingResponse{demux: d, id: id, reply: make(chan Response, 1)}
 	d.mu.Lock()
 	if d.closed {
 		d.mu.Unlock()
-		return Response{}, ErrClosed
+		return nil, ErrClosed
 	}
-	d.pending[id] = ch
+	d.pending[id] = pending.reply
 	d.mu.Unlock()
 
-	defer func() {
-		d.mu.Lock()
-		delete(d.pending, id)
-		d.mu.Unlock()
-	}()
-
-	req := Request{ID: id, Method: method, Params: paramsRaw}
-	if err := d.writer.WriteFrame(req); err != nil {
-		return Response{}, fmt.Errorf("jsonrpc.Demux.Send: write: %w", err)
+	if err := d.writeFrame(ctx, Request{ID: id, Method: method, Params: paramsRaw}); err != nil {
+		pending.Release()
+		return nil, fmt.Errorf("jsonrpc.Demux.Send: write: %w", err)
 	}
+	return pending, nil
+}
 
-	select {
-	case resp := <-ch:
-		return resp, nil
-	case <-ctx.Done():
-		return Response{}, fmt.Errorf("jsonrpc.Demux.Send: %w", ctx.Err())
-	case <-d.stopped:
-		return Response{}, ErrClosed
+func (d *Demux) writeFrame(ctx context.Context, frame any) error {
+	err := d.writer.WriteFrameContext(ctx, frame)
+	if errors.Is(err, ErrFramePoisoned) {
+		_ = d.Close()
+		d.reportUnrecoverable(err)
 	}
+	return err
+}
+
+func (d *Demux) reportUnrecoverable(err error) {
+	d.unrecoverableOnce.Do(func() {
+		if d.onUnrecoverable != nil {
+			d.onUnrecoverable(err)
+		}
+	})
 }
 
 // Notify sends a client-to-server notification (no response expected).
 func (d *Demux) Notify(method string, params any) error {
+	return d.NotifyContext(context.Background(), method, params)
+}
+
+func (d *Demux) NotifyContext(ctx context.Context, method string, params any) error {
 	var paramsRaw json.RawMessage
 	if params != nil {
 		b, err := json.Marshal(params)
@@ -217,7 +271,7 @@ func (d *Demux) Notify(method string, params any) error {
 		paramsRaw = b
 	}
 	n := Notification{Method: method, Params: paramsRaw}
-	if err := d.writer.WriteFrame(n); err != nil {
+	if err := d.writeFrame(ctx, n); err != nil {
 		return fmt.Errorf("jsonrpc.Demux.Notify: write: %w", err)
 	}
 	return nil
@@ -227,6 +281,11 @@ func (d *Demux) Notify(method string, params any) error {
 // result may be nil for responses that carry no payload. If rpcErr is
 // non-nil, it takes precedence over result.
 func (d *Demux) RespondServerRequest(id json.RawMessage, result any, rpcErr *RPCError) error {
+	return d.RespondServerRequestContext(context.Background(), id, result, rpcErr)
+}
+
+// RespondServerRequestContext is the cancellable approval write path.
+func (d *Demux) RespondServerRequestContext(ctx context.Context, id json.RawMessage, result any, rpcErr *RPCError) error {
 	var resultRaw json.RawMessage
 	if result != nil && rpcErr == nil {
 		b, err := json.Marshal(result)
@@ -236,7 +295,7 @@ func (d *Demux) RespondServerRequest(id json.RawMessage, result any, rpcErr *RPC
 		resultRaw = b
 	}
 	resp := serverResponse{ID: id, Result: resultRaw, Error: rpcErr}
-	if err := d.writer.WriteFrame(resp); err != nil {
+	if err := d.writeFrame(ctx, resp); err != nil {
 		return fmt.Errorf("jsonrpc.Demux.RespondServerRequest: write: %w", err)
 	}
 	return nil
@@ -277,6 +336,7 @@ func (d *Demux) Close() error {
 func (d *Demux) readLoop(ctx context.Context) {
 	var exitErr error
 	defer func() {
+		_ = d.Close()
 		d.loopErr <- exitErr
 		close(d.notifications)
 		close(d.serverRequests)
@@ -379,9 +439,7 @@ func (d *Demux) recordParseFailure(consecutive uint, err error) error {
 		zap.Uint("consecutive_errors", consecutive))
 	d.observer.OnParseGiveUp(consecutive)
 	exitErr := fmt.Errorf("jsonrpc.Demux.readLoop: %d consecutive decode errors: %w", consecutive, ErrParseGiveUp)
-	if d.onUnrecoverable != nil {
-		d.onUnrecoverable(exitErr)
-	}
+	d.reportUnrecoverable(exitErr)
 	return exitErr
 }
 

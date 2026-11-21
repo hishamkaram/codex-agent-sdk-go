@@ -16,12 +16,28 @@ func parseThreadStarted(raw json.RawMessage) (types.ThreadEvent, error) {
 }
 
 func parseTurnStarted(raw json.RawMessage) (types.ThreadEvent, error) {
-	var env identifiersEnvelope
-	if err := unmarshalEnvelope(raw, &env); err != nil {
+	var env struct {
+		identifiersEnvelope
+		RootTurnID string `json:"rootTurnId"`
+		Turn       *struct {
+			ID         string `json:"id"`
+			RootTurnID string `json:"rootTurnId"`
+		} `json:"turn"`
+	}
+	if err := unmarshalTo(raw, &env); err != nil {
 		return nil, err
 	}
 	threadID, turnID, _ := env.resolveIDs()
-	return &types.TurnStarted{ThreadID: threadID, TurnID: turnID}, nil
+	rootTurnID := env.RootTurnID
+	if env.Turn != nil {
+		if turnID == "" {
+			turnID = env.Turn.ID
+		}
+		if rootTurnID == "" {
+			rootTurnID = env.Turn.RootTurnID
+		}
+	}
+	return &types.TurnStarted{ThreadID: threadID, TurnID: turnID, RootTurnID: rootTurnID}, nil
 }
 
 func parseTurnCompleted(raw json.RawMessage) (types.ThreadEvent, error) {
@@ -73,6 +89,7 @@ func parseTurnCompleted(raw json.RawMessage) (types.ThreadEvent, error) {
 	}
 	if env.Usage != nil {
 		ev.Usage = *env.Usage
+		ev.UsagePresent = true
 	}
 	return ev, nil
 }
@@ -165,13 +182,12 @@ func parseTokenUsageUpdated(raw json.RawMessage) (types.ThreadEvent, error) {
 	// Real wire shape (CLI 0.121.0): params has
 	//   {"threadId","turnId","tokenUsage":{"last":{…},"total":{…},
 	//    "modelContextWindow":258400}}
-	// "last" is the per-turn slice; "total" is the running thread total.
-	// The SDK keeps "total" as the canonical Usage on TokenUsageUpdated for
-	// compatibility, while also exposing LastUsage so billing callers can use
-	// the per-turn slice and avoid double-counting cumulative snapshots.
+	// "last" is the provider's most recent sample and can be replayed.
+	// The SDK keeps "total" as the canonical Usage for compatibility.
 	// Also accept the flat shape {"usage":{…}} for forward-compat.
 	var env struct {
 		ThreadID   string `json:"threadId"`
+		TurnID     string `json:"turnId"`
 		TokenUsage *struct {
 			Total              *types.TokenUsage `json:"total,omitempty"`
 			Last               *types.TokenUsage `json:"last,omitempty"`
@@ -204,9 +220,12 @@ func parseTokenUsageUpdated(raw json.RawMessage) (types.ThreadEvent, error) {
 	}
 	return &types.TokenUsageUpdated{
 		ThreadID:           env.ThreadID,
+		TurnID:             env.TurnID,
 		Usage:              usage,
 		LastUsage:          lastUsage,
 		TotalUsage:         totalUsage,
+		LastUsagePresent:   env.TokenUsage != nil && env.TokenUsage.Last != nil,
+		TotalUsagePresent:  env.TokenUsage != nil && env.TokenUsage.Total != nil,
 		ModelContextWindow: modelContextWindow,
 	}, nil
 }

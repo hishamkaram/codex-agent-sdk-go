@@ -4,10 +4,10 @@ import "testing"
 
 func TestTokenUsage_Add(t *testing.T) {
 	t.Parallel()
-	a := TokenUsage{TotalTokens: 30, InputTokens: 10, CachedInputTokens: 5, OutputTokens: 20, ReasoningOutputTokens: 3}
-	b := TokenUsage{TotalTokens: 3, InputTokens: 1, OutputTokens: 2}
+	a := TokenUsage{TotalTokens: 30, InputTokens: 10, CachedInputTokens: 5, CacheWriteInputTokens: 4, OutputTokens: 20, ReasoningOutputTokens: 3}
+	b := TokenUsage{TotalTokens: 3, InputTokens: 1, CacheWriteInputTokens: 2, OutputTokens: 2}
 	got := a.Add(b)
-	want := TokenUsage{TotalTokens: 33, InputTokens: 11, CachedInputTokens: 5, OutputTokens: 22, ReasoningOutputTokens: 3}
+	want := TokenUsage{TotalTokens: 33, InputTokens: 11, CachedInputTokens: 5, CacheWriteInputTokens: 6, OutputTokens: 22, ReasoningOutputTokens: 3}
 	if got != want {
 		t.Fatalf("got %+v, want %+v", got, want)
 	}

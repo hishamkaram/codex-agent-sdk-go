@@ -23,6 +23,10 @@ All notable changes to the Codex Agent SDK for Go are documented in this file.
   `operation` projection for existing SDK consumers.
 
 ### Changed
+- `Thread.Run` reports matching whole-turn usage from explicit measurements
+  or verified cumulative deltas. `UsageAvailable` distinguishes measured zero
+  from unavailable usage, and `CacheWriteInputTokens` records cache writes
+  separately from cached reads.
 - Reorganized public client dispatch, hook bridge, thread ID helpers, event
   parser, and subprocess transport internals into smaller files for
   maintainability. This is intended as a backward-compatible source-layout

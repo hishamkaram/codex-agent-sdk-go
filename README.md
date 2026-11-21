@@ -181,7 +181,7 @@ opts = opts.WithApprovalCallback(func(ctx context.Context, req types.ApprovalReq
 - Frames JSON-RPC 2.0 messages with LF termination (`jsonrpc` field omitted on wire)
 - Demultiplexes responses (id → pending chan), notifications (→ events chan), server-initiated requests (→ approval callback)
 - Serializes all stdin writes through one line writer to prevent interleaved frames
-- Serializes per-thread `Run()` and `RunStreamed()` calls via `turnMu`
+- Serializes `Run()` and `RunStreamed()` by provider thread ID across handles
 - Maintains a 2 MiB read buffer for large notification payloads
 - Translates raw JSON-RPC notifications into typed Go events with schema drift checks for Codex upgrades
 - Publishes a bounded client-wide event stream so provider-created child threads remain observable
