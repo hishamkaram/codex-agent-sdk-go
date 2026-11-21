@@ -15,16 +15,19 @@ var errThreadEventIdentityMissing = errors.New("thread-scoped notification is mi
 // dispatch runs the event-routing goroutine. Reads notifications and
 // server-initiated requests from the demux and fans them out.
 func (c *Client) dispatch(ctx context.Context, demux *jsonrpc.Demux, done chan struct{}) {
-	workerCtx, cancel := context.WithCancel(ctx)
-	jobs := make(chan approvalJob, approvalQueueSize)
+	workerCtx, cancel := context.WithCancelCause(ctx)
+	lanes := approvalLanes{callbacks: make(chan approvalJob, approvalQueueSize), denials: make(chan approvalJob, approvalQueueSize), cancel: cancel}
 	workerDone := make(chan struct{})
-	go c.runApprovalWorker(workerCtx, demux, jobs, workerDone)
+	denialsDone := make(chan struct{})
+	go c.runApprovalWorker(workerCtx, demux, lanes.callbacks, workerDone)
+	go c.runApprovalDenials(workerCtx, demux, lanes.denials, denialsDone)
 	defer func() {
-		cancel()
+		cancel(nil)
 		c.connected.Store(false)
 		c.closeThreadEventSubscriptions()
 		c.clearFileApprovals()
 		c.closeThreadExecutions()
+		<-denialsDone
 		<-workerDone
 		close(done)
 	}()
@@ -41,7 +44,7 @@ func (c *Client) dispatch(ctx context.Context, demux *jsonrpc.Demux, done chan s
 				serverMessages = nil
 				continue
 			}
-			c.routeServerMessage(workerCtx, demux, jobs, message)
+			c.routeServerMessage(workerCtx, lanes, message)
 		case note, ok := <-notifications:
 			if !ok {
 				notifications = nil
@@ -53,7 +56,7 @@ func (c *Client) dispatch(ctx context.Context, demux *jsonrpc.Demux, done chan s
 				serverRequests = nil
 				continue
 			}
-			c.enqueueApproval(workerCtx, demux, jobs, sreq)
+			c.enqueueApproval(workerCtx, lanes, sreq)
 		}
 	}
 
@@ -72,11 +75,11 @@ func (c *Client) dispatch(ctx context.Context, demux *jsonrpc.Demux, done chan s
 	}
 }
 
-func (c *Client) routeServerMessage(ctx context.Context, demux *jsonrpc.Demux, jobs chan<- approvalJob, message jsonrpc.ServerMessage) {
+func (c *Client) routeServerMessage(ctx context.Context, lanes approvalLanes, message jsonrpc.ServerMessage) {
 	if message.Notification != nil {
 		c.handleNotification(*message.Notification)
 	} else if message.Request != nil {
-		c.enqueueApproval(ctx, demux, jobs, *message.Request)
+		c.enqueueApproval(ctx, lanes, *message.Request)
 	}
 }
 
@@ -141,9 +144,10 @@ func (c *Client) handleNotification(n jsonrpc.Notification) {
 	c.mu.Lock()
 	execution := c.executions[threadID]
 	c.mu.Unlock()
-	if execution != nil {
-		// Record lifecycle evidence before any lossy event delivery.
-		execution.observe(ev)
+	// Record lifecycle evidence before any lossy event delivery.
+	if execution != nil && execution.observe(ev) {
+		c.logger.Warn("operation event queue full, dropped notification",
+			zap.String("thread_id", threadID), zap.String("method", n.Method))
 	}
 	// Unregistered provider-created child threads have no Thread handle, but
 	// their events still belong in the client-wide runtime stream.
@@ -186,6 +190,7 @@ func (c *Client) registerThread(t *Thread) {
 		c.executions = make(map[string]*threadExecution)
 	}
 	if existing := c.executions[t.id]; existing != nil {
+		existing.reconcileExternalActivity(t.threadExecution)
 		t.threadExecution = existing
 	} else {
 		if t.threadExecution == nil {
@@ -196,8 +201,44 @@ func (c *Client) registerThread(t *Thread) {
 		}
 		c.executions[t.id] = t.threadExecution
 	}
+	t.pendingRegistration = false
 	c.threads[t.id] = t
 	c.latestThreadID = t.id
+}
+
+// Track ordered lifecycle events before thread/resume is sent. The
+// provisional record has the same provider ID as any eventual handle.
+func (c *Client) beginResumeObservation(threadID string) *threadExecution {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.threads == nil || c.closed.Load() {
+		return nil
+	}
+	if c.executions == nil {
+		c.executions = make(map[string]*threadExecution)
+	}
+	execution := c.executions[threadID]
+	if execution == nil {
+		execution = newThreadExecution()
+		execution.pendingRegistration = true
+		c.executions[threadID] = execution
+	}
+	execution.mu.Lock()
+	execution.resuming++
+	execution.mu.Unlock()
+	return execution
+}
+
+func (c *Client) endResumeObservation(threadID string, execution *threadExecution) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	execution.mu.Lock()
+	defer execution.mu.Unlock()
+	execution.resuming--
+	if execution.resuming == 0 && execution.pendingRegistration && c.executions[threadID] == execution {
+		delete(c.executions, threadID)
+	}
+	execution.signalLocked()
 }
 
 // unregisterThread removes a Thread from routing. Called when the thread

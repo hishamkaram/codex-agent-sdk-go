@@ -60,10 +60,15 @@ func (l turnUsageLedger) final() (types.TokenUsage, bool) {
 }
 
 func (l turnUsageLedger) nextBaseline() usageBaseline {
-	if l.broken || !l.seen || !l.advance {
+	if l.broken {
 		return usageBaseline{}
 	}
-	return l.latest
+	if l.advance {
+		return l.latest
+	}
+	// Replays and silent turns do not establish a new measurement. The
+	// next advance must still equal its independent LastUsage sample.
+	return l.start
 }
 
 func syntheticUsageTotal(total types.TokenUsage) bool {

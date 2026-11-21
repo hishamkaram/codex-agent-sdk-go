@@ -373,6 +373,11 @@ func (c *Client) ResumeThread(ctx context.Context, threadID string, opts *types.
 		params["cwd"] = opts.Cwd
 		cwd = opts.Cwd
 	}
+	observation := c.beginResumeObservation(threadID)
+	if observation == nil {
+		return nil, fmt.Errorf("codex.Client.ResumeThread: %w", types.ErrClientClosed)
+	}
+	defer c.endResumeObservation(threadID, observation)
 	resp, err := c.demux.Send(ctx, "thread/resume", params)
 	if err != nil {
 		return nil, fmt.Errorf("codex.Client.ResumeThread: %w", err)

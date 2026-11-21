@@ -69,14 +69,53 @@ func approvalReplyRequest(req types.ApprovalRequest) types.ApprovalRequest {
 	return req
 }
 
-func (c *Client) enqueueApproval(ctx context.Context, demux *jsonrpc.Demux, jobs chan<- approvalJob, request jsonrpc.ServerRequest) {
+var errApprovalBacklog = errors.New("codex: approval request backlog exhausted")
+
+type approvalLanes struct {
+	callbacks chan approvalJob
+	denials   chan approvalJob
+	cancel    context.CancelCauseFunc
+}
+
+func (c *Client) enqueueApproval(ctx context.Context, lanes approvalLanes, request jsonrpc.ServerRequest) {
 	job := c.prepareApproval(request)
 	select {
-	case jobs <- job:
+	case lanes.callbacks <- job:
+		return
+	case <-ctx.Done():
+		return
+	default:
+	}
+	c.logger.Warn("approval queue full; denying", zap.String("method", request.Method))
+	select {
+	case lanes.denials <- job:
 	case <-ctx.Done():
 	default:
-		c.logger.Warn("approval queue full; denying", zap.String("method", request.Method))
-		c.writeApproval(ctx, demux, job, types.ApprovalDeny{})
+		// A second bounded queue guarantees that a blocked writer cannot
+		// stop ordered delivery. When both are saturated, fail closed
+		// instead of forgetting a request that the peer is waiting for.
+		lanes.cancel(errApprovalBacklog)
+	}
+}
+
+func (c *Client) runApprovalDenials(ctx context.Context, demux *jsonrpc.Demux, jobs <-chan approvalJob, done chan<- struct{}) {
+	defer close(done)
+	defer func() {
+		if errors.Is(context.Cause(ctx), errApprovalBacklog) {
+			c.logger.Warn("approval reply backlog exhausted; closing connection")
+			demux.Abort(errApprovalBacklog)
+		}
+	}()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case job := <-jobs:
+			if ctx.Err() != nil {
+				return
+			}
+			c.writeApproval(ctx, demux, job, types.ApprovalDeny{})
+		}
 	}
 }
 

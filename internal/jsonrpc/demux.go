@@ -242,10 +242,16 @@ func (d *Demux) Post(ctx context.Context, method string, params any) (*PendingRe
 func (d *Demux) writeFrame(ctx context.Context, frame any) error {
 	err := d.writer.WriteFrameContext(ctx, frame)
 	if errors.Is(err, ErrFramePoisoned) {
-		_ = d.Close()
-		d.reportUnrecoverable(err)
+		d.Abort(err)
 	}
 	return err
+}
+
+// Abort closes a session whose transport or control backlog can no longer
+// carry every required reply.
+func (d *Demux) Abort(err error) {
+	_ = d.Close()
+	d.reportUnrecoverable(err)
 }
 
 func (d *Demux) reportUnrecoverable(err error) {

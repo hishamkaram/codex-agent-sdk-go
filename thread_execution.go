@@ -43,9 +43,11 @@ const (
 // ID. The ordered dispatcher records evidence before publishing any event.
 // The other writers are the reserved operation's request and cleanup owners.
 type threadExecution struct {
-	mu      sync.Mutex
-	changed chan struct{}
-	op      *threadOperation
+	mu                  sync.Mutex
+	changed             chan struct{}
+	op                  *threadOperation
+	resuming            int  // guarded by mu; new work waits for the active-status reply
+	pendingRegistration bool // guarded by Client.mu until registration
 
 	// Private threads were freshly created on this Client's stdio connection.
 	// An unclassified start, gap or archive permanently disqualifies ownership.
@@ -54,10 +56,11 @@ type threadExecution struct {
 	lastTerminalID string
 	baseline       usageBaseline
 
-	activeTurnID atomic.Value // string, a snapshot for manual Steer/Interrupt
-	closed       atomic.Bool
-	done         chan struct{}
-	compactSub   atomic.Pointer[chan *types.ContextCompacted]
+	activeTurnID  atomic.Value // string, a snapshot for manual Steer/Interrupt
+	closed        atomic.Bool
+	done          chan struct{}
+	compactSub    atomic.Pointer[chan *types.ContextCompacted]
+	compactTurnID string // guarded by mu; retained for the matched legacy waiter
 }
 
 type threadOperation struct {
@@ -76,7 +79,6 @@ type threadOperation struct {
 	earlyTerminals map[string]types.ThreadEvent
 	compactID      string
 	compactCh      *chan *types.ContextCompacted
-	compactDone    bool
 	complete       bool
 
 	usage          turnUsageLedger
@@ -111,11 +113,15 @@ func (e *threadExecution) invalidate() {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.private = false
+	e.invalidateUsageLocked()
+	e.signalLocked()
+}
+
+func (e *threadExecution) invalidateUsageLocked() {
 	e.baseline = usageBaseline{}
-	if e.op != nil {
+	if e.op != nil && !e.op.complete {
 		e.op.usage.broken = true
 	}
-	e.signalLocked()
 }
 
 func (e *threadExecution) admit(ctx context.Context, threadID string, kind executionKind, streamed bool) (*threadOperation, error) {
@@ -129,16 +135,20 @@ func (e *threadExecution) admit(ctx context.Context, threadID string, kind execu
 			return nil, types.ErrThreadClosed
 		}
 		op := e.op
-		if e.externalActive || op != nil && (op.uncertain || (!op.waitUntil.IsZero() && !time.Now().Before(op.waitUntil))) {
+		if e.externalActive || op != nil && !op.complete && (op.uncertain || (!op.waitUntil.IsZero() && !time.Now().Before(op.waitUntil))) {
 			e.mu.Unlock()
 			return nil, &ThreadExecutionUnconfirmedError{ThreadID: threadID}
 		}
-		if op == nil {
+		if op == nil && e.resuming == 0 {
 			reserved, reserveErr := e.reserveLocked(kind, streamed)
 			e.mu.Unlock()
 			return reserved, reserveErr
 		}
-		change, waitUntil := e.changed, op.waitUntil
+		change := e.changed
+		var waitUntil time.Time
+		if op != nil && !op.complete {
+			waitUntil = op.waitUntil
+		}
 		e.mu.Unlock()
 		if err := e.waitForAdmission(ctx, change, waitUntil); err != nil {
 			return nil, err
@@ -157,6 +167,7 @@ func (e *threadExecution) reserveLocked(kind executionKind, streamed bool) (*thr
 			return nil, errors.New("codex: a compaction result is already pending")
 		}
 		op.compactCh = &ch
+		e.compactTurnID = ""
 	}
 	e.op = op
 	return op, nil
@@ -189,7 +200,7 @@ func (e *threadExecution) reject(op *threadOperation) {
 	if op.compactCh != nil {
 		e.compactSub.CompareAndSwap(op.compactCh, nil)
 	}
-	if op.rootStartID == "" && op.terminalID == "" && op.compactID == "" && !op.compactDone {
+	if op.rootStartID == "" && op.terminalID == "" && op.compactID == "" {
 		op.complete = true
 	} else {
 		op.uncertain = true
@@ -233,16 +244,18 @@ func (e *threadExecution) acknowledge(op *threadOperation, result json.RawMessag
 
 func (t *Thread) isClosed() bool { return t.threadExecution != nil && t.closed.Load() }
 
+type providerThreadStatus struct {
+	Type string `json:"type"`
+}
+
 // seedExternalActivity is used before publishing a resumed or forked
 // handle. An active status without a unique ID never permits terminal
 // notifications for arbitrary turns to release admission.
 func (e *threadExecution) seedExternalActivity(result json.RawMessage) {
 	var reply struct {
 		Thread struct {
-			Status struct {
-				Type string `json:"type"`
-			} `json:"status"`
-			Turns []struct {
+			Status providerThreadStatus `json:"status"`
+			Turns  []struct {
 				ID         string `json:"id"`
 				RootTurnID string `json:"rootTurnId"`
 				Status     string `json:"status"`
@@ -263,6 +276,32 @@ func (e *threadExecution) seedExternalActivity(result json.RawMessage) {
 		}
 	}
 	e.activeTurnID.Store(active)
+}
+
+// A resume response can reveal activity that began before the SDK observed
+// a root start. Keep independently known ownership and matching terminals.
+func (e *threadExecution) reconcileExternalActivity(incoming *threadExecution) {
+	if incoming == nil || !incoming.externalActive {
+		return
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	active := incoming.activeID()
+	if active != "" && active == e.lastTerminalID {
+		return
+	}
+	if current := e.activeID(); current != "" {
+		if active == "" || current == active {
+			return
+		}
+		// Conflicting reports cannot identify an interrupt target.
+		active = ""
+	}
+	e.externalActive = true
+	e.activeTurnID.Store(active)
+	e.private = false
+	e.invalidateUsageLocked()
+	e.signalLocked()
 }
 
 func isRootTurn(id, rootID string) bool {
@@ -288,39 +327,50 @@ func (e *threadExecution) releaseLocked(op *threadOperation) {
 	}
 }
 
-func (e *threadExecution) observe(ev types.ThreadEvent) {
+// observe returns true when only the lossy stream queue drops an event.
+func (e *threadExecution) observe(ev types.ThreadEvent) bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if e.closed.Load() {
-		return
+		return false
 	}
 	op := e.op
 	switch event := ev.(type) {
 	case *types.TurnStarted:
 		e.observeStartLocked(op, event)
+	case *types.ThreadStatusChanged:
+		e.observeStatusLocked(op, event.Status)
 	case *types.TurnCompleted:
 		e.observeTerminalLocked(op, event.TurnID, event)
-		return
+		return false
 	case *types.TurnFailed:
 		e.observeTerminalLocked(op, event.TurnID, event)
-		return
+		return false
 	case *types.TokenUsageUpdated:
 		e.observeUsageLocked(op, event)
 	case *types.ItemCompleted:
 		if _, ok := event.Item.(*types.ContextCompaction); ok {
-			e.baseline = usageBaseline{}
-			if op != nil && !op.complete {
-				op.usage.broken = true
-				if op.kind == executeCompact && (op.rootStartID == "" || event.TurnID == op.rootStartID) {
-					op.compactID = event.TurnID
-					e.finishLocked(op)
-				}
-			}
+			e.recordCompactionLocked(op, event.TurnID)
 		}
 	case *types.ContextCompacted:
 		e.observeLegacyCompactLocked(op, event)
 	}
-	e.queueEventLocked(op, ev)
+	return e.queueEventLocked(op, ev)
+}
+
+func (e *threadExecution) observeStatusLocked(op *threadOperation, raw json.RawMessage) {
+	if op != nil && !op.complete || e.activeID() != "" {
+		return
+	}
+	var status providerThreadStatus
+	if json.Unmarshal(raw, &status) == nil && status.Type == "active" {
+		// The status can precede turn/started. Its missing turn ID
+		// fences new work without making any turn interruptible.
+		e.externalActive = true
+		e.private = false
+		e.invalidateUsageLocked()
+		e.signalLocked()
+	}
 }
 
 func (e *threadExecution) observeStartLocked(op *threadOperation, event *types.TurnStarted) {
@@ -338,6 +388,9 @@ func (e *threadExecution) observeStartLocked(op *threadOperation, event *types.T
 		}
 	} else {
 		op.rootStartID = id
+		if op.kind == executeCompact {
+			e.compactTurnID = id
+		}
 		if terminal := op.earlyTerminals[id]; terminal != nil {
 			op.setTerminal(id, terminal)
 			e.activeTurnID.Store("")
@@ -388,7 +441,7 @@ func (op *threadOperation) expectedID() string {
 	if op.rootStartID != "" {
 		return op.rootStartID
 	}
-	return op.compactID
+	return ""
 }
 
 func copyTerminal(ev types.ThreadEvent) types.ThreadEvent {
@@ -425,32 +478,39 @@ func (e *threadExecution) observeUsageLocked(op *threadOperation, event *types.T
 	op.usage.record(event)
 }
 
-func (e *threadExecution) observeLegacyCompactLocked(op *threadOperation, event *types.ContextCompacted) {
-	if sub := e.compactSub.Load(); sub != nil {
-		select {
-		case *sub <- event:
-		default:
-		}
-	}
-	if op != nil && !op.complete && op.kind == executeCompact && e.private &&
-		event.TurnID != "" && event.TurnID != e.lastTerminalID &&
-		(op.rootStartID == "" || event.TurnID == op.rootStartID) {
-		e.baseline = usageBaseline{}
-		op.usage.broken = true
-		op.compactDone = true
+func (e *threadExecution) recordCompactionLocked(op *threadOperation, turnID string) {
+	e.invalidateUsageLocked()
+	if op != nil && !op.complete && op.kind == executeCompact && turnID != "" && turnID == op.rootStartID {
+		op.compactID = turnID
 		e.finishLocked(op)
 		e.signalLocked()
 	}
 }
 
-func (e *threadExecution) queueEventLocked(op *threadOperation, ev types.ThreadEvent) {
-	if op == nil || op.complete || !op.consuming {
+func (e *threadExecution) observeLegacyCompactLocked(op *threadOperation, event *types.ContextCompacted) {
+	e.recordCompactionLocked(op, event.TurnID)
+	if event.TurnID == "" || event.TurnID != e.compactTurnID {
 		return
+	}
+	if sub := e.compactSub.Load(); sub != nil {
+		snapshot := *event
+		select {
+		case *sub <- &snapshot:
+		default:
+		}
+	}
+}
+
+func (e *threadExecution) queueEventLocked(op *threadOperation, ev types.ThreadEvent) bool {
+	if op == nil || op.complete || !op.consuming {
+		return false
 	}
 	select {
 	case op.events <- ev:
+		return false
 	default:
 		// Terminal state is retained separately even when this queue is full.
+		return true
 	}
 }
 
@@ -464,15 +524,12 @@ func (e *threadExecution) finishLocked(op *threadOperation) {
 	if terminal := op.earlyTerminals[expected]; terminal != nil && op.terminalID != expected {
 		op.setTerminal(expected, terminal)
 	}
-	hasTerminus := expected != "" && op.terminalID == expected
-	if !hasTerminus && !e.confirmedLegacyCompact(op) {
+	if !e.hasMatchingTerminal(op, expected) {
 		return
 	}
 	op.complete = true
 	op.earlyTerminals = nil
-	if hasTerminus {
-		e.lastTerminalID = expected
-	}
+	e.lastTerminalID = expected
 	op.finalUsage, op.usageAvailable = op.usage.final()
 	if terminal, ok := op.terminal.(*types.TurnCompleted); ok && terminal.UsagePresent {
 		op.finalUsage, op.usageAvailable = terminal.Usage, true
@@ -488,8 +545,13 @@ func (e *threadExecution) exclusiveTerminalEvidence(op *threadOperation) bool {
 	return e.private && op.uncertain && op.rootStartID != ""
 }
 
-func (e *threadExecution) confirmedLegacyCompact(op *threadOperation) bool {
-	return op.kind == executeCompact && op.compactDone && e.activeID() == ""
+func (e *threadExecution) hasMatchingTerminal(op *threadOperation, expected string) bool {
+	if expected == "" || op.terminalID != expected {
+		return false
+	}
+	// A compact reply has no ID. Require explicit compaction evidence
+	// as well when this is not an exclusive thread.
+	return op.kind != executeCompact || e.private || op.compactID == expected
 }
 
 func (t *Thread) beginOperation(ctx context.Context, kind executionKind, streamed bool, method string, params any) (*threadOperation, jsonrpc.Response, error) {
@@ -560,6 +622,9 @@ func (t *Thread) reconcileExecution(parent context.Context, op *threadOperation,
 		if !op.complete && !t.closed.Load() {
 			op.uncertain = true
 			t.finishLocked(op)
+			if !op.complete {
+				t.client.logger.Warn("provider execution remains unconfirmed after cancellation")
+			}
 		}
 		t.releaseLocked(op)
 		t.signalLocked()

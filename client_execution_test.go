@@ -13,16 +13,31 @@ import (
 
 func TestClient_CancelBeforeAcknowledgementInterruptsOwnedTurn(t *testing.T) {
 	t.Parallel()
-	ctx, watchdog := context.WithTimeout(t.Context(), 8*time.Second)
+	ctx, watchdog := context.WithTimeout(t.Context(), 12*time.Second)
 	defer watchdog()
 	turnRequest := make(chan jsonrpc.Request, 1)
 	interrupt := make(chan jsonrpc.Request, 1)
 	acknowledge := make(chan struct{})
+	startCount := 0
+	openCount := 0
 	c, peer := setupMockClient(t, types.NewCodexOptions(), func(req jsonrpc.Request) jsonrpc.Response {
 		switch req.Method {
-		case "thread/start", "thread/resume":
+		case "thread/start":
+			openCount++
+			if openCount == 2 {
+				return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{"thread":{"id":"S"}}`)}
+			}
+			fallthrough
+		case "thread/resume":
 			return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{"thread":{"id":"T","status":{"type":"idle"}}}`)}
 		case "turn/start":
+			startCount++
+			switch startCount {
+			case 2:
+				return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{"turn":{"id":"sibling"}}`)}
+			case 3:
+				return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{"turn":{"id":"next"}}`)}
+			}
 			turnRequest <- req
 			select {
 			case <-acknowledge:
@@ -52,29 +67,65 @@ func TestClient_CancelBeforeAcknowledgementInterruptsOwnedTurn(t *testing.T) {
 	awaitExecutionTest(t, ctx, turnRequest)
 	peer.push(notify("turn/started", map[string]any{"threadId": "T", "turn": map[string]string{"id": "U", "rootTurnId": "U"}}))
 	cancel()
-	if err := awaitExecutionTest(t, ctx, done); !errors.Is(err, context.Canceled) {
-		t.Fatalf("Run error = %v, want context.Canceled", err)
+	if runErr := awaitExecutionTest(t, ctx, done); !errors.Is(runErr, context.Canceled) {
+		t.Fatalf("Run error = %v, want context.Canceled", runErr)
 	}
 	close(acknowledge)
 	req := awaitExecutionTest(t, ctx, interrupt)
 	var ids map[string]string
-	if err := json.Unmarshal(req.Params, &ids); err != nil || ids["threadId"] != "T" || ids["turnId"] != "U" {
-		t.Fatalf("interrupt params = %s, decode error = %v", req.Params, err)
+	if decodeErr := json.Unmarshal(req.Params, &ids); decodeErr != nil || ids["threadId"] != "T" || ids["turnId"] != "U" {
+		t.Fatalf("interrupt params = %s, decode error = %v", req.Params, decodeErr)
 	}
 
 	// An accepted interrupt is not the terminal. A duplicate handle cannot
 	// submit while the original reservation is still active.
 	wait, stop := context.WithTimeout(ctx, 50*time.Millisecond)
 	defer stop()
-	if _, err := duplicate.Run(wait, "must stay queued", nil); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("duplicate Run error = %v, want deadline", err)
+	if _, runErr := duplicate.Run(wait, "must stay queued", nil); !errors.Is(runErr, context.DeadlineExceeded) {
+		t.Fatalf("duplicate Run error = %v, want deadline", runErr)
 	}
 	select {
 	case req := <-turnRequest:
 		t.Fatalf("duplicate handle sent work before terminal: %s", req.Params)
 	default:
 	}
-	peer.push(notify("turn/completed", map[string]any{"threadId": "T", "turnId": "U", "status": "interrupted"}))
+	// Sibling work is independent while the old interrupt has no terminal.
+	sibling, err := c.StartThread(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	siblingEvents, startErr := sibling.RunStreamed(ctx, "sibling work", nil)
+	if startErr != nil {
+		t.Fatal(startErr)
+	}
+	peer.push(notify("turn/completed", map[string]string{"threadId": "S", "turnId": "sibling", "status": "completed"}))
+	if _, ok := awaitExecutionTest(t, ctx, siblingEvents).(*types.TurnCompleted); !ok {
+		t.Fatal("sibling did not complete during cancellation reconciliation")
+	}
+
+	if _, runErr := duplicate.Run(ctx, "unconfirmed work", nil); !errors.Is(runErr, ErrThreadExecutionUnconfirmed) {
+		t.Fatalf("admission after interrupt acknowledgement without terminal: %v", runErr)
+	}
+	ordered, err := c.SubscribeThreadEvents(ctx, 8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	peer.push(notify("turn/completed", map[string]string{"threadId": "T", "turnId": "U", "status": "interrupted"}))
+	awaitExecutionTest(t, ctx, ordered)
+	next, err := duplicate.RunStreamed(ctx, "after the old terminal", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	peer.push(notify("turn/completed", map[string]string{"threadId": "T", "turnId": "next", "status": "completed"}))
+	terminal, ok := awaitExecutionTest(t, ctx, next).(*types.TurnCompleted)
+	if !ok || terminal.TurnID != "next" {
+		t.Fatalf("unexpected next terminal: %#v", terminal)
+	}
+	select {
+	case late := <-interrupt:
+		t.Fatalf("old cancellation interrupted a later operation: %s", late.Params)
+	default:
+	}
 }
 
 func TestClient_TerminalBeforeReplySelectsMatchingTurn(t *testing.T) {
@@ -198,6 +249,8 @@ func TestClient_ResumeUnknownActiveRejectsStaleTerminal(t *testing.T) {
 	defer stop()
 	c, peer := setupMockClient(t, types.NewCodexOptions(), func(req jsonrpc.Request) jsonrpc.Response {
 		switch req.Method {
+		case "thread/start":
+			return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{"thread":{"id":"resumed","status":{"type":"idle"}}}`)}
 		case "thread/resume":
 			return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{"thread":{"id":"resumed","status":{"type":"active"}}}`)}
 		case "turn/start":
@@ -206,7 +259,11 @@ func TestClient_ResumeUnknownActiveRejectsStaleTerminal(t *testing.T) {
 		t.Errorf("unexpected provider method %s", req.Method)
 		return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{}`)}
 	})
-	thread, err := c.ResumeThread(ctx, "resumed", nil)
+	original, err := c.StartThread(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	thread, err := c.ResumeThread(ctx, original.ID(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -216,8 +273,10 @@ func TestClient_ResumeUnknownActiveRejectsStaleTerminal(t *testing.T) {
 	}
 	peer.push(notify("turn/completed", map[string]string{"threadId": "resumed", "turnId": "stale"}))
 	awaitExecutionTest(t, ctx, observed)
-	if _, err := thread.RunStreamed(ctx, "would steer external work", nil); !errors.Is(err, ErrThreadExecutionUnconfirmed) {
-		t.Fatalf("stale terminal released unresolved external work: %v", err)
+	for _, handle := range []*Thread{original, thread} {
+		if _, runErr := handle.RunStreamed(ctx, "would steer external work", nil); !errors.Is(runErr, ErrThreadExecutionUnconfirmed) {
+			t.Fatalf("stale terminal released unresolved external work: %v", runErr)
+		}
 	}
 	peer.push(notify("turn/started", map[string]string{"threadId": "resumed", "turnId": "actual"}))
 	peer.push(notify("turn/completed", map[string]string{"threadId": "resumed", "turnId": "actual", "status": "completed"}))
@@ -239,6 +298,7 @@ func TestClient_CompactAdmissionExpiresWithoutEndingWait(t *testing.T) {
 	t.Parallel()
 	ctx, stop := context.WithTimeout(t.Context(), 12*time.Second)
 	defer stop()
+	turns := make(chan string, 3)
 	c, peer := setupMockClient(t, types.NewCodexOptions(), func(req jsonrpc.Request) jsonrpc.Response {
 		switch req.Method {
 		case "thread/start":
@@ -246,7 +306,22 @@ func TestClient_CompactAdmissionExpiresWithoutEndingWait(t *testing.T) {
 		case "thread/compact/start":
 			return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{}`)}
 		case "turn/start":
-			return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{"turn":{"id":"next"}}`)}
+			var params struct {
+				Input []struct {
+					Text string `json:"text"`
+				} `json:"input"`
+			}
+			if err := json.Unmarshal(req.Params, &params); err != nil || len(params.Input) != 1 {
+				t.Errorf("turn input = %s (%v)", req.Params, err)
+				return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{}`)}
+			}
+			id := params.Input[0].Text
+			turns <- id
+			payload, err := json.Marshal(map[string]any{"turn": map[string]string{"id": id}})
+			if err != nil {
+				t.Errorf("encode turn: %v", err)
+			}
+			return jsonrpc.Response{ID: req.ID, Result: payload}
 		default:
 			t.Errorf("unexpected provider method %s", req.Method)
 			return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{}`)}
@@ -256,6 +331,16 @@ func TestClient_CompactAdmissionExpiresWithoutEndingWait(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	for _, prior := range []string{"older", "latest"} {
+		out, startErr := thread.RunStreamed(ctx, prior, nil)
+		if startErr != nil {
+			t.Fatal(startErr)
+		}
+		awaitExecutionTest(t, ctx, turns)
+		peer.push(notify("turn/completed", map[string]string{"threadId": "T", "turnId": prior, "status": "completed"}))
+		for range out {
+		}
+	}
 	observed, err := c.SubscribeThreadEvents(ctx, 8)
 	if err != nil {
 		t.Fatal(err)
@@ -264,6 +349,8 @@ func TestClient_CompactAdmissionExpiresWithoutEndingWait(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	peer.push(notify("thread/compacted", map[string]string{"threadId": "T", "turnId": "older"}))
+	awaitExecutionTest(t, ctx, observed)
 	if _, err := thread.RunStreamed(ctx, "silent compact has not finished", nil); !errors.Is(err, ErrThreadExecutionUnconfirmed) {
 		t.Fatalf("admission after silent compact = %v", err)
 	}
@@ -280,7 +367,7 @@ func TestClient_CompactAdmissionExpiresWithoutEndingWait(t *testing.T) {
 	for range 4 {
 		awaitExecutionTest(t, ctx, observed)
 	}
-	out, startErr := thread.RunStreamed(ctx, "after compact terminal", nil)
+	out, startErr := thread.RunStreamed(ctx, "next", nil)
 	if startErr != nil {
 		t.Fatal(startErr)
 	}
@@ -311,5 +398,143 @@ func TestClient_CancelBeforeDispatchLeavesConnectionReady(t *testing.T) {
 	}
 	if _, err := c.StartThread(ctx, nil); err != nil {
 		t.Fatalf("client unusable after pre-dispatch cancellation: %v", err)
+	}
+}
+
+func TestClient_ResumeRetainsTerminalObservedBeforeReply(t *testing.T) {
+	t.Parallel()
+	ctx, stop := context.WithTimeout(t.Context(), 5*time.Second)
+	defer stop()
+	resumeSent := make(chan struct{})
+	releaseReply := make(chan struct{})
+	c, peer := setupMockClient(t, types.NewCodexOptions(), func(req jsonrpc.Request) jsonrpc.Response {
+		switch req.Method {
+		case "thread/resume":
+			close(resumeSent)
+			select {
+			case <-releaseReply:
+			case <-ctx.Done():
+			}
+			return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{"thread":{"id":"resumed","status":{"type":"active"},"turns":[{"id":"old","status":"inProgress"}]}}`)}
+		case "turn/start":
+			return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{"turn":{"id":"next"}}`)}
+		}
+		t.Errorf("unexpected provider method %s", req.Method)
+		return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{}`)}
+	})
+	observed, err := c.SubscribeThreadEvents(ctx, 8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	type resumeResult struct {
+		thread *Thread
+		err    error
+	}
+	resumed := make(chan resumeResult, 1)
+	go func() {
+		thread, resumeErr := c.ResumeThread(ctx, "resumed", nil)
+		resumed <- resumeResult{thread: thread, err: resumeErr}
+	}()
+	awaitExecutionTest(t, ctx, resumeSent)
+	peer.push(notify("turn/completed", map[string]string{"threadId": "resumed", "turnId": "old", "status": "completed"}))
+	awaitExecutionTest(t, ctx, observed)
+	close(releaseReply)
+	loaded := awaitExecutionTest(t, ctx, resumed)
+	if loaded.err != nil {
+		t.Fatal(loaded.err)
+	}
+	out, startErr := loaded.thread.RunStreamed(ctx, "new work after terminal", nil)
+	if startErr != nil {
+		t.Fatal(startErr)
+	}
+	peer.push(notify("turn/completed", map[string]string{"threadId": "resumed", "turnId": "next", "status": "completed"}))
+	if _, ok := awaitExecutionTest(t, ctx, out).(*types.TurnCompleted); !ok {
+		t.Fatal("new operation did not receive its terminal")
+	}
+}
+
+func TestClient_CompletedCancellationCannotInterruptNextTurn(t *testing.T) {
+	t.Parallel()
+	ctx, stop := context.WithTimeout(t.Context(), 5*time.Second)
+	defer stop()
+	started := make(chan struct{})
+	allowReply := make(chan struct{})
+	startCount := 0
+	c, peer := setupMockClient(t, types.NewCodexOptions(), func(req jsonrpc.Request) jsonrpc.Response {
+		switch req.Method {
+		case "thread/start":
+			return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{"thread":{"id":"T"}}`)}
+		case "turn/start":
+			startCount++
+			if startCount == 2 {
+				return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{"turn":{"id":"next"}}`)}
+			}
+			close(started)
+			select {
+			case <-allowReply:
+			case <-ctx.Done():
+			}
+			return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{"turn":{"id":"old"}}`)}
+		}
+		t.Errorf("unexpected request after cancellation race: %s %s", req.Method, req.Params)
+		return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{}`)}
+	})
+	thread, err := c.StartThread(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	observed, err := c.SubscribeThreadEvents(ctx, 8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	canceled := make(chan error, 1)
+	go func() {
+		_, runErr := thread.Run(oldCtx, "old work", nil)
+		canceled <- runErr
+	}()
+	awaitExecutionTest(t, ctx, started)
+	peer.push(notify("turn/started", map[string]string{"threadId": "T", "turnId": "old"}))
+	peer.push(notify("turn/completed", map[string]string{"threadId": "T", "turnId": "old", "status": "completed"}))
+	awaitExecutionTest(t, ctx, observed)
+	awaitExecutionTest(t, ctx, observed)
+	cancel()
+	if runErr := awaitExecutionTest(t, ctx, canceled); !errors.Is(runErr, context.Canceled) {
+		t.Fatalf("old run cancellation = %v", runErr)
+	}
+	close(allowReply)
+	next, err := thread.RunStreamed(ctx, "next work", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	peer.push(notify("turn/completed", map[string]string{"threadId": "T", "turnId": "next", "status": "completed"}))
+	if terminal, ok := awaitExecutionTest(t, ctx, next).(*types.TurnCompleted); !ok || terminal.TurnID != "next" {
+		t.Fatalf("new operation terminal = %#v", terminal)
+	}
+}
+
+func TestClient_ExternalActiveStatusFencesAdmissionBeforeTurnStart(t *testing.T) {
+	t.Parallel()
+	ctx, stop := context.WithTimeout(t.Context(), 5*time.Second)
+	defer stop()
+	c, peer := setupMockClient(t, types.NewCodexOptions(), func(req jsonrpc.Request) jsonrpc.Response {
+		if req.Method != "thread/start" {
+			t.Errorf("active thread received work before ownership resolved: %s", req.Method)
+		}
+		return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{"thread":{"id":"T"}}`)}
+	})
+	thread, err := c.StartThread(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ordered, err := c.SubscribeThreadEvents(ctx, 8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	peer.push(json.RawMessage(`{"method":"thread/status/changed","params":{"threadId":"T","status":{"type":"active","activeFlags":[]}}}`))
+	awaitExecutionTest(t, ctx, ordered)
+	if _, runErr := thread.RunStreamed(ctx, "would implicitly steer", nil); !errors.Is(runErr, ErrThreadExecutionUnconfirmed) {
+		t.Fatalf("new work admitted before external root start: %v", runErr)
 	}
 }

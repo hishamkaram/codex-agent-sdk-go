@@ -37,11 +37,15 @@ func TestClient_BufferedUsageRequiresMeasuredTurn(t *testing.T) {
 		total      int64
 		usage      types.TokenUsage
 	}{
-		{"U1", `{"threadId":"T","turnId":"U1","tokenUsage":{"last":{"inputTokens":5,"cachedInputTokens":1,"cacheWriteInputTokens":2,"outputTokens":2,"totalTokens":7},"total":{"inputTokens":5,"cachedInputTokens":1,"cacheWriteInputTokens":2,"outputTokens":2,"totalTokens":7},"modelContextWindow":1000}}`, true, 7, types.TokenUsage{InputTokens: 5, CachedInputTokens: 1, CacheWriteInputTokens: 2, OutputTokens: 2, TotalTokens: 7}},
-		{"U2", `{"threadId":"T","turnId":"U2","tokenUsage":{"last":{"inputTokens":5,"cachedInputTokens":1,"cacheWriteInputTokens":2,"outputTokens":2,"totalTokens":7},"total":{"inputTokens":5,"cachedInputTokens":1,"cacheWriteInputTokens":2,"outputTokens":2,"totalTokens":7},"modelContextWindow":1000}}
-{"threadId":"T","turnId":"U2","tokenUsage":{"last":{"inputTokens":3,"cacheWriteInputTokens":2,"outputTokens":1,"totalTokens":4},"total":{"inputTokens":8,"cachedInputTokens":1,"cacheWriteInputTokens":4,"outputTokens":3,"totalTokens":11},"modelContextWindow":1000}}
-{"threadId":"T","turnId":"U2","tokenUsage":{"last":{"inputTokens":5,"cachedInputTokens":2,"outputTokens":2,"totalTokens":7},"total":{"inputTokens":13,"cachedInputTokens":3,"cacheWriteInputTokens":4,"outputTokens":5,"totalTokens":18},"modelContextWindow":1000}}`, true, 18, types.TokenUsage{InputTokens: 8, CachedInputTokens: 2, CacheWriteInputTokens: 2, OutputTokens: 3, TotalTokens: 11}},
-		{"U3", `{"threadId":"T","turnId":"U3","tokenUsage":{"last":{"inputTokens":5,"cachedInputTokens":2,"outputTokens":2,"totalTokens":7},"total":{"inputTokens":13,"cachedInputTokens":3,"cacheWriteInputTokens":4,"outputTokens":5,"totalTokens":18},"modelContextWindow":1000}}`, false, 18, types.TokenUsage{}},
+		{"U1", `{"method":"thread/tokenUsage/updated","params":{"threadId":"T","turnId":"U1","tokenUsage":{"last":{"inputTokens":5,"cachedInputTokens":1,"cacheWriteInputTokens":2,"outputTokens":2,"totalTokens":7},"total":{"inputTokens":5,"cachedInputTokens":1,"cacheWriteInputTokens":2,"outputTokens":2,"totalTokens":7},"modelContextWindow":1000}}}`, true, 7, types.TokenUsage{InputTokens: 5, CachedInputTokens: 1, CacheWriteInputTokens: 2, OutputTokens: 2, TotalTokens: 7}},
+		{"U2", `{"method":"thread/tokenUsage/updated","params":{"threadId":"T","turnId":"U2","tokenUsage":{"last":{"inputTokens":5,"cachedInputTokens":1,"cacheWriteInputTokens":2,"outputTokens":2,"totalTokens":7},"total":{"inputTokens":5,"cachedInputTokens":1,"cacheWriteInputTokens":2,"outputTokens":2,"totalTokens":7},"modelContextWindow":1000}}}
+{"method":"thread/tokenUsage/updated","params":{"threadId":"T","turnId":"U2","tokenUsage":{"last":{"inputTokens":3,"cacheWriteInputTokens":2,"outputTokens":1,"totalTokens":4},"total":{"inputTokens":8,"cachedInputTokens":1,"cacheWriteInputTokens":4,"outputTokens":3,"totalTokens":11},"modelContextWindow":1000}}}
+{"method":"thread/tokenUsage/updated","params":{"threadId":"T","turnId":"U2","tokenUsage":{"last":{"inputTokens":5,"cachedInputTokens":2,"outputTokens":2,"totalTokens":7},"total":{"inputTokens":13,"cachedInputTokens":3,"cacheWriteInputTokens":4,"outputTokens":5,"totalTokens":18},"modelContextWindow":1000}}}`, true, 18, types.TokenUsage{InputTokens: 8, CachedInputTokens: 2, CacheWriteInputTokens: 2, OutputTokens: 3, TotalTokens: 11}},
+		{"U3", `{"method":"thread/tokenUsage/updated","params":{"threadId":"T","turnId":"U3","tokenUsage":{"last":{"inputTokens":5,"cachedInputTokens":2,"outputTokens":2,"totalTokens":7},"total":{"inputTokens":13,"cachedInputTokens":3,"cacheWriteInputTokens":4,"outputTokens":5,"totalTokens":18},"modelContextWindow":1000}}}`, false, 18, types.TokenUsage{}},
+		{"U4", `{"method":"thread/tokenUsage/updated","params":{"threadId":"T","turnId":"U4","tokenUsage":{"last":{"inputTokens":1,"cacheWriteInputTokens":1,"outputTokens":1,"totalTokens":2},"total":{"inputTokens":14,"cachedInputTokens":3,"cacheWriteInputTokens":5,"outputTokens":6,"totalTokens":20},"modelContextWindow":1000}}}`, true, 20, types.TokenUsage{InputTokens: 1, CacheWriteInputTokens: 1, OutputTokens: 1, TotalTokens: 2}},
+		{"U5", `{"method":"thread/tokenUsage/updated","params":{"threadId":"T","turnId":"U5","tokenUsage":{"last":{"inputTokens":1,"outputTokens":1,"totalTokens":2},"total":{"inputTokens":15,"cachedInputTokens":3,"cacheWriteInputTokens":5,"outputTokens":7,"totalTokens":22},"modelContextWindow":1000}}}
+{"method":"thread/compacted","params":{"threadId":"T","turnId":"U5"}}
+{"method":"thread/tokenUsage/updated","params":{"threadId":"T","turnId":"U5","tokenUsage":{"last":{"inputTokens":1,"outputTokens":1,"totalTokens":2},"total":{"inputTokens":16,"cachedInputTokens":3,"cacheWriteInputTokens":5,"outputTokens":8,"totalTokens":24},"modelContextWindow":1000}}}`, false, 24, types.TokenUsage{}},
 	} {
 		t.Run(tc.id, func(t *testing.T) {
 			type outcome struct {
@@ -56,7 +60,7 @@ func TestClient_BufferedUsageRequiresMeasuredTurn(t *testing.T) {
 			awaitExecutionTest(t, ctx, dispatched)
 			peer.push(notify("turn/started", map[string]string{"threadId": "T", "turnId": tc.id}))
 			for frame := range strings.SplitSeq(tc.frames, "\n") {
-				peer.push(notify("thread/tokenUsage/updated", json.RawMessage(frame)))
+				peer.push(json.RawMessage(frame))
 			}
 			peer.push(notify("turn/completed", map[string]string{"threadId": "T", "turnId": tc.id, "status": "completed"}))
 			got := awaitExecutionTest(t, ctx, result)

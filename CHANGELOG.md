@@ -23,10 +23,20 @@ All notable changes to the Codex Agent SDK for Go are documented in this file.
   `operation` projection for existing SDK consumers.
 
 ### Changed
-- `Thread.Run` reports matching whole-turn usage from explicit measurements
-  or verified cumulative deltas. `UsageAvailable` distinguishes measured zero
-  from unavailable usage, and `CacheWriteInputTokens` records cache writes
-  separately from cached reads.
+- Canceling an owned run requests interruption of its exact provider turn.
+  Admission stays reserved until matching completion. A follow-up reports
+  `ErrThreadExecutionUnconfirmed` when the provider remains silent past the
+  five-second reconciliation window. Compaction uses the same admission limit.
+- Approval callbacks run on a bounded worker while lifecycle events keep
+  flowing. Overflow requests receive method-specific denials from a separate
+  reply lane. Nested blocking operations and `Close` from the callback's
+  Client context return `ErrApprovalCallbackReentry`.
+- A disconnect before a matching terminal returns `ErrThreadClosed` from
+  buffered `Thread.Run`.
+- Buffered `Thread.Run` now reports measured whole-turn usage. Older SDK
+  versions could return lifetime totals in that field. `UsageAvailable`
+  distinguishes measured zero from unavailable usage, and
+  `CacheWriteInputTokens` records writes separately from cached reads.
 - Reorganized public client dispatch, hook bridge, thread ID helpers, event
   parser, and subprocess transport internals into smaller files for
   maintainability. This is intended as a backward-compatible source-layout

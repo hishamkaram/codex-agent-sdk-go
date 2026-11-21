@@ -164,8 +164,9 @@ Drift guard:
 The app-server preserves input order from file lifecycle notifications
 through approval-context capture. Client dispatch records turn lifecycle and
 usage before publishing to subscribers. One bounded FIFO approval worker
-invokes callbacks independently of that dispatcher. Shutdown cancels the
-worker and joins it within the caller's `Close` context.
+invokes callbacks independently of that dispatcher. A second bounded lane
+handles non-accepting overflow replies. Shutdown cancels and joins both workers
+within the caller's `Close` context.
 
 Active operation streams have a 256-event queue with matching terminal
 evidence retained separately. Client-wide subscriptions have independent
@@ -180,7 +181,9 @@ ID across handles. Calls wait cancellably behind SDK-owned work. Canceling a
 run closes its local stream. The SDK asks the provider to interrupt the exact
 turn after correlating the reply with a fresh root start on a thread created
 by this Client. The same server reply can describe work steered onto an
-existing turn, so a reply alone supplies no ownership proof.
+existing turn, so a reply alone supplies no ownership proof. A transport or
+decoding gap can invalidate ownership. The SDK logs unconfirmed cleanup and
+keeps admission blocked until it can correlate completion.
 
 The five-second reconciliation window bounds the cleanup RPC and the next
 call's admission wait. A matching terminal event releases the reservation.
