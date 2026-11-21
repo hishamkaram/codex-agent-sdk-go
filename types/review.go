@@ -52,9 +52,8 @@ const (
 	// notifications interleave with the thread's existing events.
 	// Default.
 	ReviewInline ReviewDelivery = "inline"
-	// ReviewDetached runs the review on a NEW thread; the new thread
-	// id is returned in the RPC response so the caller can subscribe
-	// separately.
+	// ReviewDetached runs the review on a new thread and returns its ID.
+	// On inline-only CLIs the SDK forks the source's persisted history.
 	ReviewDetached ReviewDelivery = "detached"
 )
 
@@ -65,9 +64,7 @@ type ReviewOptions struct {
 	// Use one of the ReviewTarget* helper constructors.
 	Target ReviewTarget
 	// Delivery is optional ("inline" by default). When "detached",
-	// the result's ReviewThreadID is a NEW thread id — the caller
-	// should ResumeThread on it to observe the streamed review
-	// events.
+	// the result's ReviewThreadID identifies the new thread.
 	Delivery ReviewDelivery
 }
 
@@ -82,8 +79,7 @@ type ReviewStartParams struct {
 // ReviewStartResult is the sync response of `review/start`. The
 // actual review items arrive later as `item/*` notifications on the
 // review thread — inline reviews stream into the original thread's
-// event channel; detached reviews stream into a new thread's channel
-// (the caller must ResumeThread on ReviewThreadID to observe them).
+// event channel; detached reviews emit events on the new thread.
 type ReviewStartResult struct {
 	// ReviewThreadID is where the review's events will stream. For
 	// inline reviews this equals the original thread id; for detached
