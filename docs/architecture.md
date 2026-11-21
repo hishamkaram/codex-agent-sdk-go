@@ -86,15 +86,14 @@ affected paths.
 - **Approvals.** Keep the ordered path from file notifications to callback and
   preserve correlation to the original request ID. The shared encoder selects
   the wire response from the request method and validates the callback decision.
-- **Thread options.** Start and fork share a defaults-and-overrides builder
-  that selects per-thread or default MCP config. Resume builds its own request
-  today. [#51](https://github.com/hishamkaram/codex-agent-sdk-go/issues/51)
-  owns shared thread-scoped config assembly, preserving existing MCP config and
-  caller-owned values. [#52](https://github.com/hishamkaram/codex-agent-sdk-go/issues/52)
-  and [#53](https://github.com/hishamkaram/codex-agent-sdk-go/issues/53)
-  build on it. Keep overrides in thread RPC parameters so other threads and
-  the persisted session config retain their settings. Fork sends the parent ID
-  as `threadId` and registers the returned child under its own ID.
+- **Thread options.** The [thread config builder](../thread_config.go)
+  combines defaults and per-call options into a fresh request. Start and fork
+  share MCP and workspace-write configuration. Resume uses only its supported
+  overrides so the server can restore saved workspace-write policy. The
+  [policy readback check](../workspace_write.go) verifies requested workspace
+  options before the Client registers a new handle. Fork identifies the parent
+  with `threadId` and registers the child under its own ID. See
+  [thread configuration](thread-options.md).
 - **Usage.** Streaming usage preserves provider snapshots. The ordered
   [usage ledger](../thread_usage.go) measures buffered usage from matching
   terminal evidence and tracks provider cache reads and writes independently.

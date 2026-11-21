@@ -113,6 +113,8 @@ events2, _ := thread.RunStreamed(ctx, "Now implement the plan", nil)
 for event := range events2 { /* ... */ }
 ```
 
+See [thread configuration](docs/thread-options.md) for web search, reasoning effort, workspace-write policy, and source classification.
+
 ### Provider-created children and background terminals
 
 ```go

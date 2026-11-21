@@ -45,14 +45,19 @@ type CodexOptions struct {
 	ClientVersion string
 	ClientTitle   string
 
-	// --- Defaults applied to new threads (StartThread/ResumeThread) ---
-	// Individual threads can override each of these via ThreadOptions.
+	// --- Defaults applied to new threads ---
+	// Individual start and fork requests can override these via ThreadOptions.
 
 	DefaultModel          string
 	DefaultCwd            string
 	DefaultSandbox        SandboxMode
 	DefaultApprovalPolicy ApprovalPolicy
 	DefaultMCPServers     map[string]McpServerConfig
+
+	// These defaults also apply to resume requests. The zero values let the
+	// app-server use its configured or persisted settings.
+	DefaultWebSearchMode   WebSearchMode
+	DefaultReasoningEffort string
 
 	// --- Approval handling ---
 
@@ -216,6 +221,21 @@ func (o *CodexOptions) WithMCPServers(servers map[string]McpServerConfig) *Codex
 	return o
 }
 
+// WithWebSearchMode sets the default for start, resume, and fork. The empty
+// mode leaves web search to the app-server. The mode does not change command
+// network access.
+func (o *CodexOptions) WithWebSearchMode(mode WebSearchMode) *CodexOptions {
+	o.DefaultWebSearchMode = mode
+	return o
+}
+
+// WithReasoningEffort sets the default effort for start, resume, and fork.
+// Use a model-supported value or leave it empty for the app-server default.
+func (o *CodexOptions) WithReasoningEffort(effort string) *CodexOptions {
+	o.DefaultReasoningEffort = effort
+	return o
+}
+
 // WithApprovalCallback registers the approval handler. See
 // ApprovalCallback doc for lifetime/panic rules.
 func (o *CodexOptions) WithApprovalCallback(cb ApprovalCallback) *CodexOptions {
@@ -335,20 +355,54 @@ func (o *CodexOptions) WithMaxConsecutiveParseErrors(n uint) *CodexOptions {
 	return o
 }
 
-// ThreadOptions overrides per-thread defaults when calling StartThread or
-// ResumeThread. Zero-value fields fall back to the CodexOptions defaults.
+// WebSearchMode configures the app-server's web search for a thread. The
+// empty value inherits the SDK default or leaves the value to the server.
+type WebSearchMode string
+
+const (
+	WebSearchDisabled WebSearchMode = "disabled"
+	WebSearchCached   WebSearchMode = "cached"
+	WebSearchIndexed  WebSearchMode = "indexed"
+	WebSearchLive     WebSearchMode = "live"
+)
+
+// ThreadOptions overrides per-thread defaults for StartThread and ForkThread.
 type ThreadOptions struct {
 	Model          string
 	Cwd            string
 	Sandbox        SandboxMode
 	ApprovalPolicy ApprovalPolicy
 	MCPServers     map[string]McpServerConfig
+
+	// WebSearchMode and ReasoningEffort override nonempty client defaults.
+	// Leave them empty to inherit those defaults.
+	WebSearchMode   WebSearchMode
+	ReasoningEffort string
+
+	// ThreadSource classifies this new conversation. The empty string omits
+	// classification and leaves the server's default in effect.
+	ThreadSource string
+
+	// NetworkAccessEnabled applies to workspace-write sandboxes only.
+	// Nil inherits server configuration. A non-nil value requests that
+	// command network access be enabled or disabled explicitly.
+	NetworkAccessEnabled *bool
+
+	// AdditionalDirectories adds writable roots to a workspace-write thread
+	// without changing its working directory. Use absolute native paths
+	// without parent traversal components. Nil inherits server configuration.
+	// A non-nil empty slice requests no additional roots.
+	AdditionalDirectories []string
 }
 
-// ResumeOptions is used when resuming a persisted thread. Cwd may be
-// overridden on resume (verified supported by the app-server spike).
+// ResumeOptions supplies overrides when resuming a persisted thread. To
+// apply web-search or reasoning overrides, use a connection where the thread
+// has not been loaded. Codex may retain the settings of a thread it rejoins.
+// Omitted options use the configured SDK defaults or saved server settings.
 type ResumeOptions struct {
-	Cwd string
+	Cwd             string
+	WebSearchMode   WebSearchMode
+	ReasoningEffort string
 }
 
 // RunOptions overrides per-turn knobs when calling Thread.Run or
@@ -361,6 +415,11 @@ type RunOptions struct {
 	// CollaborationMode asks Codex app-server to run the turn in an
 	// explicit collaboration mode, such as plan mode.
 	CollaborationMode *CollaborationMode
+
+	// ReasoningEffort requests a model-supported effort for this and
+	// subsequent turns. Empty leaves the server's current value in effect.
+	// An explicit CollaborationMode takes precedence.
+	ReasoningEffort string
 
 	// Skills are explicitly invoked Codex skills to attach to the turn.
 	// Codex app-server expects both the prompt text and the structured

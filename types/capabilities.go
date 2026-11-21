@@ -43,6 +43,7 @@ type ConfigRequirementsReadResult struct {
 type ConfigRequirements struct {
 	AllowedApprovalPolicies []ApprovalPolicyRequirement `json:"allowedApprovalPolicies"`
 	AllowedSandboxModes     []string                    `json:"allowedSandboxModes"`
+	AllowedWebSearchModes   []WebSearchMode             `json:"allowedWebSearchModes"`
 }
 
 // GranularApprovalSettings is Codex's structured granular approval policy.

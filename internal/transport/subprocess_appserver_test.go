@@ -205,9 +205,13 @@ func TestAppServerAcceptsPrecomputedVersionProbe(t *testing.T) {
 func TestAppServerSpawnUsesConfiguredCwd(t *testing.T) {
 	t.Parallel()
 
-	cwd := t.TempDir()
+	input := t.TempDir()
+	cwd, err := filepath.EvalSymlinks(input)
+	if err != nil {
+		t.Fatal(err)
+	}
 	helper := writeAppServerHelper(t, "while IFS= read -r _line; do :; done")
-	app := NewAppServer(AppServerConfig{Cwd: cwd})
+	app := NewAppServer(AppServerConfig{Cwd: input})
 	proc, err := app.spawnWithRetry(context.Background(), helper, []string{"app-server"})
 	if err != nil {
 		t.Fatalf("spawnWithRetry: %v", err)
@@ -246,6 +250,10 @@ func TestAppServerSpawnResolvesRelativeCLIPathBeforeConfiguredCwd(t *testing.T) 
 		t.Fatalf("create configured directory: %v", mkdirErr)
 	}
 
+	physicalCwd, err := filepath.EvalSymlinks(cwd)
+	if err != nil {
+		t.Fatal(err)
+	}
 	app := NewAppServer(AppServerConfig{Cwd: cwd})
 	proc, err := app.spawnWithRetry(context.Background(), relativeHelper, []string{"app-server"})
 	if err != nil {
@@ -259,7 +267,7 @@ func TestAppServerSpawnResolvesRelativeCLIPathBeforeConfiguredCwd(t *testing.T) 
 	if !filepath.IsAbs(proc.cmd.Path) {
 		t.Fatalf("spawned command path = %q, want caller-resolved absolute path", proc.cmd.Path)
 	}
-	if got, want := proc.cmd.Dir, cwd; got != want {
+	if got, want := proc.cmd.Dir, physicalCwd; got != want {
 		t.Fatalf("spawned command directory = %q, want %q", got, want)
 	}
 }

@@ -1,0 +1,48 @@
+package types
+
+import "fmt"
+
+// ThreadPolicyMismatchError reports that the app-server created a thread
+// without confirming a requested workspace-write policy. The SDK does not
+// register the thread. Callers can use ThreadID to inspect or archive it.
+type ThreadPolicyMismatchError struct {
+	ThreadID string
+	Field    string
+}
+
+func (e *ThreadPolicyMismatchError) Error() string {
+	return fmt.Sprintf("codex: thread %q created without confirming requested workspace-write policy (%s)", e.ThreadID, e.Field)
+}
+
+// ThreadResumeSettingsMismatchError reports that the app-server resumed a
+// thread but its reply did not confirm the requested reasoning effort.
+// Codex can retain an already loaded thread's settings. Apply resume
+// overrides on a connection where the persisted thread has not been loaded.
+type ThreadResumeSettingsMismatchError struct {
+	ThreadID string
+}
+
+func (e *ThreadResumeSettingsMismatchError) Error() string {
+	return fmt.Sprintf("codex: thread %q resumed without confirming requested reasoning effort; resume it when it is unloaded", e.ThreadID)
+}
+
+// ThreadResumeModelUnavailableError reports that thread/read could not
+// identify the thread's model. Resuming with a reasoning override without
+// that model could change the configuration, so no resume request was sent.
+type ThreadResumeModelUnavailableError struct {
+	ThreadID string
+}
+
+func (e *ThreadResumeModelUnavailableError) Error() string {
+	return fmt.Sprintf("codex: thread %q has no readable model for a reasoning-effort resume", e.ThreadID)
+}
+
+// WebSearchModeDisallowedError reports that managed Codex requirements
+// disallow an SDK-requested web-search mode. No thread request was sent.
+type WebSearchModeDisallowedError struct {
+	Mode WebSearchMode
+}
+
+func (e *WebSearchModeDisallowedError) Error() string {
+	return fmt.Sprintf("codex: web-search mode %q is disallowed by provider-managed requirements", e.Mode)
+}
