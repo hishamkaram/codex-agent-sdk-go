@@ -1,4 +1,4 @@
-package codex
+package threadconfig
 
 import (
 	"encoding/json"
@@ -81,11 +81,12 @@ type workspaceWriteReadback struct {
 // expectedThreadCwd resolves a specified cwd relative to the subprocess's
 // working directory, matching the app-server's cwd override semantics.
 func expectedThreadCwd(appServerCwd, requestedCwd string) (string, error) {
+	const cwdOption = "Cwd"
 	if requestedCwd == "~" || strings.HasPrefix(filepath.ToSlash(requestedCwd), "~/") {
-		return "", errors.New("Cwd must not be home-relative when requesting workspace-write settings")
+		return "", fmt.Errorf("%s must not be home-relative when requesting workspace-write settings", cwdOption)
 	}
 	if hasParentTraversal(requestedCwd) {
-		return "", errors.New("Cwd must not contain parent traversal when requesting workspace-write settings")
+		return "", fmt.Errorf("%s must not contain parent traversal when requesting workspace-write settings", cwdOption)
 	}
 	if requestedCwd == "" || filepath.IsAbs(requestedCwd) {
 		return requestedCwd, nil
