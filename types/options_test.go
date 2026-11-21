@@ -3,7 +3,9 @@ package types
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"testing"
+	"time"
 )
 
 func TestNewCodexOptions_Defaults(t *testing.T) {
@@ -113,5 +115,29 @@ func TestCollaborationMode_JSONShape(t *testing.T) {
 	want := `{"mode":"plan","settings":{"model":"gpt-5.4"}}`
 	if string(got) != want {
 		t.Fatalf("got %s, want %s", got, want)
+	}
+}
+
+func TestCodexOptionsFeatureFlagsAccumulateWithExistingArguments(t *testing.T) {
+	t.Parallel()
+	options := NewCodexOptions()
+	options.ExtraArgs = []string{"--set", "placeholder=true"}
+	if got := options.WithFeatureEnabled("first", "").WithFeatureEnabled("second"); got != options {
+		t.Fatal("feature options did not return the configured options")
+	}
+	want := []string{"--set", "placeholder=true", "--enable", "first", "--enable", "second"}
+	if !slices.Equal(options.ExtraArgs, want) {
+		t.Fatalf("ExtraArgs = %q, want %q", options.ExtraArgs, want)
+	}
+}
+
+func TestCodexOptionsHookTimeoutCanBeOverriddenAndCleared(t *testing.T) {
+	t.Parallel()
+	options := NewCodexOptions().WithHooks(true)
+	if got := options.WithHookTimeout(2 * time.Second); got != options || got.HookTimeout != 2*time.Second || !got.HooksEnabled {
+		t.Fatalf("hook options = %+v, want hooks enabled with a two-second timeout", got)
+	}
+	if got := options.WithHookTimeout(0); got.HookTimeout != 0 || !got.HooksEnabled {
+		t.Fatalf("hook options = %+v, want hooks enabled with default timeout", got)
 	}
 }

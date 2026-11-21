@@ -2,6 +2,10 @@ package events
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
+	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/hishamkaram/codex-agent-sdk-go/types"
@@ -832,5 +836,68 @@ func TestParseItem_Switch_CoversAllSchemaVariants(t *testing.T) {
 				t.Fatalf("item = %#v, want typed %q", item, variant.Discriminator)
 			}
 		})
+	}
+}
+
+func TestLegacyItemDeltasKeepCanonicalTypeAndPayload(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		wire      string
+		canonical string
+		want      types.ItemDelta
+	}{
+		{`{"type":"reasoning_delta","text_chunk":"thought","content_index":2}`, "reasoning/textDelta", &types.ReasoningTextDelta{TextChunk: "thought", ContentIndex: 2}},
+		{`{"type":"command_output_delta","output_chunk":"done"}`, "commandExecution/outputDelta", &types.CommandOutputDelta{OutputChunk: "done"}},
+		{`{"type":"file_change_output_delta","diff_chunk":"+line"}`, "fileChange/outputDelta", &types.FileChangeOutputDelta{DiffChunk: "+line"}},
+		{`{"type":"mcp_tool_call_progress","message":"indexing"}`, "mcpToolCall/progress", &types.MCPToolCallProgress{Message: "indexing"}},
+	} {
+		t.Run(tc.canonical, func(t *testing.T) {
+			t.Parallel()
+			got, err := ParseItemDelta(json.RawMessage(tc.wire))
+			if err != nil || !reflect.DeepEqual(got, tc.want) || got.DeltaType() != tc.canonical {
+				t.Fatalf("delta = %#v, err = %v; want %#v as %q", got, err, tc.want, tc.canonical)
+			}
+		})
+	}
+}
+
+func TestKnownItemAndDeltaRejectWrongPayloadTypes(t *testing.T) {
+	t.Parallel()
+	t.Run("known item with bad text", func(t *testing.T) {
+		t.Parallel()
+		raw := json.RawMessage(`{"type":"agentMessage","id":"item-1","text":123}`)
+		item, err := ParseItem(raw)
+		if item != nil {
+			t.Fatalf("item = %#v, want no partial item", item)
+		}
+		assertMalformedItem(t, err, "agentMessage", raw)
+	})
+	for _, tc := range []struct {
+		name  string
+		field string
+	}{
+		{"agent_message_delta", "text_chunk"},
+		{"reasoning_delta", "text_chunk"},
+		{"command_output_delta", "output_chunk"},
+		{"file_change_output_delta", "diff_chunk"},
+		{"mcp_tool_call_progress", "message"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			raw := json.RawMessage(fmt.Sprintf(`{"type":%q,%q:7}`, tc.name, tc.field))
+			delta, err := ParseItemDelta(raw)
+			if delta != nil {
+				t.Fatalf("delta = %#v, want no partial delta", delta)
+			}
+			assertMalformedItem(t, err, tc.name, raw)
+		})
+	}
+}
+
+func assertMalformedItem(t *testing.T, err error, kind string, raw json.RawMessage) {
+	t.Helper()
+	var parseErr *types.MessageParseError
+	if !errors.As(err, &parseErr) || parseErr.Raw != string(raw) || !strings.HasPrefix(parseErr.Message, "unmarshal "+kind+": ") {
+		t.Fatalf("error = %v, want %q parse error carrying original payload", err, kind)
 	}
 }

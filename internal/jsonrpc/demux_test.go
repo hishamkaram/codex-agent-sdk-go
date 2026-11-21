@@ -140,6 +140,49 @@ func TestDemux_SendReceivesRPCError(t *testing.T) {
 	}
 }
 
+func TestDemux_PostAllowsCanceledWaitToBeRetried(t *testing.T) {
+	t.Parallel()
+	d, server := makeDemux(t)
+	defer func() {
+		_ = d.Close()
+		server.close()
+	}()
+
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+	pending, err := d.Post(ctx, "thread/read", map[string]string{"threadId": "thread-one"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pending.Release()
+
+	select {
+	case raw := <-server.received:
+		const want = `{"id":1,"method":"thread/read","params":{"threadId":"thread-one"}}`
+		if string(raw) != want {
+			t.Fatalf("request = %q, want %q", raw, want)
+		}
+	case <-ctx.Done():
+		t.Fatal("Post returned without putting the request on the wire")
+	}
+
+	wait, cancelWait := context.WithCancel(ctx)
+	cancelWait()
+	if _, waitErr := pending.Wait(wait); !errors.Is(waitErr, context.Canceled) {
+		t.Fatalf("canceled wait error = %v, want context.Canceled", waitErr)
+	}
+
+	server.sendToClient(t, `{"id":1,"error":{"code":-32601,"message":"method not found","data":{"detail":"provider"}}}`)
+	resp, err := pending.Wait(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.ID != 1 || resp.Error == nil || resp.Error.Code != -32601 ||
+		string(resp.Error.Data) != `{"detail":"provider"}` || resp.Error.Error() != "method not found" {
+		t.Fatalf("retried wait response = %+v, error = %#v", resp, resp.Error)
+	}
+}
+
 func TestDemux_DeliversNotifications(t *testing.T) {
 	t.Parallel()
 	d, s := makeDemux(t)

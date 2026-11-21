@@ -65,7 +65,12 @@ func (e *CLIConnectionError) Error() string {
 }
 
 // Unwrap exposes the wrapped cause for errors.Is / errors.As.
-func (e *CLIConnectionError) Unwrap() error { return e.Cause }
+func (e *CLIConnectionError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Cause
+}
 
 // NewCLIConnectionError constructs a CLIConnectionError.
 func NewCLIConnectionError(msg string, cause error) *CLIConnectionError {
@@ -127,7 +132,12 @@ func (e *JSONDecodeError) Error() string {
 }
 
 // Unwrap exposes the wrapped cause.
-func (e *JSONDecodeError) Unwrap() error { return e.Cause }
+func (e *JSONDecodeError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Cause
+}
 
 // NewJSONDecodeError constructs a JSONDecodeError.
 func NewJSONDecodeError(raw string, cause error) *JSONDecodeError {
@@ -372,7 +382,12 @@ func (e *ThreadHistoryError) Error() string {
 	return msg
 }
 
-func (e *ThreadHistoryError) Unwrap() error { return e.Cause }
+func (e *ThreadHistoryError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Cause
+}
 
 const (
 	ThreadHistoryInvalidThreadID    = "invalid_thread_id"
@@ -393,10 +408,10 @@ func IsThreadHistoryError(err error) bool {
 
 func IsInvalidThreadIDError(err error) bool {
 	var e *ThreadHistoryError
-	return errors.As(err, &e) && e.Code == ThreadHistoryInvalidThreadID
+	return errors.As(err, &e) && e != nil && e.Code == ThreadHistoryInvalidThreadID
 }
 
 func IsThreadNotFoundError(err error) bool {
 	var e *ThreadHistoryError
-	return errors.As(err, &e) && e.Code == ThreadHistoryNotFound
+	return errors.As(err, &e) && e != nil && e.Code == ThreadHistoryNotFound
 }
