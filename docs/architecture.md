@@ -45,6 +45,7 @@ go test -race -short . -run 'Test(Client_.*Connect|Client_Close|SubscribeThreadE
 #### Threads and turn controls
 
 ```bash
+go test -race -short ./internal/threadexec
 go test -race -short . -run 'Test(Client_StartThreadAndRun|Thread_Interrupt|Thread_ActiveTurnID|BuildThreadStartParams|TerminateBackgroundTerminalAndInterruptThreadTurn)'
 ```
 
