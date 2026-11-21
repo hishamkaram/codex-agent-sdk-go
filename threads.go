@@ -89,6 +89,11 @@ func (t *Thread) runStreamed(ctx context.Context, prompt string, opts *types.Run
 	if err != nil {
 		return nil, nil, err
 	}
+	if opts != nil && opts.CyberAccessProgram != nil {
+		if validationErr := t.client.requireTurnProgram(ctx, *opts.CyberAccessProgram); validationErr != nil {
+			return nil, nil, validationErr
+		}
+	}
 	params := buildTurnStartParams(t.id, input, opts)
 	op, _, err := t.beginOperation(ctx, executeTurn, true, "turn/start", params)
 	if err != nil {
@@ -286,6 +291,9 @@ func buildTurnStartParams(threadID string, input []map[string]any, opts *types.R
 	}
 	if opts.ReasoningEffort != "" {
 		params["effort"] = opts.ReasoningEffort
+	}
+	if opts.CyberAccessProgram != nil {
+		params["cyberAccessProgram"] = *opts.CyberAccessProgram
 	}
 	return params
 }

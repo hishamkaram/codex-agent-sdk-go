@@ -33,7 +33,7 @@ func TestSplitKV(t *testing.T) {
 		tt := tt
 		t.Run(tt.in, func(t *testing.T) {
 			t.Parallel()
-			k, v, ok := splitKV(tt.in)
+			k, v, ok := splitEnvironmentEntry(tt.in, false)
 			if k != tt.wantK || v != tt.wantV || ok != tt.wantOK {
 				t.Fatalf("got (%q,%q,%v), want (%q,%q,%v)", k, v, ok, tt.wantK, tt.wantV, tt.wantOK)
 			}
@@ -196,7 +196,7 @@ func TestAppServerAcceptsPrecomputedVersionProbe(t *testing.T) {
 		CLIPath:      cliPath,
 		VersionProbe: &CLIVersionProbeResult{Version: want},
 	})
-	app.logCLIVersion(context.Background(), app.cfg.CLIPath)
+	app.logCLIVersion(context.Background(), requireResolvedCLI(t, cliPath, "", nil, false))
 	if _, err := os.Stat(marker); !os.IsNotExist(err) {
 		t.Fatalf("precomputed result was ignored; CLI probe marker stat error = %v", err)
 	}
@@ -212,7 +212,7 @@ func TestAppServerSpawnUsesConfiguredCwd(t *testing.T) {
 	}
 	helper := writeAppServerHelper(t, "while IFS= read -r _line; do :; done")
 	app := NewAppServer(AppServerConfig{Cwd: input})
-	proc, err := app.spawnWithRetry(context.Background(), helper, []string{"app-server"})
+	proc, err := app.spawnWithRetry(context.Background(), requireResolvedCLI(t, helper, input, nil, false), []string{"app-server"})
 	if err != nil {
 		t.Fatalf("spawnWithRetry: %v", err)
 	}
@@ -255,7 +255,7 @@ func TestAppServerSpawnResolvesRelativeCLIPathBeforeConfiguredCwd(t *testing.T) 
 		t.Fatal(err)
 	}
 	app := NewAppServer(AppServerConfig{Cwd: cwd})
-	proc, err := app.spawnWithRetry(context.Background(), relativeHelper, []string{"app-server"})
+	proc, err := app.spawnWithRetry(context.Background(), requireResolvedCLI(t, relativeHelper, cwd, nil, false), []string{"app-server"})
 	if err != nil {
 		t.Fatalf("spawnWithRetry with explicit relative CLI path: %v", err)
 	}

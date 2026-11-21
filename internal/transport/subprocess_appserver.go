@@ -35,6 +35,10 @@ const StderrRingSize = 64 * 1024
 
 // AppServerConfig configures the codex app-server subprocess.
 type AppServerConfig struct {
+	// CLI is the launch snapshot shared with connection-scoped probes.
+	// When omitted, Connect resolves the legacy CLIPath, Cwd and Env values.
+	CLI CLI
+
 	// CLIPath is the absolute path to the codex binary. If empty, FindCLI
 	// is used at Connect time.
 	CLIPath string
@@ -123,22 +127,18 @@ func (t *AppServer) Connect(ctx context.Context) error {
 }
 
 func (t *AppServer) doConnect(ctx context.Context) error {
-	cliPath := t.cfg.CLIPath
-	if cliPath == "" {
-		p, err := FindCLI()
+	cli := t.cfg.CLI
+	if cli.path == "" {
+		var err error
+		cli, err = ResolveCLI(t.cfg.CLIPath, t.cfg.Cwd, t.cfg.Env, false)
 		if err != nil {
-			return err // already a *types.CLINotFoundError
+			return CLIResolutionError(err)
 		}
-		cliPath = p
 	}
 
-	// Soft version probe. Never fails; logs a warning if the version is
-	// below RecommendedCLIVersion.
-	t.logCLIVersion(ctx, cliPath)
-
-	args := appServerArgs(t.cfg)
-
-	proc, err := t.spawnWithRetry(ctx, cliPath, args)
+	// Version compatibility is a soft check.
+	t.logCLIVersion(ctx, cli)
+	proc, err := t.spawnWithRetry(ctx, cli, appServerArgs(t.cfg))
 	if err != nil {
 		return err
 	}
@@ -186,7 +186,7 @@ func (t *AppServer) doConnect(ctx context.Context) error {
 	demux.Run(context.WithoutCancel(ctx))
 
 	t.logger.Debug("codex app-server spawned",
-		zap.String("cli", cliPath),
+		zap.String("cli", cli.path),
 		zap.Int("pid", proc.cmd.Process.Pid))
 	return nil
 }

@@ -235,7 +235,7 @@ func TestSetupHookBridge_DefaultIsolatedCODEXHome(t *testing.T) {
 		WithShimPath(shim).
 		WithHookCallback(types.DefaultAllowHookHandler)
 	var env []string
-	if err := c.setupHookBridge(context.Background(), &env); err != nil {
+	if err := c.setupHookBridge(context.Background(), &env, ""); err != nil {
 		t.Fatalf("setupHookBridge: %v", err)
 	}
 	t.Cleanup(func() {
@@ -278,7 +278,7 @@ func TestClient_CloseHookBridgeConcurrentIsRaceFree(t *testing.T) {
 		WithShimPath(shim).
 		WithHookCallback(types.DefaultAllowHookHandler)
 	var env []string
-	if err := c.setupHookBridge(context.Background(), &env); err != nil {
+	if err := c.setupHookBridge(context.Background(), &env, ""); err != nil {
 		t.Fatalf("setupHookBridge: %v", err)
 	}
 

@@ -41,17 +41,22 @@ const maxUnixSocketLen = 103
 // binary, and installs generated hooks.json so codex actually invokes
 // the shim. Wires the listener path through CODEX_SDK_HOOK_SOCKET so
 // the shim can dial back. Default mode uses an isolated CODEX_HOME;
-// user-home mode backs up ~/.codex/hooks.json and restores it on Close.
+// user-home mode points the child at the SDK user's Codex directory and
+// restores that directory's hooks.json on Close.
 //
 // On any error after the listener starts, this method tears the listener
 // down so the caller can return cleanly.
-func (c *Client) setupHookBridge(ctx context.Context, extraEnv *[]string) error {
+func (c *Client) setupHookBridge(ctx context.Context, extraEnv *[]string, requestedCodexHome string) error {
 	c.hookBridgeMu.Lock()
 	defer c.hookBridgeMu.Unlock()
 
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return fmt.Errorf("home dir: %w", err)
+	}
+	if c.opts.HookConfigMode == types.HookConfigModeUserHome &&
+		!compatibleUserHookHome(filepath.Join(home, ".codex"), requestedCodexHome) {
+		return fmt.Errorf("user-home hooks require CODEX_HOME to select the default user Codex directory")
 	}
 	cacheDir := filepath.Join(home, ".cache", "codex-sdk")
 	if mkErr := os.MkdirAll(cacheDir, 0o700); mkErr != nil {
@@ -119,6 +124,7 @@ func (c *Client) setupHookBridge(ctx context.Context, extraEnv *[]string) error 
 			c.hookListener = nil
 			return err
 		}
+		*extraEnv = append(*extraEnv, "CODEX_HOME="+filepath.Dir(c.hookHooksJSONPath))
 	default:
 		_ = ln.Close()
 		c.hookListener = nil
@@ -133,6 +139,18 @@ func (c *Client) setupHookBridge(ctx context.Context, extraEnv *[]string) error 
 		zap.Bool("backed_up_user_config", c.hookHadUserConfig))
 	hookBridgeReady = true
 	return nil
+}
+
+func compatibleUserHookHome(expected, requested string) bool {
+	if requested == "" || requested == expected {
+		return true
+	}
+	if !filepath.IsAbs(requested) {
+		return false
+	}
+	expectedInfo, expectedErr := os.Stat(expected)
+	requestedInfo, requestedErr := os.Stat(requested)
+	return expectedErr == nil && requestedErr == nil && os.SameFile(expectedInfo, requestedInfo)
 }
 
 func (c *Client) closeHookBridge() {

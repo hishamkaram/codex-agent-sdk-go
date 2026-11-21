@@ -41,6 +41,7 @@ type Client struct {
 	threadEventSubscribers      map[uint64]*threadEventSubscriber
 	nextThreadEventSubscriberID uint64
 	cliCompatibility            atomic.Pointer[cliCompatibilityState]
+	runtime                     *connectedRuntime // guarded by lifecycleMu
 
 	lifecycleMu    sync.Mutex
 	connectStarted atomic.Bool
@@ -126,18 +127,20 @@ func (c *Client) Connect(ctx context.Context) (err error) {
 		}
 	}()
 
-	tr, connErr := c.connectTransport(connectCtx)
+	tr, cli, connErr := c.connectTransport(connectCtx)
 	if connErr != nil {
 		return connErr
 	}
 	demux := tr.Demux()
-	if publishErr := c.publishConnectingTransport(tr, demux); publishErr != nil {
+	initializeOptions := *c.opts
+	runtime := newConnectedRuntime(cli, tr, initializeOptions.ExperimentalAPI)
+	if publishErr := c.publishConnectingTransport(tr, demux, runtime); publishErr != nil {
 		_ = tr.Close(context.WithoutCancel(ctx))
 		return publishErr
 	}
 
 	// Send initialize.
-	params := buildInitializeParams(c.opts)
+	params := buildInitializeParams(&initializeOptions)
 	resp, err := demux.Send(connectCtx, "initialize", params)
 	if err != nil {
 		// Detach cancellation for best-effort transport teardown; ctx may
@@ -163,6 +166,9 @@ func (c *Client) Connect(ctx context.Context) (err error) {
 	}
 
 	dispatcherCtx, dispatcherCancel := context.WithCancel(context.WithoutCancel(ctx))
+	runtime.onClose = func(cancel func()) func() bool {
+		return context.AfterFunc(dispatcherCtx, cancel)
+	}
 	if err := c.startDispatcher(dispatcherCtx, dispatcherCancel, demux); err != nil {
 		dispatcherCancel()
 		c.closeTransportAfterConnectError(ctx, tr)
@@ -175,18 +181,24 @@ func (c *Client) Connect(ctx context.Context) (err error) {
 	return nil
 }
 
-func (c *Client) connectTransport(ctx context.Context) (*transport.AppServer, error) {
+func (c *Client) connectTransport(ctx context.Context) (*transport.AppServer, transport.CLI, error) {
 	// Hook-bridge auto-wiring is end-to-end. By default, HookCallback uses an
 	// isolated CODEX_HOME containing SDK-generated hooks.json. Opt-in user-home
 	// mode preserves the original backup/restore behavior.
-	extraEnv := append([]string(nil), c.opts.Env...)
-	if c.opts.HookCallback != nil {
-		if err := c.setupHookBridge(ctx, &extraEnv); err != nil {
-			return nil, fmt.Errorf("codex.Client.Connect: hook bridge: %w", err)
-		}
+	cli, err := resolveCLIOptions(c.opts.CLIPath, c.opts.DefaultCwd, c.opts.Env, c.opts.EnvMode)
+	if err != nil {
+		return nil, transport.CLI{}, fmt.Errorf("codex.Client.Connect: %w", transport.CLIResolutionError(err))
 	}
-	versionProbe := probeCLICompatibilityVersion(ctx, c.opts, extraEnv)
-	knownVersion := versionProbe.Err == nil
+	if c.opts.HookCallback != nil {
+		var additions []string
+		if hookErr := c.setupHookBridge(ctx, &additions, cli.EnvironmentValue("CODEX_HOME")); hookErr != nil {
+			return nil, transport.CLI{}, fmt.Errorf("codex.Client.Connect: hook bridge: %w", hookErr)
+		}
+		cli = cli.WithEnvironmentAdditions(additions)
+	}
+	version, versionErr := cli.ProbeVersion(ctx)
+	versionProbe := transport.CLIVersionProbeResult{Version: version, Err: versionErr}
+	knownVersion := versionErr == nil
 	c.cliCompatibility.Store(&cliCompatibilityState{version: versionProbe.Version, known: knownVersion})
 
 	maxParseErrors := uint(0)
@@ -195,21 +207,19 @@ func (c *Client) connectTransport(ctx context.Context) (*transport.AppServer, er
 	}
 	globalArgs, extraArgs := cliCompatibilityArgs(c.opts, versionProbe.Version, knownVersion)
 	tr := transport.NewAppServer(transport.AppServerConfig{
-		CLIPath:                   c.opts.CLIPath,
-		Cwd:                       c.opts.DefaultCwd,
+		CLI:                       cli,
 		GlobalArgs:                globalArgs,
 		VersionProbe:              &versionProbe,
 		ExtraArgs:                 extraArgs,
-		Env:                       extraEnv,
 		Logger:                    c.logger,
 		ReadBufferSize:            c.opts.ReadBufferSize,
 		Observer:                  c.opts.ObserverOrNop(),
 		MaxConsecutiveParseErrors: maxParseErrors,
 	})
-	if err := tr.Connect(ctx); err != nil {
-		return nil, fmt.Errorf("codex.Client.Connect: transport: %w", err)
+	if connectErr := tr.Connect(ctx); connectErr != nil {
+		return nil, transport.CLI{}, fmt.Errorf("codex.Client.Connect: transport: %w", connectErr)
 	}
-	return tr, nil
+	return tr, cli, nil
 }
 
 func (c *Client) beginConnect(ctx context.Context) (
@@ -253,7 +263,7 @@ func (c *Client) clearConnectCancel(cancel context.CancelFunc, token *struct{}) 
 	c.lifecycleMu.Unlock()
 }
 
-func (c *Client) publishConnectingTransport(tr *transport.AppServer, demux *jsonrpc.Demux) error {
+func (c *Client) publishConnectingTransport(tr *transport.AppServer, demux *jsonrpc.Demux, runtime *connectedRuntime) error {
 	c.lifecycleMu.Lock()
 	defer c.lifecycleMu.Unlock()
 	if c.closed.Load() {
@@ -261,6 +271,7 @@ func (c *Client) publishConnectingTransport(tr *transport.AppServer, demux *json
 	}
 	c.tr = tr
 	c.demux = demux
+	c.runtime = runtime
 	return nil
 }
 
@@ -493,6 +504,7 @@ func (c *Client) Close(ctx context.Context) error {
 	c.connectToken = nil
 	c.dispatcherCancel = nil
 	c.tr = nil
+	c.runtime = nil
 	c.lifecycleMu.Unlock()
 	// Tear down the hook bridge AFTER the transport is stopped so no
 	// in-flight hook subprocess can still dial the socket.
