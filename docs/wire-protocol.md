@@ -237,10 +237,10 @@ Failed terminal turns can include `turn.error.message`. The SDK preserves
 that message on `TurnCompleted.Error`; callers that present it to users must
 apply their own redaction policy.
 
-### `turn/completed` does NOT carry usage
+### Cumulative and buffered token usage
 
-Usage flows as a separate stream via `thread/tokenUsage/updated` with
-shape:
+On the stable app-server, usage flows separately through
+`thread/tokenUsage/updated`. A representative payload follows.
 
 ```json
 {"threadId":"T1","turnId":"U1",
@@ -266,10 +266,18 @@ turn repeating one snapshot before the thread total increases again. Taking
 only the final `last` can omit earlier work in that turn. Adding every
 `last` can count a replay twice.
 
-`Thread.Run` prefers explicit usage on completion and currently falls back
-to the latest streaming `Usage`. Buffered per-turn accounting and cache-write
-tokens are tracked in
-[#47](https://github.com/hishamkaram/codex-agent-sdk-go/issues/47).
+Check `Turn.UsageAvailable` for buffered accounting. `Thread.Run` accepts
+explicit whole-turn terminal usage and otherwise requires a proven pre-turn
+total and a matching closing total in the same accounting epoch. Threads
+created by the Client start with a known zero baseline. Replays, gaps, missing
+baselines, resets, and late-only evidence can leave usage unavailable. A silent
+or replay-only turn discards the cumulative baseline because the next sample
+might contain unreported work. An explicit zero on the matching terminal
+counts as measured usage and can retain a known baseline.
+
+`CacheWriteInputTokens` decodes `cacheWriteInputTokens` and defaults to zero
+when absent. `CachedInputTokens` measures cache reads. Both counters are
+retained in sums. `TotalTokens` keeps the provider's total.
 
 ### `item/agentMessage/delta` is a per-item-type delta method
 
@@ -298,10 +306,11 @@ populated when complete). The SDK stores them as
 
 ### Concurrent `turn/start` on one thread
 
-The server QUEUES concurrent `turn/start` calls on the same thread but
-collapses their event boundaries. The SDK serializes via a per-thread
-`turnMu`; callers that make concurrent Run calls block, they don't
-race.
+The server can steer onto a running turn and return the same reply shape as
+a fresh start. The SDK admits work one operation at a time by provider
+thread ID and targets interruption only after correlating an owned root
+start. See [turn execution](architecture.md#turn-execution) for the
+cancellation and reuse contract.
 
 ## References
 

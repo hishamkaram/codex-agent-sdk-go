@@ -15,10 +15,20 @@ var errThreadEventIdentityMissing = errors.New("thread-scoped notification is mi
 // dispatch runs the event-routing goroutine. Reads notifications and
 // server-initiated requests from the demux and fans them out.
 func (c *Client) dispatch(ctx context.Context, demux *jsonrpc.Demux, done chan struct{}) {
+	workerCtx, cancel := context.WithCancelCause(ctx)
+	lanes := approvalLanes{callbacks: make(chan approvalJob, approvalQueueSize), denials: make(chan approvalJob, approvalQueueSize), cancel: cancel}
+	workerDone := make(chan struct{})
+	denialsDone := make(chan struct{})
+	go c.runApprovalWorker(workerCtx, demux, lanes.callbacks, workerDone)
+	go c.runApprovalDenials(workerCtx, demux, lanes.denials, denialsDone)
 	defer func() {
+		cancel(nil)
 		c.connected.Store(false)
 		c.closeThreadEventSubscriptions()
 		c.clearFileApprovals()
+		c.closeThreadExecutions()
+		<-denialsDone
+		<-workerDone
 		close(done)
 	}()
 
@@ -34,7 +44,7 @@ func (c *Client) dispatch(ctx context.Context, demux *jsonrpc.Demux, done chan s
 				serverMessages = nil
 				continue
 			}
-			c.handleServerMessage(ctx, demux, message)
+			c.routeServerMessage(workerCtx, demux, lanes, message)
 		case note, ok := <-notifications:
 			if !ok {
 				notifications = nil
@@ -46,7 +56,7 @@ func (c *Client) dispatch(ctx context.Context, demux *jsonrpc.Demux, done chan s
 				serverRequests = nil
 				continue
 			}
-			c.handleServerRequest(ctx, demux, sreq)
+			c.enqueueApproval(workerCtx, lanes, sreq)
 		}
 	}
 
@@ -65,16 +75,53 @@ func (c *Client) dispatch(ctx context.Context, demux *jsonrpc.Demux, done chan s
 	}
 }
 
-func (c *Client) handleServerMessage(ctx context.Context, demux *jsonrpc.Demux, message jsonrpc.ServerMessage) {
-	if message.Notification != nil {
+func (c *Client) routeServerMessage(ctx context.Context, demux *jsonrpc.Demux, lanes approvalLanes, message jsonrpc.ServerMessage) {
+	switch {
+	case message.Notification != nil:
 		c.handleNotification(*message.Notification)
-	} else if message.Request != nil {
-		c.handleServerRequest(ctx, demux, *message.Request)
+		demux.NotificationApplied(message.Notification)
+	case message.Request != nil:
+		c.enqueueApproval(ctx, lanes, *message.Request)
+	default:
+		message.DeliverOrderedReply()
+	}
+}
+
+// pendingActivityAffectsThread only examines immutable inbound data. An
+// unidentifiable ownership message could belong to any provider thread.
+func pendingActivityAffectsThread(n jsonrpc.Notification, threadID string) bool {
+	if n.DecodeError != nil {
+		return true
+	}
+	if n.Method != "turn/started" && n.Method != "thread/status/changed" {
+		return false
+	}
+	ev, err := events.ParseEvent(n)
+	if err != nil {
+		id, _ := extractThreadID(n.Params)
+		return id == "" || threadExecutionID(id) == threadID
+	}
+	id, _ := threadIdentityFromEvent(ev)
+	if id == "" {
+		return true
+	}
+	if threadExecutionID(id) != threadID {
+		return false
+	}
+	switch activity := ev.(type) {
+	case *types.TurnStarted:
+		return activity.TurnID == "" || isRootTurn(activity.TurnID, activity.RootTurnID)
+	case *types.ThreadStatusChanged:
+		kind := threadStatusKind(activity.Status)
+		return kind == "" || kind == "active"
+	default:
+		return true
 	}
 }
 
 func (c *Client) handleNotification(n jsonrpc.Notification) {
 	if n.DecodeError != nil {
+		c.invalidateThreadExecutions("")
 		c.clearFileApprovals()
 		c.failThreadEventSubscriptions(ThreadEventEnvelope{
 			Err: &ThreadEventFrameGapError{Cause: n.DecodeError},
@@ -87,6 +134,7 @@ func (c *Client) handleNotification(n jsonrpc.Notification) {
 	if err != nil {
 		c.clearFileApprovals()
 		threadID, _ := extractThreadID(n.Params)
+		c.invalidateThreadExecutions(threadID)
 		c.failThreadEventSubscriptions(ThreadEventEnvelope{
 			ThreadID: threadID,
 			Err: &ThreadEventParseGapError{
@@ -110,6 +158,7 @@ func (c *Client) handleNotification(n jsonrpc.Notification) {
 	threadID, identityRequired := threadIdentityFromEvent(ev)
 	if threadID == "" {
 		if identityRequired {
+			c.invalidateThreadExecutions("")
 			c.clearFileApprovals()
 			c.failThreadEventSubscriptions(ThreadEventEnvelope{
 				Err: &ThreadEventParseGapError{
@@ -129,78 +178,124 @@ func (c *Client) handleNotification(n jsonrpc.Notification) {
 	}
 	c.rememberFileApproval(ev)
 	c.mu.Lock()
-	t := c.threads[threadID]
+	execution := c.executions[threadExecutionID(threadID)]
 	c.mu.Unlock()
-	if t != nil {
-		// Update registered-thread state before waking global subscribers so a
-		// subscriber can safely act on the event (for example, interrupt the
-		// turn announced by turn/started).
-		t.deliverEvent(ev)
+	// Record lifecycle evidence before any lossy event delivery.
+	if execution != nil && execution.observe(ev) {
+		c.logger.Warn("operation event queue full, dropped notification",
+			zap.String("thread_id", threadID), zap.String("method", n.Method))
 	}
 	// Unregistered provider-created child threads have no Thread handle, but
 	// their events still belong in the client-wide runtime stream.
 	c.publishThreadEvent(ThreadEventEnvelope{ThreadID: threadID, Event: ev})
 }
 
-func (c *Client) handleServerRequest(ctx context.Context, demux *jsonrpc.Demux, sreq jsonrpc.ServerRequest) {
-	req, err := events.ParseApprovalRequest(sreq.Method, sreq.Params)
-	if err != nil {
-		c.logger.Warn("parse server-request failed",
-			zap.String("method", sreq.Method))
-		if writeErr := demux.RespondServerRequest(sreq.ID, nil, &jsonrpc.RPCError{
-			Code:    -32000,
-			Message: "client could not parse approval request parameters",
-		}); writeErr != nil {
-			c.logger.Warn("approval error response write failed", zap.String("method", sreq.Method), zap.Error(writeErr))
+func (c *Client) invalidateThreadExecutions(threadID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if threadID != "" {
+		if execution := c.executions[threadExecutionID(threadID)]; execution != nil {
+			execution.invalidate()
 		}
 		return
 	}
-	cb := c.opts.ApprovalCallback
-	if file, ok := req.(*types.FileChangeApprovalRequest); ok && !c.resolveFileApproval(file) {
-		cb = types.DefaultDenyApprovalCallback
-		c.logger.Warn("file approval context unavailable; denying")
-	}
-	if cb == nil {
-		cb = types.DefaultDenyApprovalCallback
-	}
-	replyReq := approvalReplyRequest(req)
-	// Use dispatcherCtx so callbacks get canceled on Close.
-	decision := cb(ctx, req)
-	if ctx.Err() != nil {
-		switch req.(type) {
-		case *types.PermissionsApprovalRequest, *types.ElicitationRequest:
-			decision = types.ApprovalCancel{}
-		}
-	}
-	result, err := events.EncodeApprovalDecision(replyReq, decision)
-	if err != nil {
-		c.logger.Warn("invalid approval decision; denying", zap.String("method", sreq.Method), zap.Error(err))
-	}
-	if err := demux.RespondServerRequest(sreq.ID, result, nil); err != nil {
-		c.logger.Warn("approval response write failed",
-			zap.String("method", sreq.Method),
-			zap.Error(err))
+	for _, execution := range c.executions {
+		execution.invalidate()
 	}
 }
 
-// approvalReplyRequest captures the provider discriminator the encoder reads.
-// The callback can edit its request without changing the reply contract.
-func approvalReplyRequest(req types.ApprovalRequest) types.ApprovalRequest {
-	if elicitation, ok := req.(*types.ElicitationRequest); ok {
-		return &types.ElicitationRequest{Mode: elicitation.Mode}
+func (c *Client) closeThreadExecutions() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, execution := range c.executions {
+		execution.close()
 	}
-	return req
 }
 
 // registerThread stores a Thread in the client's routing table. The caller
 // must own the thread's ID (i.e., thread/start or thread/resume succeeded).
 // Also records the thread ID as the latest for SessionID().
 func (c *Client) registerThread(t *Thread) {
+	executionID := threadExecutionID(t.id)
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.threads != nil {
-		c.threads[t.id] = t
-		c.latestThreadID = t.id
+	if c.threads == nil {
+		t.markClosed()
+		return
+	}
+	if c.executions == nil {
+		c.executions = make(map[string]*threadExecution)
+	}
+	if existing := c.executions[executionID]; existing != nil {
+		existing.reconcileExternalActivity(t.threadExecution)
+		t.threadExecution = existing
+	} else {
+		if t.threadExecution == nil {
+			t.threadExecution = newThreadExecution()
+		}
+		if !c.connected.Load() {
+			t.markClosed()
+		}
+		c.executions[executionID] = t.threadExecution
+	}
+	t.pendingRegistration = false
+	c.threads[executionID] = t
+	c.latestThreadID = t.id
+}
+
+// Track ordered lifecycle events before thread/resume is sent. The
+// provisional record has the same provider ID as any eventual handle.
+func (c *Client) beginResumeObservation(threadID string) *threadExecution {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.threads == nil || c.closed.Load() {
+		return nil
+	}
+	if c.executions == nil {
+		c.executions = make(map[string]*threadExecution)
+	}
+	execution := c.executions[threadID]
+	if execution == nil {
+		execution = newThreadExecution()
+		execution.pendingRegistration = true
+		c.executions[threadID] = execution
+	}
+	execution.mu.Lock()
+	execution.resuming++
+	execution.mu.Unlock()
+	return execution
+}
+
+func (c *Client) endResumeObservation(threadID string, execution *threadExecution) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	execution.mu.Lock()
+	defer execution.mu.Unlock()
+	execution.resuming--
+	if execution.resuming == 0 && execution.pendingRegistration && c.executions[threadID] == execution {
+		delete(c.executions, threadID)
+	}
+	execution.signalLocked()
+}
+
+type idleResumeProof struct {
+	execution  *threadExecution
+	generation uint64
+}
+
+func (c *Client) requestThreadResume(ctx context.Context, params map[string]any, execution *threadExecution) (jsonrpc.Response, idleResumeProof, error) {
+	generation, eligible := execution.resumeIdleCandidate()
+	if eligible && c.demux.ServerMessages() != nil {
+		reply, err := c.demux.SendOrdered(ctx, "thread/resume", params)
+		return reply, idleResumeProof{execution: execution, generation: generation}, err
+	}
+	reply, err := c.demux.Send(ctx, "thread/resume", params)
+	return reply, idleResumeProof{}, err
+}
+
+func (p idleResumeProof) reconcile(status, statusThreadID, reportedID, requestedID string) {
+	if p.execution != nil && status == "idle" && threadExecutionID(statusThreadID) == requestedID && threadExecutionID(reportedID) == requestedID {
+		p.execution.reconcileIdleResume(p.generation)
 	}
 }
 
@@ -209,12 +304,15 @@ func (c *Client) registerThread(t *Thread) {
 // removed thread was the most recent so SessionID() reverts to "" for
 // single-thread callers.
 func (c *Client) unregisterThread(threadID string) {
+	executionID := threadExecutionID(threadID)
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.threads != nil {
-		delete(c.threads, threadID)
+	delete(c.threads, executionID)
+	if execution := c.executions[executionID]; execution != nil {
+		// Keep unresolved activity for handles that still refer to this ID.
+		execution.invalidate()
 	}
-	if c.latestThreadID == threadID {
+	if threadExecutionID(c.latestThreadID) == executionID {
 		c.latestThreadID = ""
 	}
 }

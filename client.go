@@ -35,6 +35,7 @@ type Client struct {
 
 	mu                          sync.Mutex
 	threads                     map[string]*Thread
+	executions                  map[string]*threadExecution // guarded by mu, keyed by provider thread ID
 	latestThreadID              string
 	fileApprovals               map[fileApprovalKey]fileApprovalContext // guarded by mu
 	threadEventSubscribers      map[uint64]*threadEventSubscriber
@@ -97,6 +98,7 @@ func NewClient(ctx context.Context, opts *types.CodexOptions) (*Client, error) {
 		opts:                   opts,
 		logger:                 logger,
 		threads:                make(map[string]*Thread),
+		executions:             make(map[string]*threadExecution),
 		threadEventSubscribers: make(map[uint64]*threadEventSubscriber),
 	}, nil
 }
@@ -155,7 +157,7 @@ func (c *Client) Connect(ctx context.Context) (err error) {
 	}
 
 	// Send initialized notification.
-	if err := demux.Notify("initialized", nil); err != nil {
+	if err := demux.NotifyContext(connectCtx, "initialized", nil); err != nil {
 		c.closeTransportAfterConnectError(ctx, tr)
 		return fmt.Errorf("codex.Client.Connect: initialized: %w", err)
 	}
@@ -446,6 +448,11 @@ func (c *Client) SessionID() string {
 // terminates the subprocess with the 3-stage graceful-shutdown ladder.
 // Safe to call multiple times.
 func (c *Client) Close(ctx context.Context) error {
+	if ctx != nil {
+		if err := c.checkApprovalReentry(ctx); err != nil {
+			return err
+		}
+	}
 	if ctx == nil {
 		if c.closed.Load() {
 			return nil
@@ -467,6 +474,10 @@ func (c *Client) Close(ctx context.Context) error {
 	for _, t := range c.threads {
 		t.markClosed()
 	}
+	for _, execution := range c.executions {
+		execution.close()
+	}
+	c.executions = nil
 	c.threads = nil
 	c.latestThreadID = ""
 	c.mu.Unlock()

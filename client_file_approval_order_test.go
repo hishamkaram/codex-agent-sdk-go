@@ -1,15 +1,12 @@
 package codex
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/hishamkaram/codex-agent-sdk-go/internal/jsonrpc"
-	sdklog "github.com/hishamkaram/codex-agent-sdk-go/internal/log"
 	"github.com/hishamkaram/codex-agent-sdk-go/types"
 )
 
@@ -32,37 +29,35 @@ func TestFileApprovalOrderedDispatch(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			defer cancel()
 			request := `{"id":42,"method":"item/fileChange/requestApproval","params":{"threadId":"thread","turnId":"` + tc.turn + `","itemId":"item"}}`
-			var output bytes.Buffer
-			demux := jsonrpc.NewDemux(jsonrpc.NewLineReader(strings.NewReader(tc.before+"\n"+request+"\n")), jsonrpc.NewLineWriter(&output), nil, jsonrpc.WithOrderedServerMessages())
-			defer demux.Close()
-			demux.Run(ctx)
-			select {
-			case <-demux.LoopError():
-			case <-ctx.Done():
-				t.Fatal("demux did not finish buffering")
-			}
-			calls := 0
+			var calls atomic.Int32
 			opts := types.NewCodexOptions()
 			opts.ApprovalCallback = func(_ context.Context, request types.ApprovalRequest) types.ApprovalDecision {
-				calls++
+				calls.Add(1)
 				file := request.(*types.FileChangeApprovalRequest)
 				if len(file.Changes) != 1 || file.Changes[0].Path != "proof.txt" {
 					t.Errorf("wrong context: %+v", file)
 				}
 				return types.ApprovalAccept{}
 			}
-			client := &Client{opts: opts, logger: sdklog.NewLoggerFromZap(nil)}
-			client.dispatch(ctx, demux, make(chan struct{}))
-			if calls != tc.wantCalls {
-				t.Fatalf("callback calls = %d, want %d", calls, tc.wantCalls)
+			_, server := setupMockClient(t, opts, nil)
+			if _, err := server.serverOut.Write([]byte(tc.before + "\n" + request + "\n")); err != nil {
+				t.Fatal(err)
 			}
 			var response struct {
 				Result struct {
 					Decision string `json:"decision"`
 				} `json:"result"`
 			}
-			if err := json.Unmarshal(output.Bytes(), &response); err != nil {
-				t.Fatal(err)
+			select {
+			case raw := <-server.approvalReplies:
+				if err := json.Unmarshal(raw, &response); err != nil {
+					t.Fatal(err)
+				}
+			case <-ctx.Done():
+				t.Fatal("server never received its reply")
+			}
+			if calls.Load() != int32(tc.wantCalls) {
+				t.Fatalf("callback calls = %d, want %d", calls.Load(), tc.wantCalls)
 			}
 			want := "decline"
 			if tc.wantCalls == 1 {

@@ -14,7 +14,7 @@ import (
 	"go.uber.org/zap"
 )
 
-// ErrClosed is returned by Send when the demux has been closed.
+// ErrClosed reports that the demux has been closed.
 var ErrClosed = errors.New("jsonrpc: demux closed")
 
 // DefaultMaxConsecutiveParseErrors is the demux's default give-up threshold:
@@ -54,33 +54,53 @@ type Demux struct {
 	maxParseErrors  uint
 	onUnrecoverable func(error)
 
-	mu      sync.Mutex
-	pending map[uint64]chan Response
-	closed  bool
+	mu                   sync.Mutex
+	pending              map[uint64]*PendingResponse
+	pendingNotifications map[*Notification]struct{}
+	malformedRun         bool
+	closed               bool
 
 	notifications  chan Notification
 	serverRequests chan ServerRequest
 	serverMessages chan ServerMessage
 	loopErr        chan error
 
-	stopOnce sync.Once
-	stopped  chan struct{}
+	stopOnce          sync.Once
+	unrecoverableOnce sync.Once
+	stopped           chan struct{}
 }
 
 // DemuxOption configures optional Demux behavior (observability, reliability).
 type DemuxOption func(*Demux)
 
-// ServerMessage preserves arrival order between notifications and approvals.
-// Exactly one field is non-nil.
+// ServerMessage preserves arrival order between notifications, approvals and
+// replies whose interpretation depends on earlier ordered messages.
 type ServerMessage struct {
 	Notification *Notification
 	Request      *ServerRequest
+	reply        *orderedReply
 }
 
-// WithOrderedServerMessages routes both kinds to ServerMessages instead of
-// the separate legacy channels. It must be selected before Run.
+type orderedReply struct {
+	destination chan<- Response
+	response    Response
+}
+
+// DeliverOrderedReply completes this message's waiting RPC after the caller
+// has applied all earlier messages. The buffered send does not wait for it.
+func (m ServerMessage) DeliverOrderedReply() {
+	if m.reply != nil {
+		m.reply.destination <- m.reply.response
+	}
+}
+
+// WithOrderedServerMessages routes notifications and requests to the same
+// channel and enables SendOrdered replies. Select it before Run.
 func WithOrderedServerMessages() DemuxOption {
-	return func(d *Demux) { d.serverMessages = make(chan ServerMessage, 64) }
+	return func(d *Demux) {
+		d.serverMessages = make(chan ServerMessage, 64)
+		d.pendingNotifications = make(map[*Notification]struct{})
+	}
 }
 
 func (d *Demux) ServerMessages() <-chan ServerMessage { return d.serverMessages }
@@ -127,7 +147,7 @@ func NewDemux(r *LineReader, w *LineWriter, logger *sdklog.Logger, opts ...Demux
 		logger:         logger,
 		observer:       types.NopObserver{},
 		maxParseErrors: DefaultMaxConsecutiveParseErrors,
-		pending:        make(map[uint64]chan Response),
+		pending:        make(map[uint64]*PendingResponse),
 		notifications:  make(chan Notification, 64),
 		serverRequests: make(chan ServerRequest, 16),
 		loopErr:        make(chan error, 1),
@@ -164,50 +184,139 @@ func (d *Demux) Run(ctx context.Context) {
 // Response is returned as-is (including any server-side error in
 // Response.Error).
 func (d *Demux) Send(ctx context.Context, method string, params any) (Response, error) {
-	id := d.ids.Next()
+	return d.send(ctx, method, params, false)
+}
 
+// SendOrdered routes its response through ServerMessages. Use only after an
+// ordered dispatcher has started, and only when reading the reply requires
+// earlier ordered notifications to have been applied.
+func (d *Demux) SendOrdered(ctx context.Context, method string, params any) (Response, error) {
+	if d.serverMessages == nil {
+		return Response{}, errors.New("jsonrpc: ordered response requires an ordered dispatcher")
+	}
+	return d.send(ctx, method, params, true)
+}
+
+func (d *Demux) send(ctx context.Context, method string, params any, ordered bool) (Response, error) {
+	pending, err := d.post(ctx, method, params, nil, ordered)
+	if err != nil {
+		return Response{}, err
+	}
+	defer pending.Release()
+	return pending.Wait(ctx)
+}
+
+// PendingResponse owns the matching reply for a fully dispatched request.
+// Waiting may be retried after context cancellation. The owner must Release it.
+type PendingResponse struct {
+	demux   *Demux
+	id      uint64
+	reply   chan Response
+	ordered bool
+}
+
+func (p *PendingResponse) Wait(ctx context.Context) (Response, error) {
+	select {
+	case reply := <-p.reply:
+		return reply, nil
+	default:
+	}
+	select {
+	case reply := <-p.reply:
+		return reply, nil
+	case <-ctx.Done():
+		return Response{}, fmt.Errorf("jsonrpc.Demux.Send: %w", ctx.Err())
+	case <-p.demux.stopped:
+		select {
+		case reply := <-p.reply:
+			return reply, nil
+		default:
+			return Response{}, ErrClosed
+		}
+	}
+}
+
+func (p *PendingResponse) Release() {
+	p.demux.mu.Lock()
+	delete(p.demux.pending, p.id)
+	p.demux.mu.Unlock()
+}
+
+// Post admits the request to the writer and returns its reply handle only
+// when the complete frame is on the wire.
+func (d *Demux) Post(ctx context.Context, method string, params any) (*PendingResponse, error) {
+	return d.PostGuarded(ctx, method, params, nil)
+}
+
+// PostGuarded checks guard at the serialized dispatch boundary.
+func (d *Demux) PostGuarded(ctx context.Context, method string, params any, guard func(context.Context) error) (*PendingResponse, error) {
+	return d.post(ctx, method, params, guard, false)
+}
+
+func (d *Demux) post(ctx context.Context, method string, params any, guard func(context.Context) error, ordered bool) (*PendingResponse, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	id := d.ids.Next()
 	var paramsRaw json.RawMessage
 	if params != nil {
 		b, err := json.Marshal(params)
 		if err != nil {
-			return Response{}, fmt.Errorf("jsonrpc.Demux.Send: marshal params: %w", err)
+			return nil, fmt.Errorf("jsonrpc.Demux.Send: marshal params: %w", err)
 		}
 		paramsRaw = b
 	}
-
-	ch := make(chan Response, 1)
-
+	pending := &PendingResponse{demux: d, id: id, reply: make(chan Response, 1), ordered: ordered}
 	d.mu.Lock()
 	if d.closed {
 		d.mu.Unlock()
-		return Response{}, ErrClosed
+		return nil, ErrClosed
 	}
-	d.pending[id] = ch
+	d.pending[id] = pending
 	d.mu.Unlock()
 
-	defer func() {
-		d.mu.Lock()
-		delete(d.pending, id)
-		d.mu.Unlock()
-	}()
-
-	req := Request{ID: id, Method: method, Params: paramsRaw}
-	if err := d.writer.WriteFrame(req); err != nil {
-		return Response{}, fmt.Errorf("jsonrpc.Demux.Send: write: %w", err)
+	if err := d.writeFrame(ctx, Request{ID: id, Method: method, Params: paramsRaw}, guard); err != nil {
+		pending.Release()
+		return nil, fmt.Errorf("jsonrpc.Demux.Send: write: %w", err)
 	}
+	return pending, nil
+}
 
-	select {
-	case resp := <-ch:
-		return resp, nil
-	case <-ctx.Done():
-		return Response{}, fmt.Errorf("jsonrpc.Demux.Send: %w", ctx.Err())
-	case <-d.stopped:
-		return Response{}, ErrClosed
+func (d *Demux) writeFrame(ctx context.Context, frame any, guard func(context.Context) error) error {
+	err := d.writer.writeFrameContext(ctx, frame, guard)
+	if errors.Is(err, ErrFramePoisoned) && !d.isClosed() {
+		d.Abort(err)
 	}
+	return err
+}
+
+func (d *Demux) isClosed() bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.closed
+}
+
+// Abort closes a session whose transport or control backlog can no longer
+// carry every required reply.
+func (d *Demux) Abort(err error) {
+	_ = d.Close()
+	d.reportUnrecoverable(err)
+}
+
+func (d *Demux) reportUnrecoverable(err error) {
+	d.unrecoverableOnce.Do(func() {
+		if d.onUnrecoverable != nil {
+			d.onUnrecoverable(err)
+		}
+	})
 }
 
 // Notify sends a client-to-server notification (no response expected).
 func (d *Demux) Notify(method string, params any) error {
+	return d.NotifyContext(context.Background(), method, params)
+}
+
+func (d *Demux) NotifyContext(ctx context.Context, method string, params any) error {
 	var paramsRaw json.RawMessage
 	if params != nil {
 		b, err := json.Marshal(params)
@@ -217,7 +326,7 @@ func (d *Demux) Notify(method string, params any) error {
 		paramsRaw = b
 	}
 	n := Notification{Method: method, Params: paramsRaw}
-	if err := d.writer.WriteFrame(n); err != nil {
+	if err := d.writeFrame(ctx, n, nil); err != nil {
 		return fmt.Errorf("jsonrpc.Demux.Notify: write: %w", err)
 	}
 	return nil
@@ -227,6 +336,11 @@ func (d *Demux) Notify(method string, params any) error {
 // result may be nil for responses that carry no payload. If rpcErr is
 // non-nil, it takes precedence over result.
 func (d *Demux) RespondServerRequest(id json.RawMessage, result any, rpcErr *RPCError) error {
+	return d.RespondServerRequestContext(context.Background(), id, result, rpcErr)
+}
+
+// RespondServerRequestContext is the cancellable approval write path.
+func (d *Demux) RespondServerRequestContext(ctx context.Context, id json.RawMessage, result any, rpcErr *RPCError) error {
 	var resultRaw json.RawMessage
 	if result != nil && rpcErr == nil {
 		b, err := json.Marshal(result)
@@ -236,7 +350,7 @@ func (d *Demux) RespondServerRequest(id json.RawMessage, result any, rpcErr *RPC
 		resultRaw = b
 	}
 	resp := serverResponse{ID: id, Result: resultRaw, Error: rpcErr}
-	if err := d.writer.WriteFrame(resp); err != nil {
+	if err := d.writeFrame(ctx, resp, nil); err != nil {
 		return fmt.Errorf("jsonrpc.Demux.RespondServerRequest: write: %w", err)
 	}
 	return nil
@@ -258,6 +372,8 @@ func (d *Demux) Close() error {
 		for id := range d.pending {
 			delete(d.pending, id)
 		}
+		clear(d.pendingNotifications)
+		d.malformedRun = false
 		d.mu.Unlock()
 		_ = d.writer.Close()
 		close(d.stopped)
@@ -277,6 +393,7 @@ func (d *Demux) Close() error {
 func (d *Demux) readLoop(ctx context.Context) {
 	var exitErr error
 	defer func() {
+		_ = d.Close()
 		d.loopErr <- exitErr
 		close(d.notifications)
 		close(d.serverRequests)
@@ -321,7 +438,7 @@ func (d *Demux) readLoop(ctx context.Context) {
 		consecutiveParseErrors = 0
 		if firstMessage {
 			firstMessage = false
-			d.observer.OnFirstMessage(time.Since(loopStart))
+			d.reportFirstMessage(frame, loopStart)
 		}
 
 		continueLoop, nextGapQueued := d.classifyAndRoute(ctx, frame, gapQueued)
@@ -332,12 +449,20 @@ func (d *Demux) readLoop(ctx context.Context) {
 	}
 }
 
+func (d *Demux) reportFirstMessage(frame rawFrame, loopStart time.Time) {
+	if frame.Method == nil && frame.ID == nil {
+		d.setMalformedRun(true)
+	}
+	d.observer.OnFirstMessage(time.Since(loopStart))
+}
+
 func (d *Demux) handleDecodeFailure(
 	ctx context.Context,
 	decodeErr error,
 	consecutive uint,
 	gapQueued bool,
 ) (continueLoop, nextGapQueued bool, exitErr error) {
+	d.setMalformedRun(true)
 	// recordParseFailure receives the incremented value so telemetry reports the
 	// running consecutive count.
 	giveUpErr := d.recordParseFailure(consecutive, decodeErr)
@@ -379,16 +504,14 @@ func (d *Demux) recordParseFailure(consecutive uint, err error) error {
 		zap.Uint("consecutive_errors", consecutive))
 	d.observer.OnParseGiveUp(consecutive)
 	exitErr := fmt.Errorf("jsonrpc.Demux.readLoop: %d consecutive decode errors: %w", consecutive, ErrParseGiveUp)
-	if d.onUnrecoverable != nil {
-		d.onUnrecoverable(exitErr)
-	}
+	d.reportUnrecoverable(exitErr)
 	return exitErr
 }
 
 // classifyAndRoute dispatches a successfully decoded frame to the correct
 // outbound channel: a server-initiated request, a notification, a response to a
 // pending client request, or an unclassifiable frame (telemetry plus an ordered
-// notification-stream gap). It
+// notification-stream gap).
 // The second result reports whether a coalesced frame-gap marker remains
 // pending for the current malformed run. The first result is false only when
 // readLoop must exit because an outbound delivery observed stop or cancellation.
@@ -401,6 +524,7 @@ func (d *Demux) classifyAndRoute(
 	case frame.Method != nil && frame.ID != nil:
 		// Server-initiated request.
 		req := ServerRequest{ID: frame.ID, Method: *frame.Method, Params: frame.Params}
+		d.setMalformedRun(false)
 		return d.deliverServerRequest(ctx, req), false
 
 	case frame.Method != nil:
@@ -409,24 +533,15 @@ func (d *Demux) classifyAndRoute(
 		return d.deliverNotification(ctx, note), false
 
 	case frame.ID != nil:
-		// Response to a client-initiated request.
 		resp := Response{ID: frame.responseID, Result: frame.Result, Error: frame.Error}
-		d.mu.Lock()
-		ch, ok := d.pending[resp.ID]
-		d.mu.Unlock()
-		if !ok {
-			d.logger.Warn("jsonrpc.Demux: unsolicited response",
-				zap.Uint64("id", resp.ID))
-			return true, false
-		}
-		// ch is buffered size 1; this never blocks.
-		ch <- resp
-		return true, false
+		d.setMalformedRun(false)
+		return d.deliverResponse(ctx, resp), false
 
 	default:
 		// Unclassifiable frame — no id, no method, no result. Either codex
 		// wire-format drift or corruption. Surface telemetry and an ordered gap;
 		// the JSON decoded, but it may have been a damaged notification.
+		d.setMalformedRun(true)
 		d.observer.OnUnknownMessage("unclassifiable-frame")
 		d.logger.Warn("jsonrpc.Demux: unclassifiable frame")
 		if gapQueued {
@@ -438,6 +553,27 @@ func (d *Demux) classifyAndRoute(
 	}
 }
 
+func (d *Demux) deliverResponse(ctx context.Context, resp Response) bool {
+	d.mu.Lock()
+	pending := d.pending[resp.ID]
+	// Claim the original reply. A duplicate must not fill its buffered
+	// channel while the caller or ordered dispatcher is still waiting.
+	delete(d.pending, resp.ID)
+	d.mu.Unlock()
+	if pending == nil {
+		d.logger.Warn("jsonrpc.Demux: unsolicited response", zap.Uint64("id", resp.ID))
+		return true
+	}
+	if pending.ordered {
+		return d.deliverServerMessage(ctx, ServerMessage{reply: &orderedReply{
+			destination: pending.reply,
+			response:    resp,
+		}})
+	}
+	pending.reply <- resp
+	return true
+}
+
 // deliverNotification pushes a notification onto the outbound channel. It tries
 // a non-blocking send first; if the channel is saturated (the dispatcher is
 // behind), it emits OnBackpressure exactly once and then blocks until the send
@@ -445,7 +581,7 @@ func (d *Demux) classifyAndRoute(
 // loop must exit.
 func (d *Demux) deliverNotification(ctx context.Context, note Notification) bool {
 	if d.serverMessages != nil {
-		return d.deliverServerMessage(ctx, ServerMessage{Notification: &note})
+		return d.deliverOrderedNotification(ctx, &note)
 	}
 	select {
 	case d.notifications <- note:

@@ -52,8 +52,7 @@ func (*ThreadNameUpdated) isThreadEvent()      {}
 func (*ThreadNameUpdated) EventMethod() string { return "thread/name/updated" }
 
 // ThreadStatusChanged is emitted when the server's status for a thread
-// transitions (e.g., idle -> running -> blocked). Status is the server-side
-// status string.
+// transitions. Status preserves the provider's raw status and any flags.
 // Wire method: "thread/status/changed".
 type ThreadStatusChanged struct {
 	ThreadID string          `json:"thread_id"`

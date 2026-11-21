@@ -24,8 +24,8 @@ and guides in the map show the corresponding public use cases.
 | Task | Owner, state and boundary | Focused checks and consumers |
 | --- | --- | --- |
 | Connect, close, route or subscribe | [Client](../client.go) owns the registry, connection attempt, and post-connect dispatcher. [Dispatch](../client_dispatch.go) reads ordered server messages, delivers to registered threads, and publishes [subscriptions](../client_thread_events.go) for provider-created child activity. Teardown belongs to Client. | [Checks](#client-lifecycle-and-subscriptions). See the [streaming example](../examples/streaming/main.go). |
-| Start, resume, fork, run, or control a thread | [Thread](../threads.go) owns active turn identity, per-handle turn serialization, and bounded event delivery. Client registers handles by provider thread ID. [Thread commands](../threads_commands.go) use the same handle, and [background terminal controls](../background_terminals.go) send exact provider IDs through the Client's RPC session. | [Checks](#threads-and-turn-controls). See [commands](commands.md), the [fork example](../examples/fork/main.go) and [MCP example](../examples/with_mcp/main.go). |
-| Frame, correlate, parse or reply | [LineWriter](../internal/jsonrpc/framing.go) owns frame serialization. [Demux](../internal/jsonrpc/demux.go) owns pending requests by ID. [Approval parsing and encoding](../internal/events/approvals.go) are protocol translations. The root dispatcher owns callback invocation, ordered file-approval context, and sending the reply on the request ID. | [Checks](#framing-and-approvals). See [wire protocol](wire-protocol.md), [approvals](approvals.md) and the [approval example](../examples/with_approvals/main.go). |
+| Start, resume, fork, run, or control a thread | [Client](../client.go) owns one [execution record](../thread_execution.go) per provider thread ID. Handles share admission and lifecycle evidence. Stream readers own bounded consumption. [Thread commands](../threads_commands.go) use the same handle, and [background terminal controls](../background_terminals.go) send exact provider IDs through the Client's RPC session. | [Checks](#threads-and-turn-controls). See [commands](commands.md), the [fork example](../examples/fork/main.go) and [MCP example](../examples/with_mcp/main.go). |
+| Frame, correlate, parse or reply | [LineWriter](../internal/jsonrpc/framing.go) owns frame serialization. [Demux](../internal/jsonrpc/demux.go) owns pending requests by ID. [Approval parsing and encoding](../internal/events/approvals.go) are protocol translations. The ordered dispatcher captures file-approval context. One [approval worker](../client_approval_worker.go) runs callbacks and replies on the matching request ID. | [Checks](#framing-and-approvals). See [wire protocol](wire-protocol.md), [approvals](approvals.md) and the [approval example](../examples/with_approvals/main.go). |
 | Change a public event, option, usage counter, error, or history record | [types](../types) defines the public values. [The parser](../internal/events/parser.go) maps notifications and preserves unknown shapes. [Usage parsing](../internal/events/parser_lifecycle.go) reads provider snapshots. Thread.Run assembles the buffered result ([threads.go](../threads.go)), and [history](../thread_history.go) reads persisted records by RPC. | [Checks](#public-types-and-history). See the [wire protocol guide](wire-protocol.md) and [streaming example](../examples/streaming/main.go). |
 | Change executable discovery, spawn, environment, or optional capability detection | [transport](../internal/transport) owns executable resolution, child environment, pipes and reaping. The root's [runtime feature probe](../runtime_features.go) validates provider schemas. The [runtime control probe](../runtime_controls.go) checks CLI help, optionally checks the experimental schema, and applies supplied provider requirements. A CLI version alone cannot prove support. | [Checks](#transport-and-capability-probes). See [runtime prerequisites](../README.md#prerequisites) and [commands](commands.md). |
 | Change runtime hook configuration or execution | [Client hook setup](../client_hookbridge.go) owns generated config, backups, and cleanup. The [listener](../internal/hookbridge/listener.go) owns its socket and serves the shim. Close stops the app-server before tearing down the listener and removing or restoring the config. | [Checks](#runtime-hooks). See [hooks](hooks.md) and the [hooks example](../examples/with_hooks/main.go). |
@@ -79,12 +79,10 @@ The [parity tracker](https://github.com/hishamkaram/codex-agent-sdk-go/issues/57
 owns the behavior backlog. Preserve these distinctions when changing its
 affected paths.
 
-- **Cancellation.** Connect's context bounds connection setup. The persistent
-  Client owns the dispatcher and subprocess after a successful handshake.
-  Canceling an active `Run` or `RunStreamed` currently stops local consumption
-  and releases `turnMu` without requesting a provider interrupt. Explicit
-  interruption sends `turn/interrupt` with the thread ID and turn ID. [#45](https://github.com/hishamkaram/codex-agent-sdk-go/issues/45)
-  tracks targeted cancellation and same-thread reuse after cancellation.
+- **Cancellation.** The Connect context bounds initialization. The Client
+  owns subprocess lifetime after the handshake. Each turn context bounds
+  local consumption and can trigger targeted interruption of an owned turn.
+  See [turn execution](#turn-execution) for ownership and reuse.
 - **Approvals.** Keep the ordered path from file notifications to callback and
   preserve correlation to the original request ID. The shared encoder selects
   the wire response from the request method and validates the callback decision.
@@ -97,11 +95,9 @@ affected paths.
   build on it. Keep overrides in thread RPC parameters so other threads and
   the persisted session config retain their settings. Fork sends the parent ID
   as `threadId` and registers the returned child under its own ID.
-- **Usage.** The parser preserves `LastUsage` and `TotalUsage`. The streaming
-  `Usage` field keeps the cumulative snapshot when present. Buffered `Run`
-  prefers explicit completion usage and currently falls back to the streaming
-  `Usage` field. [#47](https://github.com/hishamkaram/codex-agent-sdk-go/issues/47)
-  tracks adding cache-write tokens and correcting buffered per-turn accounting.
+- **Usage.** Streaming usage preserves provider snapshots. The ordered
+  [usage ledger](../thread_usage.go) measures buffered usage from matching
+  terminal evidence and tracks provider cache reads and writes independently.
 - **Environment.** Transport overlays the supplied environment on inherited
   variables. [#46](https://github.com/hishamkaram/codex-agent-sdk-go/issues/46)
   tracks exact replacement as a separate capability while preserving overlay
@@ -113,8 +109,8 @@ Use the smallest existing owner with the state and callers needed for the
 change. The [public client and dispatch split](https://github.com/hishamkaram/codex-agent-sdk-go/pull/32)
 already leaves framing, parsing, and subprocess lifecycle in focused internals.
 Moving Client dispatch alone would expose the private thread registry and
-approval state. Moving Thread execution alone would expose turnMu, inbox
-ownership, and the Client's private RPC session. Keep both paths in the root
+approval state. Moving thread execution alone would expose the execution registry and
+the Client's private RPC session. Keep both paths in the root
 package and make the next shared approval encoder in events and the next
 thread config builder beside the thread RPC calls. Consider package extraction
 in a focused change only when it can remove a demonstrated dependency or
@@ -165,41 +161,61 @@ Drift guard:
 
 ## The dispatcher
 
-AppServer constructs an ordered server-message channel so file lifecycle
-notifications can update approval context before the related request runs.
-Client dispatch parses notifications, updates the registered thread's state,
-then delivers to client-wide subscribers. Server requests run serially on
-the dispatcher. Approval callbacks must honor the dispatcher context and
-avoid waiting on the same dispatcher.
+The app-server preserves input order from file lifecycle notifications
+through approval-context capture. Client dispatch records turn lifecycle and
+usage before publishing to subscribers. One bounded FIFO approval worker
+invokes callbacks independently of that dispatcher. A second bounded lane
+handles non-accepting overflow replies. Shutdown cancels and joins both workers
+within the caller's `Close` context.
 
-Each registered thread has a 256-event inbox. A full inbox logs a warning and
-drops the incoming event. Client-wide subscriptions have independent buffers.
-An overflow, undecodable frame, failed thread notification parse, or unexpected
-event-source close yields a terminal gap for affected subscribers. Intentional
-client shutdown closes subscriptions without a gap.
+Active operation streams have a 256-event queue with matching terminal
+evidence retained separately. Client-wide subscriptions have independent
+buffers. An overflow, undecodable frame, failed thread notification parse, or
+unexpected source close yields a terminal gap for affected subscribers.
+Intentional client shutdown closes subscriptions normally.
 
-## The turn lock
+## Turn execution
 
-Each `Thread` handle carries a `turnMu`. `Run` calls `RunStreamed`, which holds
-the lock from `turn/start` through the stream worker's exit. The worker normally exits
-after a matching terminal event. It also exits on context cancellation or
-thread shutdown, closing the result channel. The provider can still be running
-after local cancellation as described in the known gaps above.
+A `Client` serializes runs, inline reviews, and compaction by provider thread
+ID across handles. Calls wait cancellably behind SDK-owned work. Before the
+serialized writer sends a reserved request, it rechecks observed provider
+activity and lifecycle messages received for that thread. Queued activity
+rejects the write until the dispatcher applies it. Valid UUID spellings
+share one execution record without changing the caller's wire ID. Canceling a
+run closes its local stream. The SDK asks the provider to interrupt the exact
+turn after correlating the reply with a fresh root start on a thread created
+by this Client. The same server reply can describe work steered onto an
+existing turn, so a reply alone supplies no ownership proof. A transport or
+decoding gap can invalidate ownership. The SDK logs unconfirmed cleanup and
+keeps admission blocked until it can correlate completion. Ordered idle status
+can resolve an external-only fence. A fresh idle resume reply that names the
+same thread can also resolve that fence after the dispatcher applies earlier
+wire messages. Newer activity preserves the fence. A canceled SDK operation
+still requires matching terminal evidence.
+
+The five-second reconciliation window bounds the cleanup RPC and the next
+call's admission wait. A matching terminal event releases the reservation.
+Until then, ambiguous or unconfirmed work can cause
+`ErrThreadExecutionUnconfirmed`. An interrupt acknowledgement is receipt
+evidence. The matching terminal event is termination evidence. Use a
+client-wide subscription to observe provider completion after local
+cancellation. Explicit `Thread.Interrupt` is available when the caller knows
+the active turn. A failed partial stdin frame closes the connection.
 
 ## Concurrency contract
 
 | Call | Safe from multiple goroutines? |
 |---|---|
 | `Client.{StartThread, ResumeThread, ListThreads, ListThreadsPage, ReadThread, GetThreadMessages, ForkThread, ArchiveThread}` | Yes |
-| `Thread.Run` / `Thread.RunStreamed` on the SAME thread | Serialized via turnMu — later calls block |
-| `Thread.Run` / `Thread.RunStreamed` on DIFFERENT threads of one Client | Yes — they share the dispatcher but have independent inboxes |
+| `Thread.Run` / `Thread.RunStreamed` on the SAME thread | Serialized by provider thread ID across handles |
+| `Thread.Run` / `Thread.RunStreamed` on DIFFERENT threads of one Client | Yes — they share the dispatcher but have independent operation streams |
 | `Thread.Interrupt` | Yes |
 | `Client.SubscribeThreadEvents` | Yes; each subscription is FIFO and independently bounded |
 | `Client.{ListBackgroundTerminals, TerminateBackgroundTerminal, CleanBackgroundTerminals, InterruptThreadTurn}` | Yes |
 | `Client.Close` | Yes (idempotent) |
 | `ApprovalCallback` invocation | Serialized per Client — one request at a time |
 
-One mutex inside LineWriter serializes all stdin frames, including replies
+LineWriter owns one cancellable slot for each complete stdin frame, including replies
 to server requests.
 
 

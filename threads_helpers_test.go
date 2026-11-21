@@ -57,7 +57,8 @@ func initTestRepo(t *testing.T) string {
 // threadWithCwd builds a Thread stub with just enough state for
 // GitDiff's local-only path (no client, no dispatcher).
 func threadWithCwd(cwd string) *Thread {
-	th := &Thread{id: "test", cwd: cwd}
+	th := newThread(nil, "test")
+	th.cwd = cwd
 	th.activeTurnID.Store("")
 	return th
 }

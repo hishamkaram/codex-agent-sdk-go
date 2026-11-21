@@ -17,12 +17,19 @@ registered, the SDK uses `DefaultDenyApprovalCallback` — every request
 is denied. This is a safer default than silent auto-approve; if your
 use-case is "auto-approve everything", you must say so explicitly.
 
-The callback runs on the client's single dispatcher goroutine. Keep it short
-when possible. For human approval, send the request to an independent UI and
-wait on a decision channel with a `select` that also handles `ctx.Done()`;
-return a denial on cancellation. Other notifications are paused while the
-callback waits. Do not call `Run`, `RunStreamed`, or `Close`, or wait for SDK events from
-inside the callback: those need the same dispatcher to make progress.
+Callbacks run in a single FIFO worker per Client. The dispatcher keeps
+processing notifications while a decision is pending. When the bounded queue
+fills, a separate lane sends the method's non-accepting reply. If both
+bounded queues saturate, the SDK closes the connection so the provider cannot
+wait indefinitely for a dropped approval. An undeliverable required reply also
+closes the session when it exceeds the write deadline.
+
+For human approval, submit the request to an independent UI and wait on a
+decision channel with a `select` that handles `ctx.Done()`. Return promptly
+when canceled. Starting a run, inline review, or compaction on the same Client,
+or closing it from the supplied callback context, returns
+`ErrApprovalCallbackReentry`. Pass the supplied context to SDK calls so this
+guard applies.
 
 ## Request taxonomy
 
