@@ -66,8 +66,8 @@ On `Connect` (when `WithHookCallback` is set), the SDK:
 
 1. Resolves the `codex-sdk-hook-shim` binary (PATH, `$GOPATH/bin`,
    `$HOME/go/bin`, `./.bin`, or `WithShimPath`).
-2. Starts a Unix socket listener at
-   `~/.cache/codex-sdk/hook-<pid>.sock`.
+2. Starts a Unix socket listener in a private directory under
+   `~/.cache/codex-sdk` or a shorter runtime or temporary directory.
 3. Creates a temporary isolated `CODEX_HOME`.
 4. Writes generated `hooks.json` in that isolated `CODEX_HOME`.
 5. Exports `CODEX_HOME=<tempdir>` and
@@ -77,7 +77,7 @@ On `Connect` (when `WithHookCallback` is set), the SDK:
    because the SDK generated and vetted the exact ephemeral command hook
    definition. Older or unprobed peers omit the unsupported flag.
 
-On `Close`, the SDK removes the isolated `CODEX_HOME`.
+On `Close`, the SDK removes the private socket directory and isolated `CODEX_HOME`.
 
 > **Codex 0.129-0.144 app-server limitation:** these versions discover the
 > generated command hooks but continue to classify them as untrusted even when
@@ -167,16 +167,16 @@ Notes on what each decision actually does under codex 0.121.0:
 
 ### Concurrent SDK clients
 
-Isolated hook mode supports multiple `WithHookCallback` Clients because
-each Client gets its own `CODEX_HOME`.
+Isolated hook mode supports concurrent `WithHookCallback` Clients. Each
+Client has its own socket and `CODEX_HOME`.
 
-User-home hook mode supports **one** `WithHookCallback`-enabled `Client`
-per machine. A second overlapping user-home Client fails with
-`concurrent codex SDK Client detected`. This prevents the silent
-corruption that would happen if two backups chained.
-
-If you need multiple Clients in one process, share a single
-HookCallback-enabled Client and route from it.
+In user-home mode, one SDK Client at a time can manage a given Codex home
+across processes. The SDK locks `hooks.json.sdk-lock` before reading or
+writing the user's hook config and releases the lock after restoring it.
+A conflicting `Connect` fails with `concurrent codex SDK Client detected`.
+The lock file stays in the directory, and the OS releases the lock if the
+process exits. Each process needs an SDK version that uses the lock for
+this guarantee.
 
 ### Caveats (upstream codex 0.121.0 limitations)
 

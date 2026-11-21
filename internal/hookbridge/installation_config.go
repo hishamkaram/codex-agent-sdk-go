@@ -1,6 +1,7 @@
 package hookbridge
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,8 +12,7 @@ import (
 )
 
 // hookBackupSuffix identifies SDK-written backup files of the user's
-// hooks.json. The PID suffix lets stale-recovery detect crashed prior
-// runs without colliding with a live concurrent SDK instance.
+// hooks.json. Keep the PID suffix for recovery and older SDK versions.
 const hookBackupSuffix = ".sdk-backup"
 
 // staleBackupAge is the age threshold past which a leftover backup file
@@ -42,30 +42,34 @@ func (r *installationResources) installIsolatedHooksJSON(codexHome, shimPath str
 	return nil
 }
 
-// installHooksJSON ensures ~/.codex/hooks.json points at the shim. If
-// the user already has a hooks.json, it's copied byte-for-byte to a
-// PID-suffixed backup that restoreUserHooksJSON uses during cleanup.
-//
-// Stale-recovery: if a backup exists from a crashed prior run
-// (>staleBackupAge old), this method restores it before installing the
-// generated config so the user's data is never lost across crashes.
-//
-// Concurrent-SDK detection: if a fresh (<staleBackupAge) backup exists
-// from a different PID, returns an error rather than silently chaining
-// backups (which would corrupt the user's original on Close). v0.3.0
-// chose refuse-with-error over last-writer-wins to avoid silent data
-// loss; merge-mode is on the v0.3.1 roadmap.
+// installHooksJSON acquires the lease before inspecting or editing user config.
+// The installation owns the lease until Close restores hooks.json, including
+// when Setup rolls back a failed write.
 func (r *installationResources) installHooksJSON(home, shimPath string) error {
 	codexDir := filepath.Join(home, ".codex")
 	if err := os.MkdirAll(codexDir, 0o700); err != nil {
 		return fmt.Errorf("ensure codex dir: %w", err)
 	}
+	codexDir, err := filepath.EvalSymlinks(codexDir)
+	if err != nil {
+		return fmt.Errorf("resolve user Codex directory: %w", err)
+	}
+	r.configLease, err = acquireHookConfigLease(codexDir)
+	if err != nil {
+		return err
+	}
+	hooksJSON, err := GenerateHooksJSON(shimPath, hooksJSONTimeoutSeconds)
+	if err != nil {
+		return fmt.Errorf("generate hooks.json: %w", err)
+	}
+
 	hooksPath := filepath.Join(codexDir, "hooks.json")
 	backupPath := filepath.Join(codexDir, fmt.Sprintf("hooks.json%s-%d", hookBackupSuffix, os.Getpid()))
-
-	r.recoverStaleBackups(codexDir, hooksPath)
-	if err := detectConcurrentSDK(codexDir); err != nil {
-		return err
+	if detectErr := detectConcurrentSDK(codexDir); detectErr != nil {
+		return detectErr
+	}
+	if recoverErr := r.recoverStaleBackups(codexDir, hooksPath); recoverErr != nil {
+		return recoverErr
 	}
 
 	original, hadOriginal, err := readIfExists(hooksPath)
@@ -73,30 +77,16 @@ func (r *installationResources) installHooksJSON(home, shimPath string) error {
 		return fmt.Errorf("read existing hooks.json: %w", err)
 	}
 	if hadOriginal {
-		if writeErr := os.WriteFile(backupPath, original, 0o600); writeErr != nil {
+		if writeErr := writeHookBackup(backupPath, original); writeErr != nil {
 			return fmt.Errorf("write hooks.json backup: %w", writeErr)
 		}
 		r.backupPath = backupPath
 	}
 
-	hooksJSON, err := GenerateHooksJSON(shimPath, hooksJSONTimeoutSeconds)
-	if err != nil {
-		// Roll back the backup we just wrote so we don't leave debris.
-		if hadOriginal {
-			_ = os.Remove(backupPath)
-			r.backupPath = ""
-		}
-		return fmt.Errorf("generate hooks.json: %w", err)
-	}
+	r.hooksPath = hooksPath
 	if err := os.WriteFile(hooksPath, hooksJSON, 0o600); err != nil {
-		if hadOriginal {
-			_ = os.Remove(backupPath)
-			r.backupPath = ""
-		}
 		return fmt.Errorf("write hooks.json: %w", err)
 	}
-
-	r.hooksPath = hooksPath
 	if hadOriginal {
 		r.logger.Warn("overwrote ~/.codex/hooks.json for SDK lifetime; original backed up and will be restored on Close",
 			zap.String("backup", backupPath))
@@ -104,13 +94,45 @@ func (r *installationResources) installHooksJSON(home, shimPath string) error {
 	return nil
 }
 
-// detectConcurrentSDK refuses to install hooks.json when a fresh
-// (<staleBackupAge) backup file from a different PID exists in
-// codexDir. Such a file means another live SDK Client is currently
-// managing this hooks.json — chaining a second install would corrupt
-// the user's original on Close because each Close restores from its own
-// backup, and the LAST Close would write back the previous SDK's
-// generated config instead of the user's true original.
+// writeHookBackup publishes the recovery file only after writing and closing
+// the complete copy. Recovery ignores the temporary filename.
+func writeHookBackup(path string, data []byte) (err error) {
+	file, err := os.CreateTemp(filepath.Dir(path), ".sdk-hook-backup-*")
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			err = errors.Join(err, removeHookBackup(file.Name()))
+		}
+	}()
+	_, writeErr := file.Write(data)
+	if writeCloseErr := errors.Join(writeErr, file.Close()); writeCloseErr != nil {
+		return writeCloseErr
+	}
+	return os.Rename(file.Name(), path)
+}
+
+func acquireHookConfigLease(codexDir string) (*os.File, error) {
+	path := filepath.Join(codexDir, "hooks.json.sdk-lock")
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("open user hook config lock: %w", err)
+	}
+	locked, err := tryLockHookConfig(file)
+	if locked {
+		return file, nil
+	}
+	if err != nil {
+		err = fmt.Errorf("lock user hook config at %s: %w", path, err)
+	} else {
+		err = fmt.Errorf("concurrent codex SDK Client detected at %s; close it first or use isolated hook mode", codexDir)
+	}
+	return nil, errors.Join(err, file.Close())
+}
+
+// detectConcurrentSDK also checks for fresh backups left by SDK versions that
+// predate the per-home lease.
 func detectConcurrentSDK(codexDir string) error {
 	entries, err := os.ReadDir(codexDir)
 	if err != nil {
@@ -120,26 +142,21 @@ func detectConcurrentSDK(codexDir string) error {
 		return fmt.Errorf("detectConcurrentSDK: read %s: %w", codexDir, err)
 	}
 	prefix := "hooks.json" + hookBackupSuffix
-	myPIDSuffix := fmt.Sprintf("-%d", os.Getpid())
 	now := time.Now()
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasPrefix(e.Name(), prefix) {
 			continue
-		}
-		if strings.HasSuffix(e.Name(), myPIDSuffix) {
-			continue // same PID — re-Connect within one process is its own bug; let it fail downstream
 		}
 		info, err := e.Info()
 		if err != nil {
 			continue
 		}
 		if now.Sub(info.ModTime()) >= staleBackupAge {
-			continue // stale — recoverStaleBackups already handled
+			continue // stale — recovery handles it after this check
 		}
 		return fmt.Errorf(
 			"concurrent codex SDK Client detected (fresh backup at %s); "+
-				"v0.3.0 supports only one HookCallback-enabled Client per machine — "+
-				"close the other Client first or run without WithHookCallback",
+				"close the other Client first or use isolated hook mode",
 			filepath.Join(codexDir, e.Name()))
 	}
 	return nil
@@ -151,10 +168,10 @@ func detectConcurrentSDK(codexDir string) error {
 // over hooks.json (so the user's original survives the crash) and then
 // remove all stale backups. Live concurrent SDK runs (whose backups are
 // fresher than staleBackupAge) are left alone.
-func (r *installationResources) recoverStaleBackups(codexDir, hooksPath string) {
+func (r *installationResources) recoverStaleBackups(codexDir, hooksPath string) error {
 	entries, err := os.ReadDir(codexDir)
 	if err != nil {
-		return
+		return fmt.Errorf("scan for stale hook backups: %w", err)
 	}
 	prefix := "hooks.json" + hookBackupSuffix
 	now := time.Now()
@@ -180,7 +197,7 @@ func (r *installationResources) recoverStaleBackups(codexDir, hooksPath string) 
 		})
 	}
 	if len(stale) == 0 {
-		return
+		return nil
 	}
 	// Restore the OLDEST stale backup — that's the one most likely to be
 	// the user's true original (newer ones may themselves be SDK-written
@@ -193,21 +210,31 @@ func (r *installationResources) recoverStaleBackups(codexDir, hooksPath string) 
 	}
 	data, err := os.ReadFile(oldest.path)
 	if err != nil {
-		r.logger.Warn("stale hooks.json backup found but unreadable; leaving in place",
-			zap.String("path", oldest.path), zap.Error(err))
-		return
+		return fmt.Errorf("read stale hook backup %s: %w", oldest.path, err)
 	}
 	if err := os.WriteFile(hooksPath, data, 0o600); err != nil {
-		r.logger.Warn("stale hooks.json backup found but restore failed",
-			zap.String("path", oldest.path), zap.Error(err))
-		return
+		return fmt.Errorf("restore stale hook backup %s: %w", oldest.path, err)
 	}
 	r.logger.Warn("recovered hooks.json from stale SDK backup (prior SDK run crashed before Close)",
 		zap.String("backup", oldest.path),
 		zap.Duration("age", now.Sub(oldest.mtime)))
+	// Keep the oldest backup available for another recovery if cleanup fails.
 	for _, s := range stale {
-		_ = os.Remove(s.path)
+		if s.path == oldest.path {
+			continue
+		}
+		if err := removeHookBackup(s.path); err != nil {
+			return err
+		}
 	}
+	return removeHookBackup(oldest.path)
+}
+
+func removeHookBackup(path string) error {
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove hook backup %s: %w", path, err)
+	}
+	return nil
 }
 
 // restoreHooksJSON reverses installation. A backup is copied over hooks.json
@@ -234,7 +261,9 @@ func (r *installationResources) restoreHooksJSON() {
 				zap.String("backup", backupPath), zap.Error(err))
 			return
 		}
-		_ = os.Remove(backupPath)
+		if err := removeHookBackup(backupPath); err != nil {
+			r.logger.Warn("restored hooks.json but could not remove backup", zap.Error(err))
+		}
 		r.logger.Debug("restored user hooks.json from backup",
 			zap.String("hooks_json", hooksPath))
 		return
