@@ -1,24 +1,37 @@
 # Architecture
 
-The root package, `codex`, exposes `Client`, `Thread`, `Query` and public runtime
-probes. `Client` adapts the public API to the session and its owners. The `types` package
-holds public options, events and errors and imports no SDK internals.
+The root package, `codex`, keeps the public types and methods in files grouped
+by API function. Client setup and public RPC error mapping live in
+[client.go](../client.go). Public thread and turn methods live in
+[thread.go](../thread.go) and [turn.go](../turn.go). The `types` package holds
+public options, events and errors and imports no SDK internals.
 
 - [transport](../internal/transport) owns CLI discovery, process lifecycle and
   stdio. It uses [jsonrpc](../internal/jsonrpc) for framing and request routing.
 - [events](../internal/events) parses JSON-RPC notifications and provider
   requests into [types](../types) and encodes callback decisions.
-- [session](../internal/session) owns connection readiness, the ordered dispatcher, and shutdown. Its [approval owner](../internal/session/approval) captures file evidence and runs the callback and denial lanes.
+- [session](../internal/session) owns connection readiness, the ordered dispatcher,
+  shutdown, and dispatch of prepared thread lifecycle requests through registry
+  updates. Its [approval owner](../internal/session/approval) captures file
+  evidence and runs the callback and denial lanes.
 - [threadexec](../internal/threadexec) owns the canonical thread registry, execution records, and operation lifetimes.
-- [threadconfig](../internal/threadconfig) builds thread requests and validates workspace policy replies.
+- [threadconfig](../internal/threadconfig) builds thread and turn requests and
+  validates workspace policy replies.
+- [commands](../internal/commands) owns provider command payloads, reply decoding,
+  and command-specific pagination.
+- [threadhistory](../internal/threadhistory) owns persisted history request and
+  reply shapes, history errors, and message projection.
+- [workspace](../internal/workspace) owns local Git and `AGENTS.md` I/O.
 - [runtimeprobe](../internal/runtimeprobe) reads CLI help and checks provider schemas.
 - [hookbridge](../internal/hookbridge) owns hook installation and the socket protocol shared
   by the client and the [hook shim](../cmd/codex-sdk-hook-shim).
 - [log](../internal/log) wraps injected zap loggers for SDK packages.
 
-The root client retains the public types and the typed subscription queues. Session publishes to those queues synchronously. Internal packages depend on public
-values in types and on the lower-level packages above as needed. They never
-import the root client.
+The root [subscription registry](../subscriptions.go) owns its typed queues.
+Session publishes to them synchronously, and enrollment shares Session's
+readiness lock. Internal packages depend on values in `types` and on the
+lower-level packages above. The root projects internal results into public
+types.
 
 ## Change map
 
@@ -27,13 +40,14 @@ and guides in the map show the corresponding public use cases.
 
 | Task | Owner, state and boundary | Focused checks and consumers |
 | --- | --- | --- |
-| Connect, close, route or subscribe | [Session](../internal/session/session.go) owns connection attempts and teardown. Its [dispatcher](../internal/session/dispatch.go) applies ordered messages and delivers events to the public [subscription registry](../client_thread_events.go). | [Checks](#client-lifecycle-and-subscriptions). See the [streaming example](../examples/streaming/main.go). |
-| Start, resume, fork, run, or control a thread | [The thread registry](../internal/threadexec/registry.go) owns one [execution record](../internal/threadexec/record.go) per canonical provider thread ID. Handles share admission and lifecycle evidence. Stream readers own bounded consumption. [Thread commands](../threads_commands.go) use the same handle, and [background terminal controls](../background_terminals.go) send exact provider IDs through the Client's RPC session. | [Checks](#threads-and-turn-controls). See [commands](commands.md), the [fork example](../examples/fork/main.go) and [MCP example](../examples/with_mcp/main.go). |
+| Connect, close, route or subscribe | [Session](../internal/session/session.go) owns connection attempts and teardown. Its [dispatcher](../internal/session/dispatch.go) applies ordered messages and delivers events to the public [subscription registry](../subscriptions.go). | [Checks](#client-lifecycle-and-subscriptions). See the [streaming example](../examples/streaming/main.go). |
+| Start, resume, fork, run, or control a thread | [The thread registry](../internal/threadexec/registry.go) owns one [execution record](../internal/threadexec/record.go) per canonical provider thread ID. Handles share admission and lifecycle evidence. Stream readers own bounded consumption. [Thread commands](../thread.go) use the same handle, and [background terminal controls](../internal/commands/terminals.go) send exact provider IDs through the Client's RPC session. | [Checks](#threads-and-turn-controls). See [commands](commands.md), the [fork example](../examples/fork/main.go) and [MCP example](../examples/with_mcp/main.go). |
 | Frame, correlate, parse or reply | [LineWriter](../internal/jsonrpc/framing.go) owns frame serialization. [Demux](../internal/jsonrpc/demux.go) owns pending requests by ID. [Approval parsing and encoding](../internal/events/approvals.go) are protocol translations. The ordered dispatcher captures file-approval context. The [approval owner](../internal/session/approval/worker.go) runs callbacks and replies on the matching request ID. | [Checks](#framing-and-approvals). See [wire protocol](wire-protocol.md), [approvals](approvals.md) and the [approval example](../examples/with_approvals/main.go). |
-| Change a public event, option, usage counter, error, or history record | [types](../types) defines the public values. [The parser](../internal/events/parser.go) maps notifications and preserves unknown shapes. [Usage parsing](../internal/events/parser_lifecycle.go) reads provider snapshots. Thread.Run assembles the buffered result ([threads.go](../threads.go)), and [history](../thread_history.go) reads persisted records by RPC. | [Checks](#public-types-and-history). See the [wire protocol guide](wire-protocol.md) and [streaming example](../examples/streaming/main.go). |
+| Change a public event, option, usage counter, error, or history record | [types](../types) defines the public values. [The parser](../internal/events/parser.go) maps notifications and preserves unknown shapes. [Usage parsing](../internal/events/parser_lifecycle.go) reads provider snapshots. Thread.Run assembles the buffered result ([turn.go](../turn.go)), and [history](../internal/threadhistory) reads persisted records by RPC. | [Checks](#public-types-and-history). See the [wire protocol guide](wire-protocol.md) and [streaming example](../examples/streaming/main.go). |
 | Change executable discovery, spawn, environment, or optional capability detection | [transport](../internal/transport) owns executable resolution, child environment, pipes and reaping. [Runtime probes](../internal/runtimeprobe) validate schemas, parse CLI help, and apply supplied provider requirements. A CLI version alone cannot prove support. | [Checks](#transport-and-capability-probes). See [runtime prerequisites](../README.md#prerequisites) and [commands](commands.md). |
 | Change runtime hook configuration or execution | [Hook installation](../internal/hookbridge/installation.go) owns generated config, backups, and cleanup. The [listener](../internal/hookbridge/listener.go) owns its socket and serves the shim. Close stops the app-server before tearing down the listener and removing or restoring the config. | [Checks](#runtime-hooks). See [hooks](hooks.md) and the [hooks example](../examples/with_hooks/main.go). |
-| Validate a behavior or update its guidance | The owning package keeps deterministic regression tests. Root-level [fake peer tests](../client_flow_test.go) exercise public flows and wire requests together. [Integration tests](../tests) cover real CLI boundaries. The consumer-facing example and guide follow the API or wire behavior. | Start with the owning row's focused tests, use `make examples` for changed examples, and finish with `make verify`. See [contributing](../CONTRIBUTING.md) for optional schema and live checks. |
+| Change provider commands or local workspace helpers | [Commands](../internal/commands) builds method-specific requests and decodes replies. [Workspace](../internal/workspace) runs local Git and writes `AGENTS.md`. The public methods compose these owners. | `go test -race -short ./internal/commands ./internal/workspace`. |
+| Validate a behavior or update its guidance | The owning package keeps deterministic regression tests. Root-level [fake peer tests](../flow_test.go) exercise public flows and wire requests together. [Integration tests](../tests) cover real CLI boundaries. The consumer-facing example and guide follow the API or wire behavior. | Start with the owning row's focused tests, use `make examples` for changed examples, and finish with `make verify`. See [contributing](../CONTRIBUTING.md) for optional schema and live checks. |
 
 ### Focused checks
 
@@ -61,7 +75,7 @@ go test -race -short . -run 'TestClient_ApprovalCallback|TestFileApprovalOrdered
 #### Public types and history
 
 ```bash
-go test -race -short ./types ./internal/events
+go test -race -short ./types ./internal/events ./internal/threadhistory
 go test -race -short . -run 'TestClient_ThreadRun|TestReadThreadAndMessages|TestListThreadsPage'
 ```
 

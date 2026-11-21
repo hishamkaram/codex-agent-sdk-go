@@ -2,9 +2,12 @@ package codex
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
+	"github.com/hishamkaram/codex-agent-sdk-go/internal/jsonrpc"
 	sdklog "github.com/hishamkaram/codex-agent-sdk-go/internal/log"
 	"github.com/hishamkaram/codex-agent-sdk-go/internal/session"
 	"github.com/hishamkaram/codex-agent-sdk-go/types"
@@ -108,4 +111,128 @@ func (c *Client) checkApprovalReentry(ctx context.Context) error {
 		return ErrApprovalCallbackReentry
 	}
 	return nil
+}
+
+// Query is a fire-and-forget convenience wrapper that creates a Client,
+// connects, starts a throwaway thread, runs one turn, and returns the
+// streamed events channel. The Client and Thread are closed automatically
+// after the channel is drained.
+//
+// Use this for simple one-off scripts. For multi-turn work, use NewClient
+// + StartThread directly so you can reuse the subprocess.
+func Query(ctx context.Context, prompt string, opts *types.CodexOptions) (<-chan types.ThreadEvent, error) {
+	if opts == nil {
+		opts = types.NewCodexOptions()
+	}
+	client, err := NewClient(ctx, opts)
+	if err != nil {
+		return nil, err
+	}
+	if err := client.Connect(ctx); err != nil {
+		return nil, err
+	}
+	thread, startErr := client.StartThread(ctx, nil)
+	if startErr != nil {
+		// Detach cancellation for best-effort cleanup: the parent ctx may
+		// already be canceled (that can be why StartThread failed), but
+		// Close must still tear down the subprocess. Inherit values only.
+		_ = client.Close(context.WithoutCancel(ctx))
+		return nil, fmt.Errorf("codex.Query: StartThread: %w", startErr)
+	}
+	events, runErr := thread.RunStreamed(ctx, prompt, nil)
+	if runErr != nil {
+		_ = client.Close(context.WithoutCancel(ctx))
+		return nil, fmt.Errorf("codex.Query: RunStreamed: %w", runErr)
+	}
+
+	// Wrap the inner channel in a goroutine that forwards events and cleans
+	// up the Client when the inner channel closes.
+	out := make(chan types.ThreadEvent, ThreadInboxBuffer)
+	go func() {
+		defer close(out)
+		defer func() { _ = client.Close(context.WithoutCancel(ctx)) }()
+		for ev := range events {
+			select {
+			case out <- ev:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return out, nil
+}
+
+// StartupOption configures the warm-pool pre-spawn step.
+type StartupOption func(*startupConfig)
+
+type startupConfig struct {
+	cliPath string
+}
+
+// WithStartupCLIPath overrides the codex binary location for the warm
+// pool.
+func WithStartupCLIPath(path string) StartupOption {
+	return func(c *startupConfig) { c.cliPath = path }
+}
+
+// Startup pre-warms the SDK's internal subprocess pool so the first Query
+// or NewClient+Connect avoids a ~200-400 ms cold-start cost.
+//
+// In v0.1.0 this is a NO-OP stub — the SDK always spawns on demand.
+// The API is stable so users who adopt Startup today won't need to change
+// call sites when the pool lands in v0.2.
+func Startup(ctx context.Context, opts ...StartupOption) error {
+	_ = ctx
+	cfg := &startupConfig{}
+	for _, opt := range opts {
+		opt(cfg)
+	}
+	return nil
+}
+
+// sendRaw is the common skeleton for a Send + connection-state +
+// RPC-error check. Returns the raw result bytes; caller decodes into
+// the typed struct. Embeds the caller name in every error so log
+// readers can identify the public method instantly.
+//
+// Wire-level RPCErrors are translated to typed SDK errors when the
+// codex error message matches a known pattern (e.g., "requires
+// experimentalApi capability" → *types.FeatureNotEnabledError).
+// Otherwise the generic *types.RPCError is returned.
+func (c *Client) sendRaw(ctx context.Context, callerName, method string, params any) (json.RawMessage, error) {
+	if c.session.Closed() {
+		return nil, fmt.Errorf("codex.Client.%s: %w", callerName, types.ErrClientClosed)
+	}
+	if !c.session.Connected() {
+		return nil, fmt.Errorf("codex.Client.%s: %w", callerName, types.ErrClientNotConnected)
+	}
+	resp, err := c.session.Demux().Send(ctx, method, params)
+	if err != nil {
+		return nil, fmt.Errorf("codex.Client.%s: %w", callerName, err)
+	}
+	if resp.Error != nil {
+		return nil, classifyRPCError(method, resp.Error)
+	}
+	return resp.Result, nil
+}
+
+// classifyRPCError maps a wire-level RPC error to a typed SDK error
+// when the message matches a known pattern. Verified live against
+// codex 0.121.0:
+//
+//	"thread/backgroundTerminals/clean requires experimentalApi capability"
+//
+// Future patterns can be added here without changing call sites.
+func classifyRPCError(method string, e *jsonrpc.RPCError) error {
+	if e == nil {
+		return nil
+	}
+	legacyUnsupported := e.Code == -32600 && e.Message == "Invalid request"
+	if method == "configRequirements/read" && (e.Code == -32601 || legacyUnsupported) {
+		return fmt.Errorf("codex.Client.ReadConfigRequirements: %w", ErrRuntimeControlsUnsupported)
+	}
+	if strings.Contains(e.Message, "requires experimentalApi capability") {
+		return types.NewFeatureNotEnabledError("experimentalApi", method, e.Message)
+	}
+	return types.NewRPCError(e.Code, e.Message, e.Data)
 }
