@@ -616,15 +616,23 @@ func TestClient_FreshIdleResumeOnlyClearsUnchangedExternalFence(t *testing.T) {
 	t.Parallel()
 	t.Run("unchanged external fence", func(t *testing.T) {
 		t.Parallel()
-		testFreshIdleResume(t, false)
+		testFreshIdleResume(t, false, "")
 	})
 	t.Run("new activity during resume", func(t *testing.T) {
 		t.Parallel()
-		testFreshIdleResume(t, true)
+		testFreshIdleResume(t, true, "")
+	})
+	t.Run("idle reply without explicit thread ID", func(t *testing.T) {
+		t.Parallel()
+		testFreshIdleResume(t, false, `{"thread":{"status":{"type":"idle"}}}`)
+	})
+	t.Run("idle reply with conflicting thread IDs", func(t *testing.T) {
+		t.Parallel()
+		testFreshIdleResume(t, false, `{"threadId":"T","thread":{"id":"other","status":{"type":"idle"}}}`)
 	})
 }
 
-func testFreshIdleResume(t *testing.T, newerActive bool) {
+func testFreshIdleResume(t *testing.T, newerActive bool, invalidIdleReply string) {
 	t.Helper()
 	ctx, stop := context.WithTimeout(t.Context(), 5*time.Second)
 	defer stop()
@@ -642,6 +650,9 @@ func testFreshIdleResume(t *testing.T, newerActive bool) {
 			select {
 			case <-allowReply:
 			case <-ctx.Done():
+			}
+			if invalidIdleReply != "" {
+				return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(invalidIdleReply)}
 			}
 			return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{"thread":{"id":"T","status":{"type":"idle"}}}`)}
 		case "turn/start":
@@ -677,9 +688,9 @@ func testFreshIdleResume(t *testing.T, newerActive bool) {
 		t.Fatal(resumeErr)
 	}
 
-	if newerActive {
+	if newerActive || invalidIdleReply != "" {
 		if _, startErr := first.RunStreamed(ctx, "new activity is unresolved", nil); !errors.Is(startErr, ErrThreadExecutionUnconfirmed) {
-			t.Fatalf("idle reply incorrectly cleared newer activity: %v", startErr)
+			t.Fatalf("idle reply incorrectly cleared the external fence: %v", startErr)
 		}
 		return
 	}
@@ -690,5 +701,73 @@ func testFreshIdleResume(t *testing.T, newerActive bool) {
 	peer.push(notify("turn/completed", map[string]string{"threadId": "T", "turnId": "next", "status": "completed"}))
 	if terminal, ok := awaitExecutionTest(t, ctx, out).(*types.TurnCompleted); !ok || terminal.TurnID != "next" {
 		t.Fatalf("new operation terminal = %#v", terminal)
+	}
+}
+
+func TestClient_IdleResumeCannotOvertakeQueuedProviderStart(t *testing.T) {
+	t.Parallel()
+	ctx, stop := context.WithTimeout(t.Context(), 5*time.Second)
+	defer stop()
+	secondResume := make(chan struct{})
+	allowIdle := make(chan struct{})
+	resumeCount := 0
+	c, peer := setupMockClient(t, types.NewCodexOptions(), func(req jsonrpc.Request) jsonrpc.Response {
+		switch req.Method {
+		case "thread/start":
+			return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{"thread":{"id":"blocker"}}`)}
+		case "thread/resume":
+			resumeCount++
+			if resumeCount == 1 {
+				return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{"thread":{"id":"T","status":{"type":"active"}}}`)}
+			}
+			close(secondResume)
+			select {
+			case <-allowIdle:
+			case <-ctx.Done():
+			}
+			return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{"thread":{"id":"T","status":{"type":"idle"}}}`)}
+		case "wire/barrier":
+		default:
+			t.Errorf("unexpected request while provider activity is queued: %s", req.Method)
+		}
+		return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{}`)}
+	})
+	thread, err := c.ResumeThread(ctx, "T", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocker, err := c.StartThread(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resumeCtx, cancelResume := context.WithCancel(ctx)
+	defer cancelResume()
+	result := make(chan error, 1)
+	go func() {
+		_, resumeErr := c.ResumeThread(resumeCtx, thread.ID(), nil)
+		result <- resumeErr
+	}()
+	awaitExecutionTest(t, ctx, secondResume)
+
+	// The first notification holds the dispatcher on another thread.
+	// Queue the foreign root before letting the peer write the idle reply.
+	blocker.mu.Lock()
+	defer blocker.mu.Unlock()
+	peer.push(notify("turn/started", map[string]string{"threadId": "blocker", "turnId": "barrier"}))
+	peer.push(notify("turn/started", map[string]string{"threadId": "T", "turnId": "external"}))
+	close(allowIdle)
+
+	// A distinct, ordinary reply proves the reader is past the idle
+	// response although the dispatcher still cannot apply the foreign root.
+	if _, sendErr := c.demux.Send(ctx, "wire/barrier", nil); sendErr != nil {
+		t.Fatal(sendErr)
+	}
+	cancelResume()
+	if resumeErr := awaitExecutionTest(t, ctx, result); !errors.Is(resumeErr, context.Canceled) {
+		t.Fatalf("idle resume bypassed the blocked dispatcher: %v", resumeErr)
+	}
+	if _, startErr := thread.RunStreamed(ctx, "must not steer external work", nil); !errors.Is(startErr, ErrThreadExecutionUnconfirmed) {
+		t.Fatalf("queued external start did not preserve the fence: %v", startErr)
 	}
 }

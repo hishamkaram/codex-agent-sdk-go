@@ -413,27 +413,40 @@ func TestClient_StartReviewStreamed_HappyPath(t *testing.T) {
 
 func TestClient_ThreadRun_BufferedTurnResult(t *testing.T) {
 	t.Parallel()
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	requestSeen := make(chan struct{})
+	eventsSent := make(chan struct{})
 
 	c, srv := setupMockClient(t, types.NewCodexOptions(), func(req jsonrpc.Request) jsonrpc.Response {
 		switch req.Method {
 		case "thread/start":
 			return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{"thread":{"id":"T1"}}`)}
 		case "turn/start":
+			close(requestSeen)
+			select {
+			case <-eventsSent:
+			case <-ctx.Done():
+			}
 			return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{"turn":{"id":"U1"}}`)}
 		}
 		return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{}`)}
 	})
-
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
 
 	thread, err := c.StartThread(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// Emit turn events asynchronously so Run can start consuming.
+	// Emit the buffered events once the peer has read turn/start and
+	// before it acknowledges. This is valid early-lifecycle ordering.
 	go func() {
+		defer close(eventsSent)
+		select {
+		case <-requestSeen:
+		case <-ctx.Done():
+			return
+		}
 		srv.push(notify("turn/started", map[string]any{"threadId": "T1", "turnId": "U1"}))
 		srv.push(notify("item/completed", map[string]any{
 			"threadId": "T1", "turnId": "U1", "itemId": "I-1",

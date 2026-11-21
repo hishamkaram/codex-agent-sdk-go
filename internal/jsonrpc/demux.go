@@ -55,7 +55,7 @@ type Demux struct {
 	onUnrecoverable func(error)
 
 	mu      sync.Mutex
-	pending map[uint64]chan Response
+	pending map[uint64]*PendingResponse
 	closed  bool
 
 	notifications  chan Notification
@@ -71,15 +71,29 @@ type Demux struct {
 // DemuxOption configures optional Demux behavior (observability, reliability).
 type DemuxOption func(*Demux)
 
-// ServerMessage preserves arrival order between notifications and approvals.
-// Exactly one field is non-nil.
+// ServerMessage preserves arrival order between notifications, approvals and
+// replies whose interpretation depends on earlier ordered messages.
 type ServerMessage struct {
 	Notification *Notification
 	Request      *ServerRequest
+	reply        *orderedReply
 }
 
-// WithOrderedServerMessages routes both kinds to ServerMessages instead of
-// the separate legacy channels. It must be selected before Run.
+type orderedReply struct {
+	destination chan<- Response
+	response    Response
+}
+
+// DeliverOrderedReply completes this message's waiting RPC after the caller
+// has applied all earlier messages. The buffered send does not wait for it.
+func (m ServerMessage) DeliverOrderedReply() {
+	if m.reply != nil {
+		m.reply.destination <- m.reply.response
+	}
+}
+
+// WithOrderedServerMessages routes notifications and requests to the same
+// channel and enables SendOrdered replies. Select it before Run.
 func WithOrderedServerMessages() DemuxOption {
 	return func(d *Demux) { d.serverMessages = make(chan ServerMessage, 64) }
 }
@@ -128,7 +142,7 @@ func NewDemux(r *LineReader, w *LineWriter, logger *sdklog.Logger, opts ...Demux
 		logger:         logger,
 		observer:       types.NopObserver{},
 		maxParseErrors: DefaultMaxConsecutiveParseErrors,
-		pending:        make(map[uint64]chan Response),
+		pending:        make(map[uint64]*PendingResponse),
 		notifications:  make(chan Notification, 64),
 		serverRequests: make(chan ServerRequest, 16),
 		loopErr:        make(chan error, 1),
@@ -165,7 +179,21 @@ func (d *Demux) Run(ctx context.Context) {
 // Response is returned as-is (including any server-side error in
 // Response.Error).
 func (d *Demux) Send(ctx context.Context, method string, params any) (Response, error) {
-	pending, err := d.Post(ctx, method, params)
+	return d.send(ctx, method, params, false)
+}
+
+// SendOrdered routes its response through ServerMessages. Use only after an
+// ordered dispatcher has started, and only when reading the reply requires
+// earlier ordered notifications to have been applied.
+func (d *Demux) SendOrdered(ctx context.Context, method string, params any) (Response, error) {
+	if d.serverMessages == nil {
+		return Response{}, errors.New("jsonrpc: ordered response requires an ordered dispatcher")
+	}
+	return d.send(ctx, method, params, true)
+}
+
+func (d *Demux) send(ctx context.Context, method string, params any, ordered bool) (Response, error) {
+	pending, err := d.post(ctx, method, params, nil, ordered)
 	if err != nil {
 		return Response{}, err
 	}
@@ -176,9 +204,10 @@ func (d *Demux) Send(ctx context.Context, method string, params any) (Response, 
 // PendingResponse owns the matching reply for a fully dispatched request.
 // Waiting may be retried after context cancellation. The owner must Release it.
 type PendingResponse struct {
-	demux *Demux
-	id    uint64
-	reply chan Response
+	demux   *Demux
+	id      uint64
+	reply   chan Response
+	ordered bool
 }
 
 func (p *PendingResponse) Wait(ctx context.Context) (Response, error) {
@@ -216,6 +245,10 @@ func (d *Demux) Post(ctx context.Context, method string, params any) (*PendingRe
 
 // PostGuarded checks guard at the serialized dispatch boundary.
 func (d *Demux) PostGuarded(ctx context.Context, method string, params any, guard func(context.Context) error) (*PendingResponse, error) {
+	return d.post(ctx, method, params, guard, false)
+}
+
+func (d *Demux) post(ctx context.Context, method string, params any, guard func(context.Context) error, ordered bool) (*PendingResponse, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -228,13 +261,13 @@ func (d *Demux) PostGuarded(ctx context.Context, method string, params any, guar
 		}
 		paramsRaw = b
 	}
-	pending := &PendingResponse{demux: d, id: id, reply: make(chan Response, 1)}
+	pending := &PendingResponse{demux: d, id: id, reply: make(chan Response, 1), ordered: ordered}
 	d.mu.Lock()
 	if d.closed {
 		d.mu.Unlock()
 		return nil, ErrClosed
 	}
-	d.pending[id] = pending.reply
+	d.pending[id] = pending
 	d.mu.Unlock()
 
 	if err := d.writeFrame(ctx, Request{ID: id, Method: method, Params: paramsRaw}, guard); err != nil {
@@ -484,19 +517,8 @@ func (d *Demux) classifyAndRoute(
 		return d.deliverNotification(ctx, note), false
 
 	case frame.ID != nil:
-		// Response to a client-initiated request.
 		resp := Response{ID: frame.responseID, Result: frame.Result, Error: frame.Error}
-		d.mu.Lock()
-		ch, ok := d.pending[resp.ID]
-		d.mu.Unlock()
-		if !ok {
-			d.logger.Warn("jsonrpc.Demux: unsolicited response",
-				zap.Uint64("id", resp.ID))
-			return true, false
-		}
-		// ch is buffered size 1; this never blocks.
-		ch <- resp
-		return true, false
+		return d.deliverResponse(ctx, resp), false
 
 	default:
 		// Unclassifiable frame — no id, no method, no result. Either codex
@@ -511,6 +533,27 @@ func (d *Demux) classifyAndRoute(
 			DecodeError: fmt.Errorf("jsonrpc.Demux.classifyAndRoute: %w", ErrUnclassifiableFrame),
 		}), true
 	}
+}
+
+func (d *Demux) deliverResponse(ctx context.Context, resp Response) bool {
+	d.mu.Lock()
+	pending := d.pending[resp.ID]
+	// Claim the original reply. A duplicate must not fill its buffered
+	// channel while the caller or ordered dispatcher is still waiting.
+	delete(d.pending, resp.ID)
+	d.mu.Unlock()
+	if pending == nil {
+		d.logger.Warn("jsonrpc.Demux: unsolicited response", zap.Uint64("id", resp.ID))
+		return true
+	}
+	if pending.ordered {
+		return d.deliverServerMessage(ctx, ServerMessage{reply: &orderedReply{
+			destination: pending.reply,
+			response:    resp,
+		}})
+	}
+	pending.reply <- resp
+	return true
 }
 
 // deliverNotification pushes a notification onto the outbound channel. It tries

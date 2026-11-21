@@ -27,6 +27,7 @@ All notable changes to the Codex Agent SDK for Go are documented in this file.
   Admission stays reserved until matching completion. A follow-up reports
   `ErrThreadExecutionUnconfirmed` when the provider remains silent past the
   five-second reconciliation window. Compaction uses the same admission limit.
+  A fresh, ordered idle resume can resolve an unchanged external-only fence.
 - Approval callbacks run on a bounded worker while lifecycle events keep
   flowing. Overflow requests receive method-specific denials from a separate
   reply lane. Nested blocking operations and `Close` from the callback's

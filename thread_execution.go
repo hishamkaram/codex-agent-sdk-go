@@ -15,7 +15,9 @@ import (
 
 // ErrThreadExecutionUnconfirmed means another provider operation may still
 // own this thread. The SDK sends no new work until it sees matching completion
-// or proves no operation started. Close the client if the provider stays silent.
+// or proves no operation started. A fresh idle resume reply can resolve an
+// unchanged external-only fence. An unresolved SDK operation still requires
+// terminal evidence or client close.
 var ErrThreadExecutionUnconfirmed = errors.New("codex: thread execution is unconfirmed")
 
 // ThreadExecutionUnconfirmedError identifies the affected provider thread.
@@ -260,9 +262,10 @@ type providerThreadStatus struct {
 // seedExternalActivity is used before publishing a resumed or forked
 // handle. An active status without a unique ID never permits terminal
 // notifications for arbitrary turns to release admission.
-func (e *threadExecution) seedExternalActivity(result json.RawMessage) string {
+func (e *threadExecution) seedExternalActivity(result json.RawMessage) (status, statusThreadID string) {
 	var reply struct {
 		Thread struct {
+			ID     string               `json:"id"`
 			Status providerThreadStatus `json:"status"`
 			Turns  []struct {
 				ID         string `json:"id"`
@@ -272,24 +275,24 @@ func (e *threadExecution) seedExternalActivity(result json.RawMessage) string {
 		} `json:"thread"`
 	}
 	if json.Unmarshal(result, &reply) != nil {
-		return ""
+		return "", ""
 	}
-	status := reply.Thread.Status.Type
+	status, statusThreadID = reply.Thread.Status.Type, reply.Thread.ID
 	if status != "active" {
-		return status
+		return status, statusThreadID
 	}
 	e.externalActive = true
 	active := ""
 	for _, turn := range reply.Thread.Turns {
 		if turn.Status == "inProgress" && isRootTurn(turn.ID, turn.RootTurnID) {
 			if active != "" {
-				return status
+				return status, statusThreadID
 			}
 			active = turn.ID
 		}
 	}
 	e.activeTurnID.Store(active)
-	return status
+	return status, statusThreadID
 }
 
 func (e *threadExecution) resumeIdleCandidate() (generation uint64, eligible bool) {

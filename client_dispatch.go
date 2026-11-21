@@ -76,10 +76,13 @@ func (c *Client) dispatch(ctx context.Context, demux *jsonrpc.Demux, done chan s
 }
 
 func (c *Client) routeServerMessage(ctx context.Context, lanes approvalLanes, message jsonrpc.ServerMessage) {
-	if message.Notification != nil {
+	switch {
+	case message.Notification != nil:
 		c.handleNotification(*message.Notification)
-	} else if message.Request != nil {
+	case message.Request != nil:
 		c.enqueueApproval(ctx, lanes, *message.Request)
+	default:
+		message.DeliverOrderedReply()
 	}
 }
 
@@ -239,6 +242,27 @@ func (c *Client) endResumeObservation(threadID string, execution *threadExecutio
 		delete(c.executions, threadID)
 	}
 	execution.signalLocked()
+}
+
+type idleResumeProof struct {
+	execution  *threadExecution
+	generation uint64
+}
+
+func (c *Client) requestThreadResume(ctx context.Context, params map[string]any, execution *threadExecution) (jsonrpc.Response, idleResumeProof, error) {
+	generation, eligible := execution.resumeIdleCandidate()
+	if eligible && c.demux.ServerMessages() != nil {
+		reply, err := c.demux.SendOrdered(ctx, "thread/resume", params)
+		return reply, idleResumeProof{execution: execution, generation: generation}, err
+	}
+	reply, err := c.demux.Send(ctx, "thread/resume", params)
+	return reply, idleResumeProof{}, err
+}
+
+func (p idleResumeProof) reconcile(status, statusThreadID, reportedID, requestedID string) {
+	if p.execution != nil && status == "idle" && statusThreadID == requestedID && reportedID == requestedID {
+		p.execution.reconcileIdleResume(p.generation)
+	}
 }
 
 // unregisterThread removes a Thread from routing. Called when the thread
