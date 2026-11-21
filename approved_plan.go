@@ -27,9 +27,13 @@ const (
 // for exclusive use through the first Run. The source thread is not involved.
 //
 // This experimental method requires WithExperimentalAPI(true) and proof from
-// the connected native Linux executable. A sent preparation may already have
-// changed the destination history, even if the caller receives an error.
-// Preserve the approved Markdown and use a fresh destination after failure.
+// the connected native Linux executable. Conflicting activity, such as a turn
+// in flight, can cause [ErrThreadExecutionUnconfirmed] before the SDK sends
+// the preparation request.
+//
+// A failed preparation can leave destination history changed if the request
+// was sent. Preserve the approved Markdown and use a fresh destination for
+// any retry after a sent preparation or first-turn startup fails.
 func (t *Thread) PrepareApprovedPlan(ctx context.Context, markdown string, opts *types.PrepareApprovedPlanOptions) (*types.PreparedApprovedPlan, error) {
 	const caller = "codex.Thread.PrepareApprovedPlan"
 	if ctx == nil {

@@ -59,6 +59,11 @@ For either option, the SDK checks the returned working directory and effective p
 
 `WithMCPServers` provides defaults for start and fork. A nonempty
 `ThreadOptions.MCPServers` map supplies that request's server configuration.
+Pass the Go values through these options so the SDK encodes the typed fields.
+The structs retain their legacy JSON representation for compatibility. For
+raw configuration JSON, use the Codex schema, including keys such as `env`
+for stdio or `http_headers` for HTTP.
+
 Use `ToolApprovalMode` with one of the MCP-specific values. For a legacy
 `DefaultApprovalMode: types.ApprovalOnRequest` initializer, choose
 `ToolApprovalMode: types.MCPToolApprovalPrompt` explicitly. Existing native MCP
@@ -82,7 +87,12 @@ checks whether its executor can read the exact plan and chooses how to
 prepare the prompt. The SDK requires schema proof from a directly launched
 native Linux Codex executable.
 
-If preparation or startup fails, retain the original thread and plan.
-Create a fresh destination if you decide to retry. A destination with
-unconfirmed preparation stays fenced against SDK turn starts. See the
-[approved-plan example](../examples/approved_plan/main.go).
+Conflicting activity such as an active turn can cause
+`ErrThreadExecutionUnconfirmed` before the SDK sends the preparation request.
+A pre-write rejection sends no request for that attempt. The same error also
+applies when earlier unconfirmed preparation fences the destination against
+new preparation and SDK turn starts.
+
+If a sent preparation or the first turn's startup fails, retain the original
+thread and plan. Create a fresh destination if you decide to retry.
+See the [approved-plan example](../examples/approved_plan/main.go).

@@ -1,10 +1,13 @@
 package types
 
 // McpServerConfig describes a single Model Context Protocol server the
-// codex session may call into. Configured via
-// CodexOptions.WithMCPServers(...) or ThreadOptions.MCPServers. The SDK
-// encodes the selected map as a per-thread `config.mcp_servers` override
-// in `thread/start` and `thread/fork`.
+// codex session may call into. Pass these values through
+// [CodexOptions.WithMCPServers] or ThreadOptions.MCPServers. The SDK handles
+// the typed options when encoding the per-thread config.mcp_servers
+// override for thread/start and thread/fork.
+//
+// The Go structs retain their legacy JSON representation for compatibility.
+// For raw configuration JSON, use the Codex configuration schema.
 type McpServerConfig interface {
 	isMcpServerConfig()
 	// Kind returns a string discriminator for debugging/logging.
@@ -31,7 +34,7 @@ const (
 )
 
 // McpStdioConfig spawns a local subprocess that speaks MCP over stdio.
-// This is the most common config type.
+// See [McpServerConfig] for SDK encoding and legacy JSON compatibility.
 type McpStdioConfig struct {
 	Command              string              `json:"command"`
 	Args                 []string            `json:"args,omitempty"`
@@ -50,6 +53,7 @@ func (McpStdioConfig) isMcpServerConfig() {}
 func (McpStdioConfig) Kind() string { return "stdio" }
 
 // McpStreamableHTTPConfig connects to an MCP server over streamable HTTP.
+// See [McpServerConfig] for SDK encoding and legacy JSON compatibility.
 type McpStreamableHTTPConfig struct {
 	URL  string      `json:"url"`
 	Auth MCPHTTPAuth `json:"-"`
