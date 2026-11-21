@@ -163,6 +163,7 @@ func (c *Client) handleServerRequest(ctx context.Context, demux *jsonrpc.Demux, 
 	if cb == nil {
 		cb = types.DefaultDenyApprovalCallback
 	}
+	replyReq := approvalReplyRequest(req)
 	// Use dispatcherCtx so callbacks get canceled on Close.
 	decision := cb(ctx, req)
 	if ctx.Err() != nil {
@@ -171,7 +172,7 @@ func (c *Client) handleServerRequest(ctx context.Context, demux *jsonrpc.Demux, 
 			decision = types.ApprovalCancel{}
 		}
 	}
-	result, err := events.EncodeApprovalDecision(req, decision)
+	result, err := events.EncodeApprovalDecision(replyReq, decision)
 	if err != nil {
 		c.logger.Warn("invalid approval decision; denying", zap.String("method", sreq.Method), zap.Error(err))
 	}
@@ -180,6 +181,15 @@ func (c *Client) handleServerRequest(ctx context.Context, demux *jsonrpc.Demux, 
 			zap.String("method", sreq.Method),
 			zap.Error(err))
 	}
+}
+
+// approvalReplyRequest captures the provider discriminator the encoder reads.
+// The callback can edit its request without changing the reply contract.
+func approvalReplyRequest(req types.ApprovalRequest) types.ApprovalRequest {
+	if elicitation, ok := req.(*types.ElicitationRequest); ok {
+		return &types.ElicitationRequest{Mode: elicitation.Mode}
+	}
+	return req
 }
 
 // registerThread stores a Thread in the client's routing table. The caller

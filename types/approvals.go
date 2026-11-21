@@ -97,9 +97,10 @@ func (*PermissionsApprovalRequest) ApprovalMethod() string {
 //
 // Wire method: "mcpServer/elicitation/request".
 type ElicitationRequest struct {
-	ThreadID        string          `json:"threadId,omitempty"`
-	TurnID          *string         `json:"turnId,omitempty"`
-	ServerName      string          `json:"serverName,omitempty"`
+	ThreadID string  `json:"threadId,omitempty"`
+	TurnID   *string `json:"turnId,omitempty"`
+	// Keep the legacy marshal key. UnmarshalJSON prefers serverName on input.
+	ServerName      string          `json:"server_name,omitempty"`
 	EnvironmentID   *string         `json:"environmentId,omitempty"`
 	Mode            ElicitationMode `json:"mode,omitempty"`
 	Message         string          `json:"message,omitempty"`
@@ -130,7 +131,8 @@ func (r *ElicitationRequest) UnmarshalJSON(data []byte) error {
 	type fields ElicitationRequest
 	var wire struct {
 		fields
-		LegacyServerName string          `json:"server_name"`
+		LegacyServerName json.RawMessage `json:"server_name"`
+		LegacyPrompt     json.RawMessage `json:"prompt"`
 		ServerName       json.RawMessage `json:"serverName"`
 		Message          json.RawMessage `json:"message"`
 		Mode             json.RawMessage `json:"mode"`
@@ -140,36 +142,46 @@ func (r *ElicitationRequest) UnmarshalJSON(data []byte) error {
 	}
 	req := ElicitationRequest(wire.fields)
 	req.RawParams = bytes.Clone(data)
-	req.ServerName = wire.LegacyServerName
-	if wire.ServerName != nil {
-		req.ServerName = ""
-		if err := json.Unmarshal(wire.ServerName, &req.ServerName); err != nil {
-			return fmt.Errorf("decode elicitation serverName: %w", err)
-		}
+	name, err := decodeElicitationText(wire.ServerName, wire.LegacyServerName)
+	if err != nil {
+		return fmt.Errorf("decode elicitation server name: %w", err)
 	}
-	req.Message = req.Prompt
-	if wire.Message != nil {
-		req.Message = ""
-		if err := json.Unmarshal(wire.Message, &req.Message); err != nil {
-			return fmt.Errorf("decode elicitation message: %w", err)
-		}
-		req.Prompt = req.Message
+	message, err := decodeElicitationText(wire.Message, wire.LegacyPrompt)
+	if err != nil {
+		return fmt.Errorf("decode elicitation message: %w", err)
 	}
+	req.ServerName = name
+	req.Message = message
+	req.Prompt = message
 	if req.RequestedSchema != nil {
 		req.Schema = bytes.Clone(req.RequestedSchema)
 	} else {
 		req.RequestedSchema = bytes.Clone(req.Schema)
 	}
 	if wire.Mode != nil {
-		if err := json.Unmarshal(wire.Mode, &req.Mode); err != nil {
-			return fmt.Errorf("decode elicitation mode: %w", err)
+		if modeErr := json.Unmarshal(wire.Mode, &req.Mode); modeErr != nil {
+			return fmt.Errorf("decode elicitation mode: %w", modeErr)
 		}
-	} else if wire.ServerName == nil && wire.Message == nil && wire.LegacyServerName != "" &&
+	} else if wire.ServerName == nil && wire.Message == nil && req.ServerName != "" &&
 		wire.RequestedSchema == nil && req.Prompt != "" && req.Schema != nil {
 		req.Mode = ElicitationForm
 	}
 	*r = req
 	return nil
+}
+
+func decodeElicitationText(current, legacy json.RawMessage) (string, error) {
+	if current == nil {
+		current = legacy
+	}
+	if current == nil {
+		return "", nil
+	}
+	var value string
+	if err := json.Unmarshal(current, &value); err != nil {
+		return "", err
+	}
+	return value, nil
 }
 
 func (*ElicitationRequest) isApprovalRequest() {}

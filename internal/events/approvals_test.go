@@ -337,6 +337,13 @@ func TestEncodePermissionGrants(t *testing.T) {
 	}
 }
 
+func TestEncodeApprovalDecision_RejectsMismatchedGenericResponse(t *testing.T) {
+	t.Parallel()
+	checkApprovalDecision(t, &types.CommandExecutionApprovalRequest{},
+		types.PermissionsApprovalResponse{Scope: types.PermissionGrantTurn},
+		`{"decision":"decline","reason":"unknown decision type"}`, true)
+}
+
 func TestEncodeElicitationActions(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

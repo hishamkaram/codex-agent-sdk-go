@@ -49,7 +49,7 @@ func TestClient_ApprovalCallback_MethodSpecificReplies(t *testing.T) {
 	server.push(json.RawMessage(`{"id":-9007199254740993,"method":"item/permissions/requestApproval","params":{"threadId":"T","turnId":"U","itemId":"i","environmentId":"remote","cwd":"/work","startedAtMs":1782904297563,"reason":"read input","permissions":{"network":{"enabled":true},"fileSystem":{"entries":[{"path":{"type":"path","path":"/work/approved"},"access":"read"},{"path":{"type":"path","path":"/work/other"},"access":"write"}]}}}}`))
 	assertApprovalReply(t, server, "-9007199254740993", `{"permissions":{"fileSystem":{"entries":[{"path":{"type":"path","path":"/work/approved"},"access":"read"}]}},"scope":"session"}`)
 
-	server.push(json.RawMessage(`{"id":"mcp-form","method":"mcpServer/elicitation/request","params":{"threadId":"T","turnId":null,"serverName":"forms","environmentId":"remote","mode":"form","message":"Choose format","requestedSchema":{"type":"object","properties":{"selected":{"type":"string"},"includeDetails":{"type":"boolean"}}}}}`))
+	server.push(json.RawMessage(`{"id":"mcp-form","method":"mcpServer/elicitation/request","params":{"threadId":"T","turnId":null,"serverName":"forms","environmentId":"remote","mode":"form","message":"Choose format","requestedSchema":{"type":"object","properties":{"selected":{"type":"string"},"includeDetails":{"type":"boolean"}}},"server_name":42,"prompt":{}}}`))
 	assertApprovalReply(t, server, `"mcp-form"`, `{"action":"accept","content":{"selected":"brief","includeDetails":false},"_meta":{"source":"test"}}`)
 }
 
@@ -80,6 +80,50 @@ func TestClient_ApprovalCallback_DefaultReplies(t *testing.T) {
 	assertApprovalReply(t, server, "1", `{"permissions":{},"scope":"turn"}`)
 	server.push(json.RawMessage(`{"id":2,"method":"mcpServer/elicitation/request","params":{"threadId":"T","turnId":"U","serverName":"forms","mode":"url","message":"Connect account","url":"https://example.com/connect","elicitationId":"flow-1"}}`))
 	assertApprovalReply(t, server, "2", `{"action":"decline"}`)
+}
+
+func TestClient_ApprovalCallback_ElicitationModeCannotChange(t *testing.T) {
+	t.Parallel()
+	gotMode := make(chan types.ElicitationMode, 1)
+	_, server := setupMockClient(t, types.NewCodexOptions().WithApprovalCallback(func(_ context.Context, req types.ApprovalRequest) types.ApprovalDecision {
+		if elicitation, ok := req.(*types.ElicitationRequest); ok {
+			gotMode <- elicitation.Mode
+			elicitation.Mode = types.ElicitationForm
+		}
+		return types.ElicitationResponse{
+			Action:  types.ElicitationAccept,
+			Content: json.RawMessage(`{"format":"brief"}`),
+		}
+	}), nil)
+	server.push(json.RawMessage(`{"id":"unsupported","method":"mcpServer/elicitation/request","params":{"threadId":"T","serverName":"forms","mode":"openai/form","message":"More information","requestedSchema":{"type":"object","properties":{"format":{"type":"string"}}}}}`))
+	assertApprovalReply(t, server, `"unsupported"`, `{"action":"decline"}`)
+	select {
+	case mode := <-gotMode:
+		if mode != "openai/form" {
+			t.Fatalf("callback received mode %q, want openai/form", mode)
+		}
+	default:
+		t.Fatal("callback did not receive the unsupported mode")
+	}
+}
+
+func TestClient_ApprovalCallback_CanceledElicitationDropsContent(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	c, server := setupMockClient(t, types.NewCodexOptions().WithApprovalCallback(func(_ context.Context, _ types.ApprovalRequest) types.ApprovalDecision {
+		cancel()
+		return types.ElicitationResponse{
+			Action:  types.ElicitationAccept,
+			Content: json.RawMessage(`{"format":"brief"}`),
+		}
+	}), nil)
+	c.handleServerRequest(ctx, c.demux, jsonrpc.ServerRequest{
+		ID:     json.RawMessage(`"canceled"`),
+		Method: "mcpServer/elicitation/request",
+		Params: json.RawMessage(`{"threadId":"T","serverName":"forms","mode":"form","message":"Choose format","requestedSchema":{"type":"object","properties":{"format":{"type":"string"}}}}`),
+	})
+	assertApprovalReply(t, server, `"canceled"`, `{"action":"cancel"}`)
 }
 
 func assertApprovalReply(t *testing.T, server *mockCodexServer, id, result string) {

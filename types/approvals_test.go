@@ -2,8 +2,24 @@ package types
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 )
+
+func TestElicitationRequest_MarshalLegacyServerName(t *testing.T) {
+	t.Parallel()
+	encoded, err := json.Marshal(ElicitationRequest{ServerName: "forms"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &wire); err != nil {
+		t.Fatal(err)
+	}
+	if string(wire["server_name"]) != `"forms"` || wire["serverName"] != nil {
+		t.Fatalf("legacy JSON server name changed: %s", encoded)
+	}
+}
 
 func TestApprovalMethod_EveryKnownRequest(t *testing.T) {
 	t.Parallel()

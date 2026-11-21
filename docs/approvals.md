@@ -70,7 +70,9 @@ Return exactly one of:
 types.ApprovalAccept{}               // proceed with the action
 types.ApprovalAcceptForSession{}     // proceed + remember for this session
 types.ApprovalDeny{Reason: "..."}    // refuse this action; turn continues
-types.ApprovalCancel{Reason: "..."}  // abort the entire turn
+types.ApprovalCancel{Reason: "..."}  // cancel a command, file, or MCP approval
+types.PermissionsApprovalResponse{Scope: types.PermissionGrantTurn}
+types.ElicitationResponse{Action: types.ElicitationDecline}
 types.ToolRequestUserInputResponse{  // answer Codex request_user_input
     Answers: map[string]types.ToolRequestUserInputAnswer{
         "question_id": {Answers: []string{"Proceed"}},
@@ -105,12 +107,19 @@ Use absolute paths in the target environment's syntax. The provider gives
 `Entries` precedence over the legacy `Read` and `Write` root lists, including
 an explicitly empty entries list. For network, set
 `GrantedNetworkPermissions.Enabled` explicitly. The provider decides the
-effective access. `PermissionGrantSession` requests scope for the session.
-`StrictAutoReview` may be enabled only for a turn-scoped grant.
+effective access. Use `PermissionGrantTurn` to limit the grant to this turn
+or `PermissionGrantSession` to let later turns in the same session use it.
+`StrictAutoReview` may be enabled only for a turn-scoped grant. The provider
+treats glob entries as read denials. [Codex 0.171 core permission rules](https://github.com/openai/codex/blob/rust-v0.171.0/codex-rs/protocol/src/permissions.rs#L441-L450)
 
-Return `types.ApprovalDeny{}` to send an empty turn-scoped grant. A nil,
-invalid, mismatched, or canceled decision also grants nothing. Canceling a
-permission response does not itself stop the turn.
+To deny the permission request, return an empty turn-scoped grant.
+
+```go
+return types.ApprovalDeny{Reason: "permission not approved"}
+```
+
+Nil, invalid, mismatched, and canceled decisions also grant nothing.
+Use turn interruption to stop the running turn.
 
 ### MCP elicitation
 

@@ -74,30 +74,31 @@ func EncodeApprovalDecision(req types.ApprovalRequest, d types.ApprovalDecision)
 		return types.ToolRequestUserInputResponse{Answers: normalizeUserInputAnswers(nil)},
 			fmt.Errorf("user-input request requires ToolRequestUserInputResponse, got %T", d)
 	}
-	return encodeGenericApprovalDecision(d), nil
+	return encodeGenericApprovalDecision(d)
 }
 
-func encodeGenericApprovalDecision(d types.ApprovalDecision) map[string]any {
+func encodeGenericApprovalDecision(d types.ApprovalDecision) (map[string]any, error) {
 	switch dec := d.(type) {
 	case types.ApprovalAccept:
-		return map[string]any{"decision": "accept"}
+		return map[string]any{"decision": "accept"}, nil
 	case types.ApprovalAcceptForSession:
-		return map[string]any{"decision": "acceptForSession"}
+		return map[string]any{"decision": "acceptForSession"}, nil
 	case types.ApprovalDeny:
 		m := map[string]any{"decision": "decline"}
 		if dec.Reason != "" {
 			m["reason"] = dec.Reason
 		}
-		return m
+		return m, nil
 	case types.ApprovalCancel:
 		m := map[string]any{"decision": "cancel"}
 		if dec.Reason != "" {
 			m["reason"] = dec.Reason
 		}
-		return m
+		return m, nil
 	default:
 		// Treat any unknown decision as decline — safer than accept.
-		return map[string]any{"decision": "decline", "reason": "unknown decision type"}
+		return map[string]any{"decision": "decline", "reason": "unknown decision type"},
+			fmt.Errorf("approval request requires a generic approval decision, got %T", d)
 	}
 }
 
@@ -161,6 +162,7 @@ func validPermissionPath(entry types.FileSystemPermissionEntry) bool {
 	case types.FileSystemPathLiteral:
 		return isAbsolutePermissionPath(path.Path) && path.Pattern == "" && path.Value == nil
 	case types.FileSystemPathGlob:
+		// Codex's core resolves glob patterns only as read denials.
 		return entry.Access == types.FileSystemPermissionDeny && validPermissionPathString(path.Pattern) &&
 			path.Path == "" && path.Value == nil
 	case types.FileSystemPathSpecial:

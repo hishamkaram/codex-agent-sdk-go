@@ -175,6 +175,7 @@ decision back.
 
 The SDK echoes the provider's string or signed 64-bit request ID in its
 reply. SDK-generated client request IDs continue to use unsigned integers.
+An invalid ID is reported as a decode gap because it cannot be correlated.
 See [approvals](approvals.md) for response scope, method-specific defaults,
 and compatibility fields.
 
