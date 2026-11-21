@@ -18,14 +18,14 @@ import (
 // ThreadInboxBuffer bounds the queued events of a streamed provider operation.
 const ThreadInboxBuffer = threadexec.InboxBuffer
 
-// ErrNoActiveTurn is returned by Thread.Interrupt when no turn is currently
-// running. Callers can treat it as a recoverable late interrupt.
+// ErrNoActiveTurn is returned by Thread.Interrupt and Thread.Steer when no
+// turn is currently running.
 var ErrNoActiveTurn = errors.New("codex: no active turn")
 
 // Interrupt cancels the currently-running turn (if any). Sends turn/interrupt
 // to the server. Safe to call from any goroutine.
 func (t *Thread) Interrupt(ctx context.Context) error {
-	if t.record.Closed() {
+	if t.isClosed() {
 		return fmt.Errorf("codex.Thread.Interrupt: %w", types.ErrThreadClosed)
 	}
 	tid := t.record.ActiveID()
@@ -54,6 +54,15 @@ func (t *Thread) runStreamed(ctx context.Context, prompt string, opts *types.Run
 	input, err := threadconfig.BuildTurnInput(prompt, opts)
 	if err != nil {
 		return nil, nil, err
+	}
+	if t.isClosed() {
+		// Preserve input validation ahead of closure without probing the provider.
+		if opts != nil && opts.CyberAccessProgram != nil {
+			if programErr := threadconfig.ValidateTurnProgram(*opts.CyberAccessProgram); programErr != nil {
+				return nil, nil, programErr
+			}
+		}
+		return nil, nil, fmt.Errorf("codex.Thread.RunStreamed: turn/start: %w", types.ErrThreadClosed)
 	}
 	if opts != nil && opts.CyberAccessProgram != nil {
 		if validationErr := t.client.requireTurnProgram(ctx, *opts.CyberAccessProgram); validationErr != nil {
@@ -139,7 +148,7 @@ func (e *ThreadExecutionUnconfirmedError) Error() string {
 func (*ThreadExecutionUnconfirmedError) Unwrap() error { return ErrThreadExecutionUnconfirmed }
 
 func (t *Thread) beginOperation(ctx context.Context, kind threadexec.Kind, streamed bool, method string, params any) (*threadexec.Operation, jsonrpc.Response, error) {
-	if t.isClosed() || t.record == nil {
+	if t.isClosed() {
 		return nil, jsonrpc.Response{}, types.ErrThreadClosed
 	}
 	if err := t.client.checkApprovalReentry(ctx); err != nil {
@@ -180,14 +189,11 @@ func (t *Thread) Steer(ctx context.Context, text string) error {
 		return fmt.Errorf("codex.Thread.Steer: text must not be empty")
 	}
 	if t.isClosed() {
-		return fmt.Errorf("codex.Thread.Steer: thread closed")
+		return fmt.Errorf("codex.Thread.Steer: %w", types.ErrThreadClosed)
 	}
-	tid := ""
-	if t.record != nil {
-		tid = t.record.ActiveID()
-	}
+	tid := t.record.ActiveID()
 	if tid == "" {
-		return fmt.Errorf("codex.Thread.Steer: no active turn")
+		return fmt.Errorf("codex.Thread.Steer: %w", ErrNoActiveTurn)
 	}
 	_, err := t.client.sendRaw(ctx, "Thread.Steer", "turn/steer", map[string]any{
 		"threadId":       t.id,
@@ -282,7 +288,7 @@ func (t *Thread) StartReview(ctx context.Context, opts types.ReviewOptions) (*ty
 // use StartReview and explicitly attach to the returned ReviewThreadID.
 func (t *Thread) StartReviewStreamed(ctx context.Context, opts types.ReviewOptions) (<-chan types.ThreadEvent, error) {
 	if t.isClosed() {
-		return nil, fmt.Errorf("codex.Thread.StartReviewStreamed: thread closed")
+		return nil, fmt.Errorf("codex.Thread.StartReviewStreamed: %w", types.ErrThreadClosed)
 	}
 	if opts.Target.Type == "" {
 		return nil, fmt.Errorf("codex.Thread.StartReviewStreamed: opts.Target.Type is required (use ReviewTarget* constructors)")
@@ -354,7 +360,7 @@ func (t *Thread) PrepareApprovedPlan(ctx context.Context, markdown string, opts 
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("%s: %w", caller, err)
 	}
-	if t.record == nil || t.isClosed() {
+	if t.isClosed() {
 		return nil, fmt.Errorf("%s: %w", caller, types.ErrThreadClosed)
 	}
 	if err := t.client.checkApprovalReentry(ctx); err != nil {

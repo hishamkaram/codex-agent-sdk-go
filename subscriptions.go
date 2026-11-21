@@ -35,6 +35,9 @@ type ThreadEventStreamGapError struct {
 }
 
 func (e *ThreadEventStreamGapError) Error() string {
+	if e == nil {
+		return "<nil ThreadEventStreamGapError>"
+	}
 	return fmt.Sprintf("%v: buffer %d exhausted while delivering thread %q", ErrThreadEventStreamGap, e.Buffer, e.ThreadID)
 }
 
@@ -50,10 +53,19 @@ type ThreadEventParseGapError struct {
 }
 
 func (e *ThreadEventParseGapError) Error() string {
+	if e == nil {
+		return "<nil ThreadEventParseGapError>"
+	}
 	return fmt.Sprintf("%v: parse %q for thread %q: %v", ErrThreadEventStreamGap, e.Method, e.ThreadID, e.Cause)
 }
 
 func (e *ThreadEventParseGapError) Unwrap() []error {
+	if e == nil {
+		return nil
+	}
+	if e.Cause == nil {
+		return []error{ErrThreadEventStreamGap}
+	}
 	return []error{ErrThreadEventStreamGap, e.Cause}
 }
 
@@ -66,6 +78,9 @@ type ThreadEventFrameGapError struct {
 }
 
 func (e *ThreadEventFrameGapError) Error() string {
+	if e == nil {
+		return "<nil ThreadEventFrameGapError>"
+	}
 	if e.Cause == nil {
 		return fmt.Sprintf("%v: decode inbound app-server frame", ErrThreadEventStreamGap)
 	}
@@ -73,6 +88,9 @@ func (e *ThreadEventFrameGapError) Error() string {
 }
 
 func (e *ThreadEventFrameGapError) Unwrap() []error {
+	if e == nil {
+		return nil
+	}
 	if e.Cause == nil {
 		return []error{ErrThreadEventStreamGap}
 	}
@@ -87,6 +105,9 @@ type ThreadEventSourceGapError struct {
 }
 
 func (e *ThreadEventSourceGapError) Error() string {
+	if e == nil {
+		return "<nil ThreadEventSourceGapError>"
+	}
 	if e.Cause == nil {
 		return fmt.Sprintf("%v: app-server event source closed", ErrThreadEventStreamGap)
 	}
@@ -94,6 +115,9 @@ func (e *ThreadEventSourceGapError) Error() string {
 }
 
 func (e *ThreadEventSourceGapError) Unwrap() []error {
+	if e == nil {
+		return nil
+	}
 	if e.Cause == nil {
 		return []error{ErrThreadEventStreamGap}
 	}

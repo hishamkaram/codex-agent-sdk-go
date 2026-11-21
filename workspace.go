@@ -66,8 +66,8 @@ func (c *Client) GitDiffToRemote(ctx context.Context, cwd string) (*types.Remote
 //     via GitDiffResult.ExitCode and err is set to a wrapped ExitError
 //   - context canceled → ctx.Err() propagated
 func (t *Thread) GitDiff(ctx context.Context, opts *types.GitDiffOptions) (*types.GitDiffResult, error) {
-	if t.record.Closed() {
-		return nil, fmt.Errorf("codex.Thread.GitDiff: thread closed")
+	if t.isClosed() {
+		return nil, fmt.Errorf("codex.Thread.GitDiff: %w", types.ErrThreadClosed)
 	}
 	if t.cwd == "" {
 		return nil, fmt.Errorf("codex.Thread.GitDiff: thread cwd is empty (set ThreadOptions.Cwd at StartThread)")
