@@ -126,6 +126,15 @@ func TestBuildTurnStartParams_WithCollaborationMode(t *testing.T) {
 	}
 }
 
+func requireThreadStartParams(t *testing.T, defaults *types.CodexOptions, opts *types.ThreadOptions) map[string]any {
+	t.Helper()
+	request, err := buildThreadStartParams(defaults, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return request.params
+}
+
 func TestBuildThreadStartParams_DefaultsAndOverrides(t *testing.T) {
 	t.Parallel()
 	clientOpts := types.NewCodexOptions().
@@ -135,7 +144,7 @@ func TestBuildThreadStartParams_DefaultsAndOverrides(t *testing.T) {
 		WithApprovalPolicy(types.ApprovalOnRequest)
 
 	// No per-call overrides — should use client defaults.
-	p1 := buildThreadStartParams(clientOpts, nil)
+	p1 := requireThreadStartParams(t, clientOpts, nil)
 	if p1["model"] != "gpt-5.4" || p1["cwd"] != "/default/cwd" {
 		t.Fatalf("defaults: %+v", p1)
 	}
@@ -144,7 +153,7 @@ func TestBuildThreadStartParams_DefaultsAndOverrides(t *testing.T) {
 	}
 
 	// Per-call overrides — should win.
-	p2 := buildThreadStartParams(clientOpts, &types.ThreadOptions{
+	p2 := requireThreadStartParams(t, clientOpts, &types.ThreadOptions{
 		Model:          "gpt-5.3-codex",
 		Cwd:            "/override",
 		Sandbox:        types.SandboxWorkspaceWrite,
@@ -175,7 +184,7 @@ func TestBuildThreadStartParams_DefaultMCPServers(t *testing.T) {
 	defaultServers := map[string]types.McpServerConfig{
 		"local": types.McpStdioConfig{Command: "mcp-local", Args: []string{"--stdio"}},
 	}
-	p := buildThreadStartParams(
+	p := requireThreadStartParams(t,
 		types.NewCodexOptions().
 			WithModel("gpt-5.4").
 			WithCwd("/repo").
@@ -213,7 +222,7 @@ func TestBuildThreadStartParams_PerThreadMCPServersOverrideDefaults(t *testing.T
 	threadServers := map[string]types.McpServerConfig{
 		"thread": types.McpStreamableHTTPConfig{URL: "http://127.0.0.1:8080/mcp"},
 	}
-	p := buildThreadStartParams(
+	p := requireThreadStartParams(t,
 		types.NewCodexOptions().WithMCPServers(defaultServers),
 		&types.ThreadOptions{MCPServers: threadServers},
 	)
@@ -234,7 +243,7 @@ func TestBuildThreadStartParams_EmptyThreadMCPServersPreserveDefaults(t *testing
 	defaultServers := map[string]types.McpServerConfig{
 		"default": types.McpStdioConfig{Command: "default-mcp"},
 	}
-	p := buildThreadStartParams(
+	p := requireThreadStartParams(t,
 		types.NewCodexOptions().WithMCPServers(defaultServers),
 		&types.ThreadOptions{MCPServers: map[string]types.McpServerConfig{}},
 	)
@@ -249,10 +258,10 @@ func TestBuildThreadStartParams_EmptyThreadMCPServersPreserveDefaults(t *testing
 func TestBuildThreadStartParams_GranularApprovalPolicyUsesStructuredObject(t *testing.T) {
 	t.Parallel()
 
-	p1 := buildThreadStartParams(&types.CodexOptions{DefaultApprovalPolicy: types.ApprovalGranular}, nil)
+	p1 := requireThreadStartParams(t, &types.CodexOptions{DefaultApprovalPolicy: types.ApprovalGranular}, nil)
 	assertGranularApprovalPolicyValue(t, p1["approvalPolicy"])
 
-	p2 := buildThreadStartParams(
+	p2 := requireThreadStartParams(t,
 		&types.CodexOptions{DefaultApprovalPolicy: types.ApprovalOnRequest},
 		&types.ThreadOptions{ApprovalPolicy: types.ApprovalGranular},
 	)
@@ -262,7 +271,7 @@ func TestBuildThreadStartParams_GranularApprovalPolicyUsesStructuredObject(t *te
 func TestBuildThreadStartParams_EmptyClientOptsNoKeys(t *testing.T) {
 	t.Parallel()
 	clientOpts := &types.CodexOptions{} // no defaults
-	p := buildThreadStartParams(clientOpts, nil)
+	p := requireThreadStartParams(t, clientOpts, nil)
 	if len(p) != 0 {
 		t.Fatalf("expected empty params, got %+v", p)
 	}

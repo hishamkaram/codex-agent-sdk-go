@@ -35,16 +35,23 @@ field names preferred in this order: flat > nested.
 |---|---|---|---|
 | `initialize` | `{clientInfo:{name,version,title?},capabilities:{experimentalApi,optOutNotificationMethods?}}` | `{userAgent,codexHome,platformFamily,platformOs}` | `Client.Connect` |
 | `initialized` (notification) | none | — | `Client.Connect` |
-| `thread/start` | `{cwd?,model?,sandbox?,approvalPolicy?}` | `{thread:{id,…},model}` | `Client.StartThread` |
-| `thread/resume` | `{threadId,cwd?}` | `{thread:{id,…},model}` | `Client.ResumeThread` |
+| `thread/start` | `{cwd?,model?,sandbox?,approvalPolicy?,config?,threadSource?}` | `{thread:{id,…},model,cwd,sandbox}` | `Client.StartThread` |
+| `thread/resume` | `{threadId,cwd?,config?}` | `{thread:{id,…},model}` | `Client.ResumeThread` |
 | `thread/list` | `{}` | `{threads:[…]}` | `Client.ListThreads` |
-| `thread/fork` | `{threadId,…}` | `{thread:{id,…},model}` | `Client.ForkThread` |
+| `thread/fork` | `{threadId,…,config?,threadSource?}` | `{thread:{id,…},model,cwd,sandbox}` | `Client.ForkThread` |
 | `thread/archive` | `{threadId}` | `{}` | `Client.ArchiveThread` |
-| `turn/start` | `{threadId,input:[{type:"text"|"localImage",…}],outputSchema?,collaborationMode?}` | `{turn:{id,…}}` | `Thread.RunStreamed` |
+| `turn/start` | `{threadId,input:[{type:"text"|"localImage",…}],outputSchema?,collaborationMode?,effort?}` | `{turn:{id,…}}` | `Thread.RunStreamed` |
 | `turn/interrupt` | `{threadId,turnId}` | `{}` | `Thread.Interrupt`, `Client.InterruptThreadTurn` |
 | `thread/backgroundTerminals/list` | `{threadId,cursor?,limit}` | `{data:[…],nextCursor?}` | `Client.ListBackgroundTerminals` |
 | `thread/backgroundTerminals/terminate` | `{threadId,processId}` | `{terminated}` | `Client.TerminateBackgroundTerminal` |
 | `thread/backgroundTerminals/clean` | `{threadId}` | `{}` | `Client.CleanBackgroundTerminals`, `Thread.CleanBackgroundTerminals` |
+
+Thread-scoped web search and reasoning defaults use
+`config.web_search` and `config.model_reasoning_effort`. Start and fork also
+support `config.sandbox_workspace_write.network_access` and
+`config.sandbox_workspace_write.writable_roots`. Resume omits the
+workspace-write object so the server can restore saved policy. See
+[thread configuration](thread-options.md) for option precedence and reply checks.
 
 `approvalPolicy` is a wire union. Ordinary policies are JSON strings
 (`"untrusted"`, `"on-failure"`, `"on-request"`, `"never"`). Granular is

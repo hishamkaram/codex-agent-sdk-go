@@ -284,6 +284,9 @@ func buildTurnStartParams(threadID string, input []map[string]any, opts *types.R
 	if opts.CollaborationMode != nil {
 		params["collaborationMode"] = opts.CollaborationMode
 	}
+	if opts.ReasoningEffort != "" {
+		params["effort"] = opts.ReasoningEffort
+	}
 	return params
 }
 
@@ -334,8 +337,11 @@ func (c *Client) StartThread(ctx context.Context, opts *types.ThreadOptions) (*T
 	if err := c.validateThreadApprovalPolicy(opts); err != nil {
 		return nil, fmt.Errorf("codex.Client.StartThread: %w", err)
 	}
-	params := buildThreadStartParams(c.opts, opts)
-	resp, err := c.demux.Send(ctx, "thread/start", params)
+	request, err := buildThreadStartParams(c.opts, opts)
+	if err != nil {
+		return nil, fmt.Errorf("codex.Client.StartThread: %w", err)
+	}
+	resp, err := c.demux.Send(ctx, "thread/start", request.params)
 	if err != nil {
 		return nil, fmt.Errorf("codex.Client.StartThread: %w", err)
 	}
@@ -346,17 +352,21 @@ func (c *Client) StartThread(ctx context.Context, opts *types.ThreadOptions) (*T
 	if err != nil {
 		return nil, err
 	}
+	cwd, err := request.responseCwd(resp.Result, id)
+	if err != nil {
+		return nil, fmt.Errorf("codex.Client.StartThread: %w", err)
+	}
 	t := newThread(c, id)
 	t.private = true
 	t.baseline = usageBaseline{known: true}
 	t.model = extractThreadModel(resp.Result)
-	t.cwd = resolveCwd(c, opts)
+	t.cwd = cwd
 	c.registerThread(t)
 	return t, nil
 }
 
-// ResumeThread sends thread/resume with optional cwd override and returns
-// a new Thread handle for the resumed conversation.
+// ResumeThread applies optional resume overrides and returns a handle for
+// the resumed conversation.
 func (c *Client) ResumeThread(ctx context.Context, threadID string, opts *types.ResumeOptions) (*Thread, error) {
 	if c.closed.Load() {
 		return nil, fmt.Errorf("codex.Client.ResumeThread: %w", types.ErrClientClosed)
@@ -368,10 +378,18 @@ func (c *Client) ResumeThread(ctx context.Context, threadID string, opts *types.
 		return nil, fmt.Errorf("codex.Client.ResumeThread: threadID must not be empty")
 	}
 	params := map[string]any{"threadId": threadID}
-	cwd := ""
-	if opts != nil && opts.Cwd != "" {
-		params["cwd"] = opts.Cwd
+	var cwd string
+	var configOverrides threadConfigOverrides
+	if opts != nil {
 		cwd = opts.Cwd
+		configOverrides.webSearchMode = opts.WebSearchMode
+		configOverrides.reasoningEffort = opts.ReasoningEffort
+	}
+	if cwd != "" {
+		params["cwd"] = cwd
+	}
+	if config := buildThreadConfig(c.opts, configOverrides); config != nil {
+		params["config"] = config
 	}
 	observationID := threadExecutionID(threadID)
 	observation := c.beginResumeObservation(observationID)
@@ -404,18 +422,8 @@ func (c *Client) ResumeThread(ctx context.Context, threadID string, opts *types.
 	return t, nil
 }
 
-// resolveCwd picks the Thread's cwd from ThreadOptions, then the
-// Client's DefaultCwd, then "" (unknown).
-func resolveCwd(c *Client, opts *types.ThreadOptions) string {
-	if opts != nil && opts.Cwd != "" {
-		return opts.Cwd
-	}
-	return c.opts.DefaultCwd
-}
-
-// Cwd returns the working directory this thread was started with.
-// Empty string means the cwd was never set (rare — occurs only when
-// both ThreadOptions.Cwd and CodexOptions.DefaultCwd were empty).
+// Cwd returns the working directory known to the SDK for this thread.
+// Empty means no working directory was supplied or verified.
 func (t *Thread) Cwd() string { return t.cwd }
 
 // ForkThread branches from an existing thread, returning a new Thread whose
@@ -435,9 +443,12 @@ func (c *Client) ForkThread(ctx context.Context, sourceThreadID string, opts *ty
 	if err := c.validateThreadApprovalPolicy(opts); err != nil {
 		return nil, nil, fmt.Errorf("codex.Client.ForkThread: %w", err)
 	}
-	params := buildThreadStartParams(c.opts, opts)
-	params["threadId"] = sourceThreadID
-	resp, err := c.demux.Send(ctx, "thread/fork", params)
+	request, err := buildThreadStartParams(c.opts, opts)
+	if err != nil {
+		return nil, nil, fmt.Errorf("codex.Client.ForkThread: %w", err)
+	}
+	request.params["threadId"] = sourceThreadID
+	resp, err := c.demux.Send(ctx, "thread/fork", request.params)
 	if err != nil {
 		return nil, nil, fmt.Errorf("codex.Client.ForkThread: %w", err)
 	}
@@ -451,10 +462,14 @@ func (c *Client) ForkThread(ctx context.Context, sourceThreadID string, opts *ty
 	if newID == sourceThreadID {
 		return nil, nil, fmt.Errorf("codex.Client.ForkThread: provider returned the source thread as its child")
 	}
+	cwd, err := request.responseCwd(resp.Result, newID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("codex.Client.ForkThread: %w", err)
+	}
 	t := newThread(c, newID)
 	t.seedExternalActivity(resp.Result)
 	t.model = extractThreadModel(resp.Result)
-	t.cwd = resolveCwd(c, opts)
+	t.cwd = cwd
 	c.registerThread(t)
 	return t, &types.ForkResult{SourceThreadID: sourceThreadID, NewThreadID: newID}, nil
 }
@@ -476,56 +491,6 @@ func (c *Client) ArchiveThread(ctx context.Context, threadID string) error {
 		return types.NewRPCError(resp.Error.Code, resp.Error.Message, resp.Error.Data)
 	}
 	c.unregisterThread(threadID)
-	return nil
-}
-
-// buildThreadStartParams merges client-level defaults with per-call
-// overrides into the thread/start params payload.
-func buildThreadStartParams(clientOpts *types.CodexOptions, opts *types.ThreadOptions) map[string]any {
-	p := map[string]any{}
-	// Apply client defaults first.
-	if clientOpts != nil && clientOpts.DefaultModel != "" {
-		p["model"] = clientOpts.DefaultModel
-	}
-	if clientOpts != nil && clientOpts.DefaultCwd != "" {
-		p["cwd"] = clientOpts.DefaultCwd
-	}
-	if clientOpts != nil && clientOpts.DefaultSandbox != "" {
-		p["sandbox"] = string(clientOpts.DefaultSandbox)
-	}
-	if clientOpts != nil && clientOpts.DefaultApprovalPolicy != "" {
-		p["approvalPolicy"] = encodeApprovalPolicy(clientOpts.DefaultApprovalPolicy)
-	}
-	if servers := resolveMCPServers(clientOpts, opts); len(servers) > 0 {
-		p["config"] = map[string]any{
-			"mcp_servers": servers,
-		}
-	}
-	// Per-call overrides win.
-	if opts != nil {
-		if opts.Model != "" {
-			p["model"] = opts.Model
-		}
-		if opts.Cwd != "" {
-			p["cwd"] = opts.Cwd
-		}
-		if opts.Sandbox != "" {
-			p["sandbox"] = string(opts.Sandbox)
-		}
-		if opts.ApprovalPolicy != "" {
-			p["approvalPolicy"] = encodeApprovalPolicy(opts.ApprovalPolicy)
-		}
-	}
-	return p
-}
-
-func resolveMCPServers(clientOpts *types.CodexOptions, opts *types.ThreadOptions) map[string]types.McpServerConfig {
-	if opts != nil && len(opts.MCPServers) > 0 {
-		return opts.MCPServers
-	}
-	if clientOpts != nil && len(clientOpts.DefaultMCPServers) > 0 {
-		return clientOpts.DefaultMCPServers
-	}
 	return nil
 }
 
