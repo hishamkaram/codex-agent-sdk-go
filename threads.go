@@ -373,11 +373,12 @@ func (c *Client) ResumeThread(ctx context.Context, threadID string, opts *types.
 		params["cwd"] = opts.Cwd
 		cwd = opts.Cwd
 	}
-	observation := c.beginResumeObservation(threadID)
+	observationID := threadExecutionID(threadID)
+	observation := c.beginResumeObservation(observationID)
 	if observation == nil {
 		return nil, fmt.Errorf("codex.Client.ResumeThread: %w", types.ErrClientClosed)
 	}
-	defer c.endResumeObservation(threadID, observation)
+	defer c.endResumeObservation(observationID, observation)
 	resp, idleProof, err := c.requestThreadResume(ctx, params, observation)
 	if err != nil {
 		return nil, fmt.Errorf("codex.Client.ResumeThread: %w", err)
@@ -393,7 +394,7 @@ func (c *Client) ResumeThread(ctx context.Context, threadID string, opts *types.
 	}
 	t := newThread(c, id)
 	status, statusThreadID := t.seedExternalActivity(resp.Result)
-	idleProof.reconcile(status, statusThreadID, reportedID, threadID)
+	idleProof.reconcile(status, statusThreadID, reportedID, observationID)
 	t.model = extractThreadModel(resp.Result)
 	if cwd == "" {
 		cwd = c.opts.DefaultCwd

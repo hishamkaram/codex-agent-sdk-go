@@ -44,7 +44,7 @@ func (c *Client) dispatch(ctx context.Context, demux *jsonrpc.Demux, done chan s
 				serverMessages = nil
 				continue
 			}
-			c.routeServerMessage(workerCtx, lanes, message)
+			c.routeServerMessage(workerCtx, demux, lanes, message)
 		case note, ok := <-notifications:
 			if !ok {
 				notifications = nil
@@ -75,14 +75,47 @@ func (c *Client) dispatch(ctx context.Context, demux *jsonrpc.Demux, done chan s
 	}
 }
 
-func (c *Client) routeServerMessage(ctx context.Context, lanes approvalLanes, message jsonrpc.ServerMessage) {
+func (c *Client) routeServerMessage(ctx context.Context, demux *jsonrpc.Demux, lanes approvalLanes, message jsonrpc.ServerMessage) {
 	switch {
 	case message.Notification != nil:
 		c.handleNotification(*message.Notification)
+		demux.NotificationApplied(message.Notification)
 	case message.Request != nil:
 		c.enqueueApproval(ctx, lanes, *message.Request)
 	default:
 		message.DeliverOrderedReply()
+	}
+}
+
+// pendingActivityAffectsThread only examines immutable inbound data. An
+// unidentifiable ownership message could belong to any provider thread.
+func pendingActivityAffectsThread(n jsonrpc.Notification, threadID string) bool {
+	if n.DecodeError != nil {
+		return true
+	}
+	if n.Method != "turn/started" && n.Method != "thread/status/changed" {
+		return false
+	}
+	ev, err := events.ParseEvent(n)
+	if err != nil {
+		id, _ := extractThreadID(n.Params)
+		return id == "" || threadExecutionID(id) == threadID
+	}
+	id, _ := threadIdentityFromEvent(ev)
+	if id == "" {
+		return true
+	}
+	if threadExecutionID(id) != threadID {
+		return false
+	}
+	switch activity := ev.(type) {
+	case *types.TurnStarted:
+		return activity.TurnID == "" || isRootTurn(activity.TurnID, activity.RootTurnID)
+	case *types.ThreadStatusChanged:
+		kind := threadStatusKind(activity.Status)
+		return kind == "" || kind == "active"
+	default:
+		return true
 	}
 }
 
@@ -145,7 +178,7 @@ func (c *Client) handleNotification(n jsonrpc.Notification) {
 	}
 	c.rememberFileApproval(ev)
 	c.mu.Lock()
-	execution := c.executions[threadID]
+	execution := c.executions[threadExecutionID(threadID)]
 	c.mu.Unlock()
 	// Record lifecycle evidence before any lossy event delivery.
 	if execution != nil && execution.observe(ev) {
@@ -161,7 +194,7 @@ func (c *Client) invalidateThreadExecutions(threadID string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if threadID != "" {
-		if execution := c.executions[threadID]; execution != nil {
+		if execution := c.executions[threadExecutionID(threadID)]; execution != nil {
 			execution.invalidate()
 		}
 		return
@@ -183,6 +216,7 @@ func (c *Client) closeThreadExecutions() {
 // must own the thread's ID (i.e., thread/start or thread/resume succeeded).
 // Also records the thread ID as the latest for SessionID().
 func (c *Client) registerThread(t *Thread) {
+	executionID := threadExecutionID(t.id)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.threads == nil {
@@ -192,7 +226,7 @@ func (c *Client) registerThread(t *Thread) {
 	if c.executions == nil {
 		c.executions = make(map[string]*threadExecution)
 	}
-	if existing := c.executions[t.id]; existing != nil {
+	if existing := c.executions[executionID]; existing != nil {
 		existing.reconcileExternalActivity(t.threadExecution)
 		t.threadExecution = existing
 	} else {
@@ -202,10 +236,10 @@ func (c *Client) registerThread(t *Thread) {
 		if !c.connected.Load() {
 			t.markClosed()
 		}
-		c.executions[t.id] = t.threadExecution
+		c.executions[executionID] = t.threadExecution
 	}
 	t.pendingRegistration = false
-	c.threads[t.id] = t
+	c.threads[executionID] = t
 	c.latestThreadID = t.id
 }
 
@@ -260,7 +294,7 @@ func (c *Client) requestThreadResume(ctx context.Context, params map[string]any,
 }
 
 func (p idleResumeProof) reconcile(status, statusThreadID, reportedID, requestedID string) {
-	if p.execution != nil && status == "idle" && statusThreadID == requestedID && reportedID == requestedID {
+	if p.execution != nil && status == "idle" && threadExecutionID(statusThreadID) == requestedID && threadExecutionID(reportedID) == requestedID {
 		p.execution.reconcileIdleResume(p.generation)
 	}
 }
@@ -270,14 +304,15 @@ func (p idleResumeProof) reconcile(status, statusThreadID, reportedID, requested
 // removed thread was the most recent so SessionID() reverts to "" for
 // single-thread callers.
 func (c *Client) unregisterThread(threadID string) {
+	executionID := threadExecutionID(threadID)
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	delete(c.threads, threadID)
-	if execution := c.executions[threadID]; execution != nil {
+	delete(c.threads, executionID)
+	if execution := c.executions[executionID]; execution != nil {
 		// Keep unresolved activity for handles that still refer to this ID.
 		execution.invalidate()
 	}
-	if c.latestThreadID == threadID {
+	if threadExecutionID(c.latestThreadID) == executionID {
 		c.latestThreadID = ""
 	}
 }

@@ -126,3 +126,78 @@ func awaitReservedOperation(t *testing.T, ctx context.Context, thread *Thread) {
 		awaitExecutionTest(t, ctx, changed)
 	}
 }
+
+func TestClient_ReceivedProviderStartFencesOnlyItsThread(t *testing.T) {
+	t.Parallel()
+	ctx, stop := context.WithTimeout(t.Context(), 5*time.Second)
+	defer stop()
+	resumes, starts := 0, 0
+	c, peer := setupMockClient(t, types.NewCodexOptions(), func(req jsonrpc.Request) jsonrpc.Response {
+		switch req.Method {
+		case "thread/start":
+			starts++
+			if starts == 1 {
+				return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{"thread":{"id":"blocker"}}`)}
+			}
+			return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{"thread":{"id":"sibling"}}`)}
+		case "thread/resume":
+			resumes++
+			if resumes == 1 {
+				return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{"thread":{"id":"T","status":{"type":"active"}}}`)}
+			}
+			return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{"thread":{"id":"T","status":{"type":"idle"}}}`)}
+		case "turn/start":
+			var params struct {
+				ThreadID string `json:"threadId"`
+			}
+			if err := json.Unmarshal(req.Params, &params); err != nil || params.ThreadID != "sibling" {
+				t.Errorf("unapplied provider activity allowed a foreign turn/start: %s", req.Params)
+			}
+			return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{"turn":{"id":"sibling-turn"}}`)}
+		case "wire/barrier":
+			return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{}`)}
+		default:
+			t.Errorf("unexpected method: %s", req.Method)
+			return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{}`)}
+		}
+	})
+	if _, err := c.ResumeThread(ctx, "T", nil); err != nil {
+		t.Fatal(err)
+	}
+	target, err := c.ResumeThread(ctx, "T", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocker, err := c.StartThread(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sibling, err := c.StartThread(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The idle reply has already been applied. Hold ordered delivery on
+	// another thread, then prove the demux has read the next external start.
+	siblingEvents := func() <-chan types.ThreadEvent {
+		blocker.mu.Lock()
+		defer blocker.mu.Unlock()
+		peer.push(notify("turn/started", map[string]string{"threadId": "blocker", "turnId": "hold"}))
+		peer.push(json.RawMessage(`{"method":"turn/started","params":{"thread":{"id":"T"},"turn":{"id":"external"}}}`))
+		if _, sendErr := c.demux.Send(ctx, "wire/barrier", nil); sendErr != nil {
+			t.Fatal(sendErr)
+		}
+		if _, runErr := target.RunStreamed(ctx, "must not steer external work", nil); !errors.Is(runErr, ErrThreadExecutionUnconfirmed) {
+			t.Fatalf("write did not account for the queued provider start: %v", runErr)
+		}
+		events, runErr := sibling.RunStreamed(ctx, "private unrelated work", nil)
+		if runErr != nil {
+			t.Fatalf("queued activity on another thread fenced the sibling: %v", runErr)
+		}
+		peer.push(notify("turn/completed", map[string]string{"threadId": "sibling", "turnId": "sibling-turn", "status": "completed"}))
+		return events
+	}()
+	if terminal, ok := awaitExecutionTest(t, ctx, siblingEvents).(*types.TurnCompleted); !ok || terminal.TurnID != "sibling-turn" {
+		t.Fatalf("private sibling terminal = %#v", terminal)
+	}
+}

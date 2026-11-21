@@ -85,7 +85,10 @@ func (s *mockCodexServer) readLoop() {
 			} else {
 				resp = jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{}`)}
 			}
-			s.push(resp)
+			if resp.ID != 0 {
+				// The test may reply later while continuing to read requests.
+				s.push(resp)
+			}
 		}
 	}
 }

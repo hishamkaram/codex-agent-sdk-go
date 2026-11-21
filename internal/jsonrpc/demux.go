@@ -54,9 +54,11 @@ type Demux struct {
 	maxParseErrors  uint
 	onUnrecoverable func(error)
 
-	mu      sync.Mutex
-	pending map[uint64]*PendingResponse
-	closed  bool
+	mu                   sync.Mutex
+	pending              map[uint64]*PendingResponse
+	pendingNotifications map[*Notification]struct{}
+	malformedRun         bool
+	closed               bool
 
 	notifications  chan Notification
 	serverRequests chan ServerRequest
@@ -95,7 +97,10 @@ func (m ServerMessage) DeliverOrderedReply() {
 // WithOrderedServerMessages routes notifications and requests to the same
 // channel and enables SendOrdered replies. Select it before Run.
 func WithOrderedServerMessages() DemuxOption {
-	return func(d *Demux) { d.serverMessages = make(chan ServerMessage, 64) }
+	return func(d *Demux) {
+		d.serverMessages = make(chan ServerMessage, 64)
+		d.pendingNotifications = make(map[*Notification]struct{})
+	}
 }
 
 func (d *Demux) ServerMessages() <-chan ServerMessage { return d.serverMessages }
@@ -367,6 +372,8 @@ func (d *Demux) Close() error {
 		for id := range d.pending {
 			delete(d.pending, id)
 		}
+		clear(d.pendingNotifications)
+		d.malformedRun = false
 		d.mu.Unlock()
 		_ = d.writer.Close()
 		close(d.stopped)
@@ -431,7 +438,7 @@ func (d *Demux) readLoop(ctx context.Context) {
 		consecutiveParseErrors = 0
 		if firstMessage {
 			firstMessage = false
-			d.observer.OnFirstMessage(time.Since(loopStart))
+			d.reportFirstMessage(frame, loopStart)
 		}
 
 		continueLoop, nextGapQueued := d.classifyAndRoute(ctx, frame, gapQueued)
@@ -442,12 +449,20 @@ func (d *Demux) readLoop(ctx context.Context) {
 	}
 }
 
+func (d *Demux) reportFirstMessage(frame rawFrame, loopStart time.Time) {
+	if frame.Method == nil && frame.ID == nil {
+		d.setMalformedRun(true)
+	}
+	d.observer.OnFirstMessage(time.Since(loopStart))
+}
+
 func (d *Demux) handleDecodeFailure(
 	ctx context.Context,
 	decodeErr error,
 	consecutive uint,
 	gapQueued bool,
 ) (continueLoop, nextGapQueued bool, exitErr error) {
+	d.setMalformedRun(true)
 	// recordParseFailure receives the incremented value so telemetry reports the
 	// running consecutive count.
 	giveUpErr := d.recordParseFailure(consecutive, decodeErr)
@@ -496,7 +511,7 @@ func (d *Demux) recordParseFailure(consecutive uint, err error) error {
 // classifyAndRoute dispatches a successfully decoded frame to the correct
 // outbound channel: a server-initiated request, a notification, a response to a
 // pending client request, or an unclassifiable frame (telemetry plus an ordered
-// notification-stream gap). It
+// notification-stream gap).
 // The second result reports whether a coalesced frame-gap marker remains
 // pending for the current malformed run. The first result is false only when
 // readLoop must exit because an outbound delivery observed stop or cancellation.
@@ -509,6 +524,7 @@ func (d *Demux) classifyAndRoute(
 	case frame.Method != nil && frame.ID != nil:
 		// Server-initiated request.
 		req := ServerRequest{ID: frame.ID, Method: *frame.Method, Params: frame.Params}
+		d.setMalformedRun(false)
 		return d.deliverServerRequest(ctx, req), false
 
 	case frame.Method != nil:
@@ -518,12 +534,14 @@ func (d *Demux) classifyAndRoute(
 
 	case frame.ID != nil:
 		resp := Response{ID: frame.responseID, Result: frame.Result, Error: frame.Error}
+		d.setMalformedRun(false)
 		return d.deliverResponse(ctx, resp), false
 
 	default:
 		// Unclassifiable frame — no id, no method, no result. Either codex
 		// wire-format drift or corruption. Surface telemetry and an ordered gap;
 		// the JSON decoded, but it may have been a damaged notification.
+		d.setMalformedRun(true)
 		d.observer.OnUnknownMessage("unclassifiable-frame")
 		d.logger.Warn("jsonrpc.Demux: unclassifiable frame")
 		if gapQueued {
@@ -563,7 +581,7 @@ func (d *Demux) deliverResponse(ctx context.Context, resp Response) bool {
 // loop must exit.
 func (d *Demux) deliverNotification(ctx context.Context, note Notification) bool {
 	if d.serverMessages != nil {
-		return d.deliverServerMessage(ctx, ServerMessage{Notification: &note})
+		return d.deliverOrderedNotification(ctx, &note)
 	}
 	select {
 	case d.notifications <- note:

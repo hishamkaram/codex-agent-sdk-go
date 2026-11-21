@@ -415,12 +415,8 @@ func (e *threadExecution) observeStatusLocked(op *threadOperation, raw json.RawM
 	if op != nil && op.dispatched && !op.complete {
 		return
 	}
-	var status providerThreadStatus
-	if json.Unmarshal(raw, &status) != nil {
-		return
-	}
-	switch status.Type {
-	case "active":
+	switch threadStatusKind(raw) {
+	case "", "active":
 		if e.activeID() == "" {
 			e.fenceExternalActivityLocked("")
 		} else {
@@ -433,8 +429,23 @@ func (e *threadExecution) observeStatusLocked(op *threadOperation, raw json.RawM
 	}
 }
 
+func threadStatusKind(raw json.RawMessage) string {
+	var status providerThreadStatus
+	if json.Unmarshal(raw, &status) == nil {
+		return status.Type
+	}
+	// Older event payloads use a plain status string.
+	var legacy string
+	_ = json.Unmarshal(raw, &legacy)
+	return legacy
+}
+
 func (e *threadExecution) observeStartLocked(op *threadOperation, event *types.TurnStarted) {
 	id := event.TurnID
+	if id == "" {
+		e.fenceExternalActivityLocked(e.activeID())
+		return
+	}
 	if !isRootTurn(id, event.RootTurnID) || id == e.lastTerminalID {
 		return
 	}
@@ -662,6 +673,12 @@ func (t *Thread) markDispatch(ctx context.Context, op *threadOperation) error {
 		return types.ErrThreadClosed
 	}
 	if t.op != op || t.externalActive || t.resuming != 0 || t.activeID() != "" {
+		return &ThreadExecutionUnconfirmedError{ThreadID: t.id}
+	}
+	threadID := threadExecutionID(t.id)
+	if t.client.demux.HasPendingNotification(func(n jsonrpc.Notification) bool {
+		return pendingActivityAffectsThread(n, threadID)
+	}) {
 		return &ThreadExecutionUnconfirmedError{ThreadID: t.id}
 	}
 	op.dispatched = true

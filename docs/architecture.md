@@ -179,7 +179,9 @@ Intentional client shutdown closes subscriptions normally.
 A `Client` serializes runs, inline reviews, and compaction by provider thread
 ID across handles. Calls wait cancellably behind SDK-owned work. Before the
 serialized writer sends a reserved request, it rechecks observed provider
-activity. Canceling a
+activity and lifecycle messages received for that thread. Queued activity
+rejects the write until the dispatcher applies it. Valid UUID spellings
+share one execution record without changing the caller's wire ID. Canceling a
 run closes its local stream. The SDK asks the provider to interrupt the exact
 turn after correlating the reply with a fresh root start on a thread created
 by this Client. The same server reply can describe work steered onto an
