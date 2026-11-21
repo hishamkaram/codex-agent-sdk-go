@@ -14,7 +14,7 @@ import (
 	"go.uber.org/zap"
 )
 
-// ErrClosed is returned by Send when the demux has been closed.
+// ErrClosed reports that the demux has been closed.
 var ErrClosed = errors.New("jsonrpc: demux closed")
 
 // DefaultMaxConsecutiveParseErrors is the demux's default give-up threshold:

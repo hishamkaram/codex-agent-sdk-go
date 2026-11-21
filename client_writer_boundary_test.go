@@ -127,6 +127,34 @@ func awaitReservedOperation(t *testing.T, ctx context.Context, thread *Thread) {
 	}
 }
 
+type cancelAfterContextCheck struct {
+	context.Context
+	cancel context.CancelFunc
+}
+
+func (c cancelAfterContextCheck) Err() error {
+	err := c.Context.Err()
+	// Make cancellation land after the guard's first observation.
+	c.cancel()
+	return err
+}
+
+func TestThread_DispatchRechecksCancellationBeforeCommit(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	c := &Client{demux: jsonrpc.NewDemux(nil, nil, nil, jsonrpc.WithOrderedServerMessages())}
+	thread := newThread(c, "T")
+	op, err := thread.admit(ctx, thread.ID(), executeTurn, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = thread.markDispatch(cancelAfterContextCheck{Context: ctx, cancel: cancel}, op)
+	if !errors.Is(err, context.Canceled) || op.dispatched {
+		t.Fatalf("dispatch error = %v, dispatched = %t, want canceled before commit", err, op.dispatched)
+	}
+}
+
 func TestClient_ReceivedProviderStartFencesOnlyItsThread(t *testing.T) {
 	t.Parallel()
 	ctx, stop := context.WithTimeout(t.Context(), 5*time.Second)

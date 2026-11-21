@@ -676,9 +676,16 @@ func (t *Thread) markDispatch(ctx context.Context, op *threadOperation) error {
 		return &ThreadExecutionUnconfirmedError{ThreadID: t.id}
 	}
 	threadID := threadExecutionID(t.id)
-	if t.client.demux.HasPendingNotification(func(n jsonrpc.Notification) bool {
+	pending, err := t.client.demux.CheckPendingNotification(func(n jsonrpc.Notification) bool {
 		return pendingActivityAffectsThread(n, threadID)
-	}) {
+	})
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ctxErr
+	}
+	if err != nil {
+		return err
+	}
+	if pending {
 		return &ThreadExecutionUnconfirmedError{ThreadID: t.id}
 	}
 	op.dispatched = true

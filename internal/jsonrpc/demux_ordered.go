@@ -50,21 +50,24 @@ func (d *Demux) NotificationApplied(notification *Notification) {
 	delete(d.pendingNotifications, notification)
 }
 
-// HasPendingNotification reports a malformed run or an ordered notification
-// matching a pure predicate that is waiting for application. The predicate
-// must not call the demux or mutate the notification.
-func (d *Demux) HasPendingNotification(match func(Notification) bool) bool {
+// CheckPendingNotification checks shutdown and unapplied receipts under one
+// lock. It reports a malformed run or a notification matching a pure
+// predicate. The predicate must not call the demux or mutate the notification.
+func (d *Demux) CheckPendingNotification(match func(Notification) bool) (bool, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if d.closed {
+		return false, ErrClosed
+	}
 	if d.malformedRun {
-		return true
+		return true, nil
 	}
 	for notification := range d.pendingNotifications {
 		if match(*notification) {
-			return true
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
 }
 
 func (d *Demux) setMalformedRun(active bool) {

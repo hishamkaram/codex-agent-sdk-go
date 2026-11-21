@@ -1,7 +1,9 @@
 package jsonrpc
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -40,14 +42,19 @@ func TestDemux_MalformedRunGuardsBeforeGapDeliveryAndThroughRetirement(t *testin
 	defer cancel()
 	assertPending := func(want bool, stage string) {
 		t.Helper()
-		result := make(chan bool, 1)
+		type receiptCheck struct {
+			pending bool
+			err     error
+		}
+		result := make(chan receiptCheck, 1)
 		go func() {
-			result <- d.HasPendingNotification(func(note Notification) bool {
+			pending, err := d.CheckPendingNotification(func(note Notification) bool {
 				return note.DecodeError != nil || note.Method == "turn/started"
 			})
+			result <- receiptCheck{pending: pending, err: err}
 		}()
-		if got := awaitReceiptTestValue(t, ctx, result, stage); got != want {
-			t.Fatalf("%s: guard = %t, want %t", stage, got, want)
+		if got := awaitReceiptTestValue(t, ctx, result, stage); got.err != nil || got.pending != want {
+			t.Fatalf("%s: guard = (%t, %v), want (%t, nil)", stage, got.pending, got.err, want)
 		}
 	}
 
@@ -85,6 +92,54 @@ func TestDemux_MalformedRunGuardsBeforeGapDeliveryAndThroughRetirement(t *testin
 	assertPending(true, "while the valid notification is awaiting application")
 	d.NotificationApplied(next.Notification)
 	assertPending(false, "after valid notification application ends the gap")
+}
+
+type closeBarrierWriter struct {
+	bytes.Buffer
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (w *closeBarrierWriter) Close() error {
+	w.entered <- struct{}{}
+	<-w.release
+	return nil
+}
+
+func TestDemux_ReceiptGuardRejectsDuringStdinClose(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+	writer := &closeBarrierWriter{entered: make(chan struct{}, 1), release: make(chan struct{})}
+	d := NewDemux(nil, NewLineWriter(writer), nil, WithOrderedServerMessages())
+	if !d.deliverOrderedNotification(ctx, &Notification{Method: "turn/started"}) {
+		t.Fatal("could not queue receipt")
+	}
+
+	closeDone := make(chan error, 1)
+	defer func() {
+		close(writer.release)
+		if err := awaitReceiptTestValue(t, ctx, closeDone, "finish closing stdin"); err != nil {
+			t.Error(err)
+		}
+	}()
+	request, err := d.PostGuarded(ctx, "turn/start", nil, func(writeCtx context.Context) error {
+		go func() { closeDone <- d.Close() }()
+		awaitReceiptTestValue(t, writeCtx, writer.entered, "begin closing stdin")
+		// Close has retired the receipt and the Request has passed the
+		// writer's initial close check. The underlying writer can still write.
+		pending, checkErr := d.CheckPendingNotification(func(Notification) bool { return true })
+		if pending {
+			t.Error("shutdown retained a pending receipt")
+		}
+		return checkErr
+	})
+	if request != nil {
+		request.Release()
+	}
+	if !errors.Is(err, ErrClosed) || writer.Len() != 0 {
+		t.Fatalf("guarded request error = %v, wrote %d bytes, want closed before write", err, writer.Len())
+	}
 }
 
 func awaitReceiptTestValue[T any](t *testing.T, ctx context.Context, source <-chan T, stage string) T {
