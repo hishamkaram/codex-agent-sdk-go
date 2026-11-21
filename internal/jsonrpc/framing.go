@@ -81,6 +81,13 @@ func (lw *LineWriter) WriteFrameContext(ctx context.Context, v any) error {
 }
 
 func (lw *LineWriter) writeContext(ctx context.Context, data []byte) (written int, aborted bool, err error) {
+	// Some native pipes report progress directly with a nonblocking write.
+	if writer, ok := lw.w.(interface {
+		WriteContext(context.Context, []byte) (int, error)
+	}); ok {
+		n, writeErr := writer.WriteContext(ctx, data)
+		return n, false, writeErr
+	}
 	deadline, _ := lw.w.(interface{ SetWriteDeadline(time.Time) error })
 	interrupted := make(chan bool, 1)
 	stop := context.AfterFunc(ctx, func() {

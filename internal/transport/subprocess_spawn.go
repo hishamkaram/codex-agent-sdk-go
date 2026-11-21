@@ -17,10 +17,11 @@ import (
 // can return them without a long unnamed result list. The pipes are owned by the
 // caller once spawnWithRetry succeeds.
 type spawnedProc struct {
-	cmd    *exec.Cmd
-	stdin  io.WriteCloser
-	stdout io.ReadCloser
-	stderr io.ReadCloser
+	cmd        *exec.Cmd
+	stdin      io.WriteCloser
+	childStdin *os.File
+	stdout     io.ReadCloser
+	stderr     io.ReadCloser
 }
 
 // logCLIVersion performs the soft version probe: it never fails the connection,
@@ -68,7 +69,7 @@ func (t *AppServer) spawnWithRetry(ctx context.Context, cliPath string, args []s
 			pipeErr = err
 			return err
 		}
-		if err := candidate.cmd.Start(); err != nil {
+		if err := candidate.start(); err != nil {
 			candidate.closePipes()
 			return err
 		}
@@ -114,28 +115,48 @@ func (t *AppServer) newSpawnCommand(cliPath string, args []string) *exec.Cmd {
 }
 
 func newSpawnedProc(cmd *exec.Cmd) (*spawnedProc, error) {
-	stdin, err := cmd.StdinPipe()
+	stdin, childStdin, err := openProcessStdin(cmd)
 	if err != nil {
 		return nil, types.NewCLIConnectionError("stdin pipe", err)
 	}
+	proc := &spawnedProc{cmd: cmd, stdin: stdin, childStdin: childStdin}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		_ = stdin.Close()
+		proc.closePipes()
 		return nil, types.NewCLIConnectionError("stdout pipe", err)
 	}
+	proc.stdout = stdout
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
-		_ = stdin.Close()
-		_ = stdout.Close()
+		proc.closePipes()
 		return nil, types.NewCLIConnectionError("stderr pipe", err)
 	}
-	return &spawnedProc{cmd: cmd, stdin: stdin, stdout: stdout, stderr: stderr}, nil
+	proc.stderr = stderr
+	return proc, nil
+}
+
+func (p *spawnedProc) start() error {
+	err := p.cmd.Start()
+	p.closeChildStdin()
+	return err
+}
+
+func (p *spawnedProc) closeChildStdin() {
+	if p.childStdin != nil {
+		_ = p.childStdin.Close()
+		p.childStdin = nil
+	}
 }
 
 func (p *spawnedProc) closePipes() {
 	_ = p.stdin.Close()
-	_ = p.stdout.Close()
-	_ = p.stderr.Close()
+	p.closeChildStdin()
+	if p.stdout != nil {
+		_ = p.stdout.Close()
+	}
+	if p.stderr != nil {
+		_ = p.stderr.Close()
+	}
 }
 
 // BuildRuntimeEnvironment overlays keyEqVals on os.Environ. An entry "KEY="
