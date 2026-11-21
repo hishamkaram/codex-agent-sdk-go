@@ -39,7 +39,7 @@ type Config struct {
 	Model                *string         `json:"model,omitempty"`
 	ModelReasoningEffort *string         `json:"model_reasoning_effort,omitempty"`
 	ApprovalPolicy       *string         `json:"approval_policy,omitempty"`
-	Sandbox              *string         `json:"sandbox,omitempty"`
+	Sandbox              *string         `json:"sandbox_mode,omitempty"`
 	DefaultPermissions   json.RawMessage `json:"default_permissions,omitempty"`
 	Features             map[string]bool `json:"features,omitempty"`
 	ApprovalsReviewer    *string         `json:"approvals_reviewer,omitempty"`
@@ -63,7 +63,7 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 	var aux struct {
 		Model                *string                    `json:"model,omitempty"`
 		ModelReasoningEffort *string                    `json:"model_reasoning_effort,omitempty"`
-		Sandbox              *string                    `json:"sandbox,omitempty"`
+		Sandbox              *string                    `json:"sandbox_mode,omitempty"`
 		DefaultPermissions   json.RawMessage            `json:"default_permissions,omitempty"`
 		Features             map[string]bool            `json:"features,omitempty"`
 		ApprovalsReviewer    *string                    `json:"approvals_reviewer,omitempty"`
@@ -146,7 +146,7 @@ const (
 //	{"keyPath": "model", "mergeStrategy": "replace", "value": "<discovered-model-id>"}
 type ConfigEntry struct {
 	// KeyPath is a dotted path into config.toml. Top-level examples:
-	// "model", "approval_policy", "sandbox". Nested:
+	// "model", "approval_policy", "sandbox_mode". Nested:
 	// "features.tool_search", "experimental_network.allowed_domains".
 	KeyPath string `json:"keyPath"`
 	// MergeStrategy is required by codex; if zero ("") the SDK
@@ -169,7 +169,7 @@ type WriteConfigBatchParams struct {
 // config/batchWrite. Codex returns metadata about the write so
 // clients can verify it landed.
 type ConfigWriteResponse struct {
-	// Status is the WriteStatus enum. Observed: "ok".
+	// Status is the provider WriteStatus enum ("ok" or "okOverridden").
 	Status string `json:"status"`
 	// Version is a sha256:... hash of the resulting file.
 	Version string `json:"version"`

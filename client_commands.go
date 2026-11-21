@@ -3,6 +3,7 @@ package codex
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -55,14 +56,6 @@ func (c *Client) ReadConfig(ctx context.Context) (*types.Config, error) {
 	if err := json.Unmarshal(resp, &result); err != nil {
 		return nil, fmt.Errorf("codex.Client.ReadConfig: decode response: %w", err)
 	}
-	// Populate Raw with every field codex serialized (including ones
-	// the curated struct didn't capture).
-	var wrapper struct {
-		Config map[string]json.RawMessage `json:"config"`
-	}
-	if err := json.Unmarshal(resp, &wrapper); err == nil {
-		result.Config.Raw = wrapper.Config
-	}
 	return &result.Config, nil
 }
 
@@ -80,21 +73,61 @@ func (c *Client) ReadConfigRequirements(ctx context.Context) (*types.ConfigRequi
 	return result.Requirements, nil
 }
 
-// ListModels returns every model the authenticated principal can
-// route turns to. Each ModelInfo includes capabilities, supported
-// reasoning effort tiers, and any pending upgrade redirects.
-//
-// Read-only. Maps to the data source for slash command /model.
+const maxModelListPages = 100
+
+// ErrModelPagination indicates that the model inventory returned a repeated
+// cursor or exceeded the SDK's pagination bound.
+var ErrModelPagination = errors.New("codex model pagination invalid")
+
+// ListModels returns the complete model inventory for the provider's default
+// filters, in server order. It follows up to 100 pages and returns nil data
+// if pagination fails. Use ListModelsPage to control pagination or filters.
 func (c *Client) ListModels(ctx context.Context) ([]types.ModelInfo, error) {
-	resp, err := c.sendRaw(ctx, "ListModels", "model/list", map[string]any{})
+	var opts types.ModelListOptions
+	models := []types.ModelInfo{}
+	seenCursors := make(map[string]struct{})
+	for range maxModelListPages {
+		page, err := c.listModelsPage(ctx, "ListModels", opts)
+		if err != nil {
+			return nil, err
+		}
+		models = append(models, page.Data...)
+		if page.NextCursor == nil {
+			return models, nil
+		}
+		cursor := *page.NextCursor
+		if _, seen := seenCursors[cursor]; seen {
+			return nil, fmt.Errorf("codex.Client.ListModels: repeated cursor: %w", ErrModelPagination)
+		}
+		seenCursors[cursor] = struct{}{}
+		opts.Cursor = page.NextCursor
+	}
+	return nil, fmt.Errorf("codex.Client.ListModels: exceeded %d pages: %w", maxModelListPages, ErrModelPagination)
+}
+
+// ListModelsPage requests one page of models. Pass the previous page's
+// NextCursor and the same filter options to continue.
+func (c *Client) ListModelsPage(ctx context.Context, opts *types.ModelListOptions) (*types.ModelListResult, error) {
+	var params types.ModelListOptions
+	if opts != nil {
+		params = *opts
+	}
+	return c.listModelsPage(ctx, "ListModelsPage", params)
+}
+
+func (c *Client) listModelsPage(ctx context.Context, callerName string, params types.ModelListOptions) (*types.ModelListResult, error) {
+	resp, err := c.sendRaw(ctx, callerName, "model/list", params)
 	if err != nil {
 		return nil, err
 	}
 	var result types.ModelListResult
 	if err := json.Unmarshal(resp, &result); err != nil {
-		return nil, fmt.Errorf("codex.Client.ListModels: decode response: %w", err)
+		return nil, fmt.Errorf("codex.Client.%s: decode response: %w", callerName, err)
 	}
-	return result.Data, nil
+	if result.Data == nil {
+		return nil, fmt.Errorf("codex.Client.%s: response data must be a non-null array", callerName)
+	}
+	return &result, nil
 }
 
 // ListExperimentalFeatures returns every feature flag the user can
@@ -114,23 +147,41 @@ func (c *Client) ListExperimentalFeatures(ctx context.Context) ([]types.Experime
 	return result.Data, nil
 }
 
-// ListMCPServerStatus returns the runtime state of every configured
-// MCP server. The response includes auth status, exposed tools (as a
-// map keyed by tool name), resources, and resource templates.
-//
-// NextCursor is currently always nil in codex 0.121.0 but the SDK
-// preserves the pagination affordance for future versions. Callers
-// can ignore it for now.
-//
-// Read-only. Maps to slash command /mcp.
+// ListMCPServerStatus returns the first page of the runtime state of configured
+// MCP servers. Use ListMCPServerStatusPage with its NextCursor to continue.
 func (c *Client) ListMCPServerStatus(ctx context.Context) (*types.MCPServerStatusListResult, error) {
-	resp, err := c.sendRaw(ctx, "ListMCPServerStatus", "mcpServerStatus/list", map[string]any{})
+	return c.listMCPServerStatusPage(ctx, "ListMCPServerStatus", types.MCPServerStatusListOptions{})
+}
+
+// ListMCPServerStatusPage requests one page of MCP server statuses. Pass the
+// previous page's NextCursor and the same filter options to continue.
+func (c *Client) ListMCPServerStatusPage(ctx context.Context, opts *types.MCPServerStatusListOptions) (*types.MCPServerStatusListResult, error) {
+	var params types.MCPServerStatusListOptions
+	if opts != nil {
+		params = *opts
+	}
+	if params.EnvironmentID != "" && (strings.TrimSpace(params.ThreadID) == "" || strings.TrimSpace(params.ServerName) == "") {
+		return nil, fmt.Errorf("codex.Client.ListMCPServerStatusPage: environment ID requires a thread ID and server name")
+	}
+	switch params.Detail {
+	case "", types.MCPServerStatusDetailFull, types.MCPServerStatusDetailToolsAndAuthOnly:
+	default:
+		return nil, fmt.Errorf("codex.Client.ListMCPServerStatusPage: invalid inventory detail")
+	}
+	return c.listMCPServerStatusPage(ctx, "ListMCPServerStatusPage", params)
+}
+
+func (c *Client) listMCPServerStatusPage(ctx context.Context, callerName string, params types.MCPServerStatusListOptions) (*types.MCPServerStatusListResult, error) {
+	resp, err := c.sendRaw(ctx, callerName, "mcpServerStatus/list", params)
 	if err != nil {
 		return nil, err
 	}
 	var result types.MCPServerStatusListResult
 	if err := json.Unmarshal(resp, &result); err != nil {
-		return nil, fmt.Errorf("codex.Client.ListMCPServerStatus: decode response: %w", err)
+		return nil, fmt.Errorf("codex.Client.%s: decode response: %w", callerName, err)
+	}
+	if result.Data == nil {
+		return nil, fmt.Errorf("codex.Client.%s: response data must be a non-null array", callerName)
 	}
 	return &result, nil
 }
@@ -446,14 +497,29 @@ func (c *Client) SetApprovalPolicy(ctx context.Context, policy types.ApprovalPol
 	return err
 }
 
-// SetSandbox is sugar for `WriteConfigValue("sandbox", sandbox, MergeReplace)`.
-// Changes the sandbox enforcement level for subsequent turns.
+// ErrSandboxConfigOverridden means the provider reported that the configured
+// sandbox default was overridden. The requested value may have been saved.
+var ErrSandboxConfigOverridden = errors.New("codex overrode the requested sandbox mode, and the config may have been saved")
+
+// SetSandbox writes the configured sandbox default (sandbox_mode). ReadConfig
+// can inspect the effective configuration. Codex resolves a new thread's
+// policy from the configured default and applicable overrides.
 func (c *Client) SetSandbox(ctx context.Context, sandbox types.SandboxMode) error {
 	if sandbox == "" {
 		return fmt.Errorf("codex.Client.SetSandbox: sandbox must not be empty")
 	}
-	_, err := c.WriteConfigValue(ctx, "sandbox", string(sandbox), types.MergeReplace)
-	return err
+	result, err := c.WriteConfigValue(ctx, "sandbox_mode", string(sandbox), types.MergeReplace)
+	if err != nil {
+		return err
+	}
+	switch result.Status {
+	case "ok":
+		return nil
+	case "okOverridden":
+		return fmt.Errorf("codex.Client.SetSandbox: %w", ErrSandboxConfigOverridden)
+	default:
+		return fmt.Errorf("codex.Client.SetSandbox: unexpected config write status")
+	}
 }
 
 // SetExperimentalFeature toggles one experimental feature flag.
