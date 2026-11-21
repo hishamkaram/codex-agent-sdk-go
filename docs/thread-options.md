@@ -54,3 +54,35 @@ networked := &types.ThreadOptions{
 ```
 
 For either option, the SDK checks the returned working directory and effective policy before exposing the new handle. If the app-server already created a thread and the reply cannot confirm the requested setting, use `errors.As` with `*types.ThreadPolicyMismatchError` to recover the created thread ID. The caller can inspect or archive it. The SDK leaves the saved workspace-write policy to the server on resume.
+
+## MCP server overrides
+
+`WithMCPServers` provides defaults for start and fork. A nonempty
+`ThreadOptions.MCPServers` map supplies that request's server configuration.
+Use `ToolApprovalMode` with one of the MCP-specific values. For a legacy
+`DefaultApprovalMode: types.ApprovalOnRequest` initializer, choose
+`ToolApprovalMode: types.MCPToolApprovalPrompt` explicitly. Existing native MCP
+approval spellings remain accepted in the deprecated field.
+
+Set `BearerTokenEnvVar` to the **name** of the token variable available to the
+Codex process. Replace uses of the deprecated raw `BearerToken` field with that
+environment reference. For HTTP authentication flows, use the typed `Auth`
+option. See the [MCP example](../examples/with_mcp/main.go).
+
+## Approved-plan handoff
+
+With experimental API enabled, call `PrepareApprovedPlan` on a **fresh
+destination thread**. This can add the approved Markdown to the destination's
+history. Pass the returned prompt unchanged to its first `Run` while you
+have exclusive use of that destination. Use same-thread collaboration mode
+for interactive planning within an existing thread.
+
+An optional attachment path must be absolute on the app-server host. Codex
+checks whether its executor can read the exact plan and chooses how to
+prepare the prompt. The SDK requires schema proof from a directly launched
+native Linux Codex executable.
+
+If preparation or startup fails, retain the original thread and plan.
+Create a fresh destination if you decide to retry. A destination with
+unconfirmed preparation stays fenced against SDK turn starts. See the
+[approved-plan example](../examples/approved_plan/main.go).

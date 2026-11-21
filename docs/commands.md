@@ -7,10 +7,9 @@ ARE exposed as individual app-server methods though. v0.4.0 maps
 every wireable slash command to a typed Go method so callers never
 need to construct raw JSON-RPC frames.
 
-This doc is the map. The v0.4.0 command matrix was last fully stress-
-verified live against codex 0.121.0; the current SDK parser and vendored
-schema target Codex 0.144.1. See `tests/coverage_matrix.md` for the
-one-row-per-test breakdown.
+The v0.4.0 command matrix was verified live against Codex 0.121.0. The
+current parser baseline uses the stable Codex 0.171.0 schema. See the
+[coverage matrix](../tests/coverage_matrix.md) for targeted live checks.
 
 ## Mid-session controls
 
@@ -65,11 +64,19 @@ _ = client.SetApprovalPolicy(ctx, types.ApprovalOnRequest)
 `types.ApprovalGranular` uses the same typed API, but the SDK encodes it
 to Codex's structured wire object when writing `approval_policy`.
 
-### `/fast` / sandbox toggles → `Client.SetSandbox`
+### Persist the sandbox default with `Client.SetSandbox`
 
 ```go
-_ = client.SetSandbox(ctx, types.SandboxReadOnly)
+if err := client.SetSandbox(ctx, types.SandboxReadOnly); err != nil {
+    return err
+}
 ```
+
+The setter writes `sandbox_mode`, the configured default used when a new
+thread inherits server configuration. Use `ReadConfig` to check the effective
+configuration value and thread options to choose per-thread enforcement. An
+overridden write returns `ErrSandboxConfigOverridden`. The configuration
+file may already contain the requested value.
 
 ### `/experimental` → `Client.SetExperimentalFeature(s)` (+ `ListExperimentalFeatures`)
 
@@ -122,11 +129,20 @@ ReviewTarget variants:
 | `/status` — account | `Client.ReadAccount()` | Returns auth type, email (chatgpt), plan tier |
 | `/status` — usage | `Client.ReadRateLimits()` | Dual shape: legacy + `rateLimitsByLimitId` map |
 | `/status` — auth | `Client.GetAuthStatus()` | **SECURITY:** AuthToken is a live JWT — don't log |
-| `/mcp` | `Client.ListMCPServerStatus()` | Returns `{data, nextCursor}`; tools is a map keyed by name |
+| `/mcp` | `Client.ListMCPServerStatus(ctx)` | First page. Tools are keyed by name within each server registration. |
+| Model picker | `Client.ListModels(ctx)` | Complete inventory in server order, up to 100 pages. |
 | `/ps` | `Client.ListBackgroundTerminals(ctx, threadID)` | Complete bounded pagination; requires the schema-proven experimental inventory capability |
 | `/apps` | `Client.ListApps()` | **Caveat:** often 403s on ChatGPT auth (upstream Cloudflare) |
 | `/plugins` | `Client.ListSkills()` | Grouped by cwd; iterate `[]SkillsCwdGroup` |
 | `/debug-config` | `Client.ReadConfig()` | Wrapped under `config.*`; use `Config.Raw` map for fields the SDK doesn't curate. Object-form `approval_policy` is normalized to curated `"granular"` while the raw JSON stays in `Config.Raw["approval_policy"]` |
+
+Use `ListModelsPage(ctx, opts)` and `ListMCPServerStatusPage(ctx, opts)`
+to direct pagination. Copy the returned `NextCursor` into the next request
+and keep its filters and page limit. A nil cursor ends the list. For a
+specific MCP environment, supply both the thread and server name. Two server
+rows can share a name while reporting distinct environment IDs.
+`ListModels` returns an error with nil inventory if a page fails, a cursor
+repeats, or the 100-page bound is exceeded.
 
 ## Thread lifecycle
 
@@ -237,14 +253,8 @@ wrapped `fmt.Errorf` chain.
 
 ## Version & testing
 
-The full v0.4.0 command matrix was verified against codex **0.121.0**
-on **2026-04-19**. The current schema/parser target is codex **0.144.1**
-(verified 2026-07-12 with `make check-schema-drift` and
-`TestIntegrationSchema`). Coverage matrix at
-[`tests/coverage_matrix.md`](../tests/coverage_matrix.md) — every typed
-method × every option variant × every documented error path has a
-live-CLI integration test OR a `TEST-DEFERRED-vX.Y` annotation with
-rationale.
+The [coverage matrix](../tests/coverage_matrix.md) records the historical
+command matrix and the focused runtime checks for Codex 0.171.0.
 
 To re-verify schema/parser compatibility against a newer codex release,
 run:
