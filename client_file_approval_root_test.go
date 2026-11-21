@@ -53,7 +53,7 @@ func TestFileApprovalExposesGrantRoot(t *testing.T) {
 				})
 			}
 			c.handleServerRequest(t.Context(), c.demux, jsonrpc.ServerRequest{
-				ID: 42, Method: "item/fileChange/requestApproval",
+				ID: json.RawMessage("42"), Method: "item/fileChange/requestApproval",
 				Params: json.RawMessage(`{"threadId":"thread","turnId":"turn","itemId":"item","grantRoot":` + tc.root + `}`),
 			})
 			if calls != tc.wantCalls {

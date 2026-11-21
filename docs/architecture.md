@@ -86,10 +86,8 @@ affected paths.
   interruption sends `turn/interrupt` with the thread ID and turn ID. [#45](https://github.com/hishamkaram/codex-agent-sdk-go/issues/45)
   tracks targeted cancellation and same-thread reuse after cancellation.
 - **Approvals.** Keep the ordered path from file notifications to callback and
-  preserve correlation to the original request ID. The encoder currently uses
-  the decision's Go type. Method-specific permission and MCP responses need
-  one shared encoder, with [#48](https://github.com/hishamkaram/codex-agent-sdk-go/issues/48)
-  establishing that boundary before [#49](https://github.com/hishamkaram/codex-agent-sdk-go/issues/49).
+  preserve correlation to the original request ID. The shared encoder selects
+  the wire response from the request method and validates the callback decision.
 - **Thread options.** Start and fork share a defaults-and-overrides builder
   that selects per-thread or default MCP config. Resume builds its own request
   today. [#51](https://github.com/hishamkaram/codex-agent-sdk-go/issues/51)
@@ -97,10 +95,8 @@ affected paths.
   caller-owned values. [#52](https://github.com/hishamkaram/codex-agent-sdk-go/issues/52)
   and [#53](https://github.com/hishamkaram/codex-agent-sdk-go/issues/53)
   build on it. Keep overrides in thread RPC parameters so other threads and
-  the persisted session config retain their settings. Fork acceptance depends
-  on [#50](https://github.com/hishamkaram/codex-agent-sdk-go/issues/50). The
-  SDK sends `sourceThreadId`. The [pinned upstream request](https://github.com/openai/codex/blob/rust-v0.171.0/codex-rs/app-server-protocol/schema/typescript/v2/ThreadForkParams.ts)
-  uses `threadId`.
+  the persisted session config retain their settings. Fork sends the parent ID
+  as `threadId` and registers the returned child under its own ID.
 - **Usage.** The parser preserves `LastUsage` and `TotalUsage`. The streaming
   `Usage` field keeps the cumulative snapshot when present. Buffered `Run`
   prefers explicit completion usage and currently falls back to the streaming

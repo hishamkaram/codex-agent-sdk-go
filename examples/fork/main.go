@@ -4,13 +4,12 @@
 //
 // Run: go run ./examples/fork
 //
-// Requires that thread/fork is supported by the target codex CLI version.
-// The SDK surfaces the server's error as a types.RPCError if it isn't.
+// The SDK sends the parent's ID as threadId in the app-server fork request
+// and surfaces any server rejection as a types.RPCError.
 package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log"
 	"time"
@@ -52,11 +51,7 @@ func run() error {
 
 	branch, fork, err := client.ForkThread(ctx, original.ID(), nil)
 	if err != nil {
-		var rpc *types.RPCError
-		if errors.As(err, &rpc) {
-			return fmt.Errorf("fork not supported by this codex CLI: %w", rpc)
-		}
-		return err
+		return fmt.Errorf("fork thread: %w", err)
 	}
 	fmt.Printf("forked %s → %s\n", fork.SourceThreadID, fork.NewThreadID)
 

@@ -24,9 +24,10 @@ type mockCodexServer struct {
 	serverIn  *io.PipeReader // server writes here (client reads)
 	serverOut *io.PipeWriter
 
-	mu       sync.Mutex
-	received []json.RawMessage
-	closed   bool
+	mu              sync.Mutex
+	received        []json.RawMessage
+	closed          bool
+	approvalReplies chan json.RawMessage
 
 	// handleRequest receives every client-initiated request and must
 	// return a response (Result or Error). notifications/server-requests
@@ -41,6 +42,7 @@ func newMockCodexServer() *mockCodexServer {
 	s := &mockCodexServer{
 		clientIn: cir, clientOut: ciw,
 		serverIn: sor, serverOut: sow,
+		approvalReplies: make(chan json.RawMessage, 8),
 	}
 	go s.readLoop()
 	return s
@@ -62,10 +64,16 @@ func (s *mockCodexServer) readLoop() {
 		// Decide whether this is a request (has id AND method) or a
 		// response to a server-initiated request (has id, no method).
 		var shape struct {
-			ID     *uint64 `json:"id"`
-			Method string  `json:"method"`
+			ID     json.RawMessage `json:"id"`
+			Method string          `json:"method"`
 		}
 		_ = json.Unmarshal(line, &shape)
+		if shape.ID != nil && shape.Method == "" {
+			select {
+			case s.approvalReplies <- cp:
+			default:
+			}
+		}
 		if shape.ID != nil && shape.Method != "" {
 			// Client request — we respond.
 			var req jsonrpc.Request

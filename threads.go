@@ -501,7 +501,7 @@ func (c *Client) ForkThread(ctx context.Context, sourceThreadID string, opts *ty
 		return nil, nil, fmt.Errorf("codex.Client.ForkThread: %w", err)
 	}
 	params := buildThreadStartParams(c.opts, opts)
-	params["sourceThreadId"] = sourceThreadID
+	params["threadId"] = sourceThreadID
 	resp, err := c.demux.Send(ctx, "thread/fork", params)
 	if err != nil {
 		return nil, nil, fmt.Errorf("codex.Client.ForkThread: %w", err)
@@ -512,6 +512,9 @@ func (c *Client) ForkThread(ctx context.Context, sourceThreadID string, opts *ty
 	newID, err := extractThreadID(resp.Result)
 	if err != nil {
 		return nil, nil, err
+	}
+	if newID == sourceThreadID {
+		return nil, nil, fmt.Errorf("codex.Client.ForkThread: provider returned the source thread as its child")
 	}
 	t := newThread(c, newID)
 	t.model = extractThreadModel(resp.Result)
