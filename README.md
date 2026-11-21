@@ -184,7 +184,7 @@ opts = opts.WithApprovalCallback(func(ctx context.Context, req types.ApprovalReq
 - Demultiplexes responses (id → pending chan), notifications (→ events chan), server-initiated requests (→ approval callback)
 - Serializes all stdin writes through one line writer to prevent interleaved frames
 - Serializes `Run()` and `RunStreamed()` by provider thread ID across handles
-- Maintains a 2 MiB read buffer for large notification payloads
+- Uses an 8 MiB default read limit for large responses and notifications, configurable with `WithReadBufferSize`
 - Translates raw JSON-RPC notifications into typed Go events with schema drift checks for Codex upgrades
 - Publishes a bounded client-wide event stream so provider-created child threads remain observable
 - Discovers optional runtime controls from the installed app-server's generated schemas

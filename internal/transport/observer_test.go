@@ -242,25 +242,34 @@ func TestAppServer_ParseGiveUpTerminatesSubprocess(t *testing.T) {
 }
 
 // TestAppServer_ReadBufferSize_WiredToReader proves the line-cap option flows to
-// the demux reader: a single JSON line larger than the 2 MiB default floor but
-// within a configured larger ceiling is decoded successfully (would fail with
-// the default buffer). This guards against the "option silently ignored" bug.
+// the demux reader. It exercises a frame larger than the old default using
+// default options and a frame larger than the current default using a custom
+// limit.
 func TestAppServer_ReadBufferSize_WiredToReader(t *testing.T) {
 	t.Parallel()
 
-	const bigBuf = 6 * 1024 * 1024 // 6 MiB ceiling
-	// Emit one ~3 MiB JSON notification (over the 2 MiB default, under 6 MiB).
-	// head|tr generates the blob in ~30ms; the helper prints the oversized line
-	// then reads stdin to stay alive. A frame this large is decoded ONLY when the
-	// 6 MiB ceiling is honored; with the 2 MiB default the reader would error
-	// with ErrTooLong — this is the proof the line-cap option is wired, not
-	// silently ignored.
+	for _, tc := range []struct {
+		name     string
+		limit    int
+		shellLen string
+	}{
+		{name: "default", shellLen: "3000000"},
+		{name: "custom ceiling", limit: 10 * 1024 * 1024, shellLen: "9000000"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertAppServerReadsLargeFrame(t, tc.limit, tc.shellLen)
+		})
+	}
+}
+
+func assertAppServerReadsLargeFrame(t *testing.T, limit int, shellLen string) {
+	t.Helper()
 	helper := writeAppServerHelper(t,
-		`blob=$(head -c 3000000 < /dev/zero | tr '\0' 'a')`+"\n"+
+		`blob=$(head -c `+shellLen+` < /dev/zero | tr '\0' 'a')`+"\n"+
 			`printf '{"method":"big","params":{"blob":"%s"}}\n' "$blob"`+"\n"+
 			"while IFS= read -r _line; do :; done\nexit 0")
 
-	app := NewAppServer(AppServerConfig{CLIPath: helper, ReadBufferSize: bigBuf})
+	app := NewAppServer(AppServerConfig{CLIPath: helper, ReadBufferSize: limit})
 	if err := app.Connect(context.Background()); err != nil {
 		t.Fatalf("Connect: %v", err)
 	}
@@ -271,7 +280,7 @@ func TestAppServer_ReadBufferSize_WiredToReader(t *testing.T) {
 	})
 
 	// The oversized notification must arrive intact (decoded, not a read error).
-	// 20s tolerates the awk blob build + race-detector + parallel-package CPU
+	// 20s tolerates the helper build + race-detector + parallel-package CPU
 	// contention; the assertion is correctness, not latency.
 	select {
 	case message, ok := <-app.Demux().ServerMessages():

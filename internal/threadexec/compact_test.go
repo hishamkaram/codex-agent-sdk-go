@@ -2,6 +2,7 @@ package threadexec
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -72,5 +73,21 @@ func TestCompactResult_WaitClosedThread(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "thread closed before compact completed") {
 		t.Errorf("err = %q", err)
+	}
+}
+
+func TestCompactAdmissionRejectsAnUndrainedResult(t *testing.T) {
+	t.Parallel()
+
+	record := NewRecord(false)
+	previous := make(chan *types.ContextCompacted, 1)
+	record.compactSub.Store(&previous)
+
+	op, err := record.admit(t.Context(), "thread", Compact, false, nil)
+	if op != nil || !errors.Is(err, types.ErrCompactResultPending) {
+		t.Fatalf("admit = (%v, %v), want no operation and ErrCompactResultPending", op, err)
+	}
+	if record.compactSub.Load() != &previous {
+		t.Fatal("rejected admission displaced the pending result")
 	}
 }

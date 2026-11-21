@@ -9,6 +9,11 @@ All notable changes to the Codex Agent SDK for Go are documented in this file.
 - Preserve provider terminal failure text on `TurnCompleted.Error`.
 
 ### Fixed
+- Read full MCP inventory responses up to the new 8 MiB default frame limit.
+  Explicit limits still have a 2 MiB minimum. Oversized-frame errors report
+  the configured limit.
+- Expose `types.ErrCompactResultPending` for a second compaction with an
+  outstanding result.
 - Return errors matching `types.ErrThreadClosed` for thread operations on
   closed and uninitialized handles. Steering an idle thread now returns an
   error matching `ErrNoActiveTurn`.

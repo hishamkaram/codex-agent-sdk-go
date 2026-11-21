@@ -207,7 +207,9 @@ func (t *Thread) Steer(ctx context.Context, text string) error {
 
 // Compact requests that codex summarize the thread's earlier turns. The
 // returned CompactResult acknowledges receipt. Wait can observe the legacy
-// thread/compacted notification with its own context.
+// thread/compacted notification with its own context. A second compaction
+// returns an error matching types.ErrCompactResultPending after the previous
+// operation completes if its result still owns the subscription.
 //
 // The Client keeps execution reserved until correlated completion. After
 // five seconds without confirmation, a new operation returns

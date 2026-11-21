@@ -4,6 +4,7 @@ package tests
 
 import (
 	"context"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -197,8 +198,8 @@ func TestIntCmd_Compact_EmptyThreadAckSucceeds(t *testing.T) {
 }
 
 func TestIntCmd_Compact_InFlightSecondCallRejected(t *testing.T) {
-	// Two back-to-back Compact calls with no Wait in between —
-	// the second MUST return the "already in flight" error.
+	// The second Compact must be rejected whether the provider has sent
+	// completion for the first operation or it still needs confirmation.
 	c := connectReadOnlyClient(t)
 	thread := newThrowawayThread(t, c)
 	result1, err := thread.Compact(context.Background(), nil)
@@ -211,12 +212,10 @@ func TestIntCmd_Compact_InFlightSecondCallRejected(t *testing.T) {
 		_, _ = result1.Wait(ctx) // drain + detach
 	})
 
-	_, err = thread.Compact(context.Background(), nil)
-	if err == nil {
-		t.Fatal("expected 'already in flight' error on second Compact")
-	}
-	if !strings.Contains(err.Error(), "already in flight") {
-		t.Errorf("err = %q, want 'already in flight'", err)
+	result2, err := thread.Compact(context.Background(), nil)
+	if result2 != nil || (!errors.Is(err, types.ErrCompactResultPending) &&
+		!errors.Is(err, codex.ErrThreadExecutionUnconfirmed)) {
+		t.Fatalf("second Compact = (%v, %v), want a pending or unconfirmed operation error", result2, err)
 	}
 }
 
@@ -233,7 +232,7 @@ func TestIntCmd_CompactResult_WaitCtxCancelAndReEnter(t *testing.T) {
 	_, _ = r1.Wait(ctx)
 	cancel()
 
-	// Second Compact — must NOT see "already in flight".
+	// The completed wait releases the subscription for a second compaction.
 	r2, err := thread.Compact(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("second Compact after Wait ctx-cancel: %v", err)

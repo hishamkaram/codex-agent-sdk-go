@@ -33,7 +33,7 @@ type CodexOptions struct {
 	Logger *zap.Logger
 
 	// ReadBufferSize overrides the demux read-buffer ceiling. 0 uses the
-	// 2 MiB default (MinReadBufferSize). Sizes below the minimum are
+	// 8 MiB default. Nonzero sizes below the 2 MiB minimum are
 	// raised.
 	ReadBufferSize int
 
@@ -198,8 +198,8 @@ func (o *CodexOptions) WithEnvReplacement(entries ...string) *CodexOptions {
 // the SDK.
 func (o *CodexOptions) WithLogger(l *zap.Logger) *CodexOptions { o.Logger = l; return o }
 
-// WithReadBufferSize overrides the demux read-buffer ceiling. Below-minimum
-// sizes are silently raised to 2 MiB.
+// WithReadBufferSize overrides the demux read-buffer ceiling. Zero uses
+// 8 MiB. Other sizes below the 2 MiB minimum are raised to the minimum.
 func (o *CodexOptions) WithReadBufferSize(n int) *CodexOptions {
 	o.ReadBufferSize = n
 	return o
