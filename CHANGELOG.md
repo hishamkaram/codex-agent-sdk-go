@@ -9,6 +9,13 @@ All notable changes to the Codex Agent SDK for Go are documented in this file.
 - Preserve provider terminal failure text on `TurnCompleted.Error`.
 
 ### Fixed
+- Return errors matching `types.ErrThreadClosed` for thread operations on
+  closed and uninitialized handles. Steering an idle thread now returns an
+  error matching `ErrNoActiveTurn`.
+- Handle typed-nil errors during error-chain traversal and thread history
+  classification. Subscription parse gaps omit absent causes.
+- Return the original launch failure on repeated transport connection calls.
+- Quote generated hook commands for shim paths containing shell syntax.
 - Keep explicit relative `WithCLIPath` values anchored to the caller when
   `WithCwd` launches the app-server from another directory.
 - Retry transient `ETXTBSY` failures for short-lived CLI probes and publish
