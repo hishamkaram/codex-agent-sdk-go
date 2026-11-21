@@ -8,7 +8,9 @@ holds public options, events and errors and imports no SDK internals.
   stdio. It uses [jsonrpc](../internal/jsonrpc) for framing and request routing.
 - [events](../internal/events) parses JSON-RPC notifications and provider
   requests into [types](../types) and encodes callback decisions.
-- [hookbridge](../internal/hookbridge) implements the socket protocol shared
+- [threadconfig](../internal/threadconfig) builds thread requests and validates workspace policy replies.
+- [runtimeprobe](../internal/runtimeprobe) reads CLI help and checks provider schemas.
+- [hookbridge](../internal/hookbridge) owns hook installation and the socket protocol shared
   by the client and the [hook shim](../cmd/codex-sdk-hook-shim).
 - [log](../internal/log) wraps injected zap loggers for SDK packages.
 
@@ -27,8 +29,8 @@ and guides in the map show the corresponding public use cases.
 | Start, resume, fork, run, or control a thread | [Client](../client.go) owns one [execution record](../thread_execution.go) per provider thread ID. Handles share admission and lifecycle evidence. Stream readers own bounded consumption. [Thread commands](../threads_commands.go) use the same handle, and [background terminal controls](../background_terminals.go) send exact provider IDs through the Client's RPC session. | [Checks](#threads-and-turn-controls). See [commands](commands.md), the [fork example](../examples/fork/main.go) and [MCP example](../examples/with_mcp/main.go). |
 | Frame, correlate, parse or reply | [LineWriter](../internal/jsonrpc/framing.go) owns frame serialization. [Demux](../internal/jsonrpc/demux.go) owns pending requests by ID. [Approval parsing and encoding](../internal/events/approvals.go) are protocol translations. The ordered dispatcher captures file-approval context. One [approval worker](../client_approval_worker.go) runs callbacks and replies on the matching request ID. | [Checks](#framing-and-approvals). See [wire protocol](wire-protocol.md), [approvals](approvals.md) and the [approval example](../examples/with_approvals/main.go). |
 | Change a public event, option, usage counter, error, or history record | [types](../types) defines the public values. [The parser](../internal/events/parser.go) maps notifications and preserves unknown shapes. [Usage parsing](../internal/events/parser_lifecycle.go) reads provider snapshots. Thread.Run assembles the buffered result ([threads.go](../threads.go)), and [history](../thread_history.go) reads persisted records by RPC. | [Checks](#public-types-and-history). See the [wire protocol guide](wire-protocol.md) and [streaming example](../examples/streaming/main.go). |
-| Change executable discovery, spawn, environment, or optional capability detection | [transport](../internal/transport) owns executable resolution, child environment, pipes and reaping. The root's [runtime feature probe](../runtime_features.go) validates provider schemas. The [runtime control probe](../runtime_controls.go) checks CLI help, optionally checks the experimental schema, and applies supplied provider requirements. A CLI version alone cannot prove support. | [Checks](#transport-and-capability-probes). See [runtime prerequisites](../README.md#prerequisites) and [commands](commands.md). |
-| Change runtime hook configuration or execution | [Client hook setup](../client_hookbridge.go) owns generated config, backups, and cleanup. The [listener](../internal/hookbridge/listener.go) owns its socket and serves the shim. Close stops the app-server before tearing down the listener and removing or restoring the config. | [Checks](#runtime-hooks). See [hooks](hooks.md) and the [hooks example](../examples/with_hooks/main.go). |
+| Change executable discovery, spawn, environment, or optional capability detection | [transport](../internal/transport) owns executable resolution, child environment, pipes and reaping. [Runtime probes](../internal/runtimeprobe) validate schemas, parse CLI help, and apply supplied provider requirements. A CLI version alone cannot prove support. | [Checks](#transport-and-capability-probes). See [runtime prerequisites](../README.md#prerequisites) and [commands](commands.md). |
+| Change runtime hook configuration or execution | [Hook installation](../internal/hookbridge/installation.go) owns generated config, backups, and cleanup. The [listener](../internal/hookbridge/listener.go) owns its socket and serves the shim. Close stops the app-server before tearing down the listener and removing or restoring the config. | [Checks](#runtime-hooks). See [hooks](hooks.md) and the [hooks example](../examples/with_hooks/main.go). |
 | Validate a behavior or update its guidance | The owning package keeps deterministic regression tests. Root-level [fake peer tests](../client_flow_test.go) exercise public flows and wire requests together. [Integration tests](../tests) cover real CLI boundaries. The consumer-facing example and guide follow the API or wire behavior. | Start with the owning row's focused tests, use `make examples` for changed examples, and finish with `make verify`. See [contributing](../CONTRIBUTING.md) for optional schema and live checks. |
 
 ### Focused checks
@@ -62,7 +64,7 @@ go test -race -short . -run 'TestClient_ThreadRun|TestReadThreadAndMessages|Test
 #### Transport and capability probes
 
 ```bash
-go test -race -short ./internal/transport
+go test -race -short ./internal/transport ./internal/runtimeprobe
 go test -race -short . -run 'TestDiscoverRuntime(Features|Controls)'
 ```
 
@@ -70,7 +72,7 @@ go test -race -short . -run 'TestDiscoverRuntime(Features|Controls)'
 
 ```bash
 go test -race -short ./internal/hookbridge ./cmd/codex-sdk-hook-shim
-go test -race -short . -run 'TestSetupHookBridge|TestInstallHooksJSON|TestRestoreUserHooksJSON'
+go test -race -short . -run 'TestConflictingUserHookHome|TestUserHomeHookConfigPinned'
 ```
 
 ## Boundaries and known gaps
@@ -86,11 +88,11 @@ affected paths.
 - **Approvals.** Keep the ordered path from file notifications to callback and
   preserve correlation to the original request ID. The shared encoder selects
   the wire response from the request method and validates the callback decision.
-- **Thread options.** The [thread config builder](../thread_config.go)
+- **Thread options.** The [thread config builder](../internal/threadconfig/config.go)
   combines defaults and per-call options into a fresh request. Start and fork
   share MCP and workspace-write configuration. Resume uses only its supported
   overrides so the server can restore saved workspace-write policy. The
-  [policy readback check](../workspace_write.go) verifies requested workspace
+  [policy readback check](../internal/threadconfig/workspace_write.go) verifies requested workspace
   options before the Client registers a new handle. Fork identifies the parent
   with `threadId` and registers the child under its own ID. See
   [thread configuration](thread-options.md).
@@ -110,8 +112,7 @@ already leaves framing, parsing, and subprocess lifecycle in focused internals.
 Moving Client dispatch alone would expose the private thread registry and
 approval state. Moving thread execution alone would expose the execution registry and
 the Client's private RPC session. Keep both paths in the root
-package and make the next shared approval encoder in events and the next
-thread config builder beside the thread RPC calls. Consider package extraction
+package and make the next shared approval encoder in events and keep thread request policy in threadconfig. Consider package extraction
 in a focused change only when it can remove a demonstrated dependency or
 state boundary problem without changing public imports or copying state.
 
