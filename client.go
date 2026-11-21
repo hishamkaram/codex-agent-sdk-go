@@ -13,6 +13,7 @@ import (
 	"github.com/hishamkaram/codex-agent-sdk-go/internal/hookbridge"
 	"github.com/hishamkaram/codex-agent-sdk-go/internal/jsonrpc"
 	sdklog "github.com/hishamkaram/codex-agent-sdk-go/internal/log"
+	"github.com/hishamkaram/codex-agent-sdk-go/internal/session/approval"
 	"github.com/hishamkaram/codex-agent-sdk-go/internal/threadexec"
 	"github.com/hishamkaram/codex-agent-sdk-go/internal/transport"
 	"github.com/hishamkaram/codex-agent-sdk-go/types"
@@ -36,7 +37,7 @@ type Client struct {
 
 	mu                          sync.Mutex
 	threadRegistry              *threadexec.Registry
-	fileApprovals               map[fileApprovalKey]fileApprovalContext // guarded by mu
+	approvals                   approval.Owner
 	threadEventSubscribers      map[uint64]*threadEventSubscriber
 	nextThreadEventSubscriberID uint64
 	cliCompatibility            atomic.Pointer[cliCompatibilityState]

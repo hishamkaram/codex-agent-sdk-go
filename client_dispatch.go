@@ -6,6 +6,7 @@ import (
 
 	"github.com/hishamkaram/codex-agent-sdk-go/internal/events"
 	"github.com/hishamkaram/codex-agent-sdk-go/internal/jsonrpc"
+	"github.com/hishamkaram/codex-agent-sdk-go/internal/session/approval"
 	"github.com/hishamkaram/codex-agent-sdk-go/internal/threadexec"
 	"github.com/hishamkaram/codex-agent-sdk-go/types"
 	"go.uber.org/zap"
@@ -16,20 +17,14 @@ var errThreadEventIdentityMissing = errors.New("thread-scoped notification is mi
 // dispatch runs the event-routing goroutine. Reads notifications and
 // server-initiated requests from the demux and fans them out.
 func (c *Client) dispatch(ctx context.Context, demux *jsonrpc.Demux, done chan struct{}) {
-	workerCtx, cancel := context.WithCancelCause(ctx)
-	lanes := approvalLanes{callbacks: make(chan approvalJob, approvalQueueSize), denials: make(chan approvalJob, approvalQueueSize), cancel: cancel}
-	workerDone := make(chan struct{})
-	denialsDone := make(chan struct{})
-	go c.runApprovalWorker(workerCtx, demux, lanes.callbacks, workerDone)
-	go c.runApprovalDenials(workerCtx, demux, lanes.denials, denialsDone)
+	approvals := c.startApprovals(ctx, demux)
 	defer func() {
-		cancel(nil)
+		approvals.Cancel()
 		c.connected.Store(false)
 		c.closeThreadEventSubscriptions()
-		c.clearFileApprovals()
+		c.approvals.ClearEvidence()
 		c.threadRegistry.CloseRecords()
-		<-denialsDone
-		<-workerDone
+		approvals.Wait()
 		close(done)
 	}()
 
@@ -45,7 +40,7 @@ func (c *Client) dispatch(ctx context.Context, demux *jsonrpc.Demux, done chan s
 				serverMessages = nil
 				continue
 			}
-			c.routeServerMessage(workerCtx, demux, lanes, message)
+			c.routeServerMessage(demux, approvals, message)
 		case note, ok := <-notifications:
 			if !ok {
 				notifications = nil
@@ -57,7 +52,7 @@ func (c *Client) dispatch(ctx context.Context, demux *jsonrpc.Demux, done chan s
 				serverRequests = nil
 				continue
 			}
-			c.enqueueApproval(workerCtx, lanes, sreq)
+			approvals.Enqueue(sreq)
 		}
 	}
 
@@ -76,13 +71,13 @@ func (c *Client) dispatch(ctx context.Context, demux *jsonrpc.Demux, done chan s
 	}
 }
 
-func (c *Client) routeServerMessage(ctx context.Context, demux *jsonrpc.Demux, lanes approvalLanes, message jsonrpc.ServerMessage) {
+func (c *Client) routeServerMessage(demux *jsonrpc.Demux, approvals *approval.Worker, message jsonrpc.ServerMessage) {
 	switch {
 	case message.Notification != nil:
 		c.handleNotification(*message.Notification)
 		demux.NotificationApplied(message.Notification)
 	case message.Request != nil:
-		c.enqueueApproval(ctx, lanes, *message.Request)
+		approvals.Enqueue(*message.Request)
 	default:
 		message.DeliverOrderedReply()
 	}
@@ -123,7 +118,7 @@ func pendingActivityAffectsThread(n jsonrpc.Notification, threadID string) bool 
 func (c *Client) handleNotification(n jsonrpc.Notification) {
 	if n.DecodeError != nil {
 		c.threadRegistry.Invalidate("")
-		c.clearFileApprovals()
+		c.approvals.ClearEvidence()
 		c.failThreadEventSubscriptions(ThreadEventEnvelope{
 			Err: &ThreadEventFrameGapError{Cause: n.DecodeError},
 		})
@@ -133,7 +128,7 @@ func (c *Client) handleNotification(n jsonrpc.Notification) {
 
 	ev, err := events.ParseEvent(n)
 	if err != nil {
-		c.clearFileApprovals()
+		c.approvals.ClearEvidence()
 		threadID, _ := extractThreadID(n.Params)
 		c.threadRegistry.Invalidate(threadID)
 		c.failThreadEventSubscriptions(ThreadEventEnvelope{
@@ -160,7 +155,7 @@ func (c *Client) handleNotification(n jsonrpc.Notification) {
 	if threadID == "" {
 		if identityRequired {
 			c.threadRegistry.Invalidate("")
-			c.clearFileApprovals()
+			c.approvals.ClearEvidence()
 			c.failThreadEventSubscriptions(ThreadEventEnvelope{
 				Err: &ThreadEventParseGapError{
 					Method: n.Method,
@@ -177,7 +172,7 @@ func (c *Client) handleNotification(n jsonrpc.Notification) {
 			zap.String("method", ev.EventMethod()))
 		return
 	}
-	c.rememberFileApproval(ev)
+	c.approvals.Observe(ev)
 	// Record lifecycle evidence before any lossy event delivery.
 	if c.threadRegistry.Observe(threadID, ev) {
 		c.logger.Warn("operation event queue full, dropped notification",

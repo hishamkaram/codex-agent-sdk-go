@@ -1,12 +1,20 @@
-package codex
+package approval
 
 import (
 	"encoding/json"
 	"slices"
 	"strings"
+	"sync"
 
 	"github.com/hishamkaram/codex-agent-sdk-go/types"
 )
+
+// Owner owns file approval evidence and identifies this session's callbacks.
+// Its zero value is ready for use by the dispatcher.
+type Owner struct {
+	mu            sync.Mutex
+	fileApprovals map[fileApprovalKey]fileApprovalContext
+}
 
 type fileApprovalKey struct{ thread, turn, item string }
 
@@ -15,64 +23,67 @@ type fileApprovalContext struct {
 	invalid bool
 }
 
-func (c *Client) clearFileApprovals() {
-	c.mu.Lock()
-	c.fileApprovals = nil
-	c.mu.Unlock()
+// ClearEvidence drops file context after a stream gap or shutdown.
+func (o *Owner) ClearEvidence() {
+	o.mu.Lock()
+	o.fileApprovals = nil
+	o.mu.Unlock()
 }
 
-func (c *Client) rememberFileApproval(event types.ThreadEvent) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+// Observe applies a parsed event to file approval evidence.
+func (o *Owner) Observe(event types.ThreadEvent) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
 	switch e := event.(type) {
 	case *types.ItemStarted:
 		file, ok := e.Item.(*types.FileChange)
 		if !ok || e.ThreadID == "" || e.TurnID == "" || e.ItemID == "" {
 			return
 		}
-		if c.fileApprovals == nil {
-			c.fileApprovals = make(map[fileApprovalKey]fileApprovalContext)
+		if o.fileApprovals == nil {
+			o.fileApprovals = make(map[fileApprovalKey]fileApprovalContext)
 		}
-		c.fileApprovals[fileApprovalKey{e.ThreadID, e.TurnID, e.ItemID}] = fileApprovalContext{changes: cloneFileChanges(file.Changes)}
+		o.fileApprovals[fileApprovalKey{e.ThreadID, e.TurnID, e.ItemID}] = fileApprovalContext{changes: cloneFileChanges(file.Changes)}
 	case *types.ItemCompleted:
-		delete(c.fileApprovals, fileApprovalKey{e.ThreadID, e.TurnID, e.ItemID})
+		delete(o.fileApprovals, fileApprovalKey{e.ThreadID, e.TurnID, e.ItemID})
 	case *types.FileChangePatchUpdated:
-		c.updateFileApprovalLocked(e)
-	default:
-		if !isTurnTerminus(event, "") {
-			return
-		}
-		thread, _ := threadIdentityFromEvent(event)
-		turn := turnIDFromTerminus(event)
-		for key := range c.fileApprovals {
-			if key.thread == thread && key.turn == turn {
-				delete(c.fileApprovals, key)
-			}
+		o.updateFileApprovalLocked(e)
+	case *types.TurnCompleted:
+		o.clearTurnLocked(e.ThreadID, e.TurnID)
+	case *types.TurnFailed:
+		o.clearTurnLocked(e.ThreadID, e.TurnID)
+	}
+}
+
+func (o *Owner) clearTurnLocked(threadID, turnID string) {
+	for key := range o.fileApprovals {
+		if key.thread == threadID && key.turn == turnID {
+			delete(o.fileApprovals, key)
 		}
 	}
 }
 
-func (c *Client) updateFileApprovalLocked(event *types.FileChangePatchUpdated) {
+func (o *Owner) updateFileApprovalLocked(event *types.FileChangePatchUpdated) {
 	if event.TurnID == "" || event.ItemID == "" {
-		c.fileApprovals = nil
+		o.fileApprovals = nil
 		return
 	}
 	key := fileApprovalKey{event.ThreadID, event.TurnID, event.ItemID}
-	if _, active := c.fileApprovals[key]; !active {
+	if _, active := o.fileApprovals[key]; !active {
 		return
 	}
 	var changes []types.FileChangePart
 	err := json.Unmarshal(event.Changes, &changes)
 	// Retain an invalidated entry so legacy inline fields cannot revive stale context.
-	c.fileApprovals[key] = fileApprovalContext{changes: changes, invalid: err != nil || changes == nil}
+	o.fileApprovals[key] = fileApprovalContext{changes: changes, invalid: err != nil || changes == nil}
 }
 
-func (c *Client) resolveFileApproval(request *types.FileChangeApprovalRequest) bool {
+func (o *Owner) resolveFileApproval(request *types.FileChangeApprovalRequest) bool {
 	request.Changes = nil
-	c.mu.Lock()
-	cached, known := c.fileApprovals[fileApprovalKey{request.ThreadID, request.TurnID, request.ItemID}]
+	o.mu.Lock()
+	cached, known := o.fileApprovals[fileApprovalKey{request.ThreadID, request.TurnID, request.ItemID}]
 	changes := cloneFileChanges(cached.changes)
-	c.mu.Unlock()
+	o.mu.Unlock()
 	if cached.invalid || (request.GrantRoot != nil &&
 		(strings.TrimSpace(*request.GrantRoot) == "" || request.ThreadID == "" || request.TurnID == "" || request.ItemID == "")) {
 		return false

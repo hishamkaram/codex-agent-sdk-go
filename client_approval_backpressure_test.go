@@ -74,7 +74,8 @@ func testRequiredApprovalReply(t *testing.T, overflow bool) {
 	send(1)
 	awaitExecutionTest(t, ctx, entered)
 	if overflow {
-		for id := 2; id <= approvalQueueSize+2; id++ {
+		// One callback is active and sixteen requests fill its queue.
+		for id := 2; id <= 18; id++ {
 			send(id)
 		}
 	}

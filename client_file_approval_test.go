@@ -5,24 +5,28 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/hishamkaram/codex-agent-sdk-go/internal/jsonrpc"
 	"github.com/hishamkaram/codex-agent-sdk-go/types"
 )
 
 func TestFileApprovalResolvesStartedItem(t *testing.T) {
 	t.Parallel()
-	var captured types.ApprovalRequest
+	captured := make(chan types.ApprovalRequest, 1)
 	opts := types.NewCodexOptions()
 	opts.ApprovalCallback = func(_ context.Context, request types.ApprovalRequest) types.ApprovalDecision {
-		captured = request
+		captured <- request
 		return types.ApprovalDeny{}
 	}
-	c, _ := setupMockClient(t, opts, nil)
-	c.handleNotification(jsonrpc.Notification{Method: "item/started", Params: json.RawMessage(
-		`{"threadId":"thread-1","turnId":"turn-1","item":{"type":"fileChange","id":"item-1","changes":[{"path":"one.txt","kind":{"type":"add"},"diff":"+one"},{"path":"two.txt","kind":{"type":"update","move_path":"three.txt"},"diff":"+two"}]}}`,
-	)})
-	runMockApproval(c, t.Context(), c.demux, jsonrpc.ServerRequest{ID: json.RawMessage("42"), Method: "item/fileChange/requestApproval", Params: json.RawMessage(`{"threadId":"thread-1","turnId":"turn-1","itemId":"item-1"}`)})
-	data, err := json.Marshal(captured)
+	_, server := setupMockClient(t, opts, nil)
+	server.push(json.RawMessage(`{"method":"item/started","params":{"threadId":"thread-1","turnId":"turn-1","item":{"type":"fileChange","id":"item-1","changes":[{"path":"one.txt","kind":{"type":"add"},"diff":"+one"},{"path":"two.txt","kind":{"type":"update","move_path":"three.txt"},"diff":"+two"}]}}}`))
+	server.push(json.RawMessage(`{"id":42,"method":"item/fileChange/requestApproval","params":{"threadId":"thread-1","turnId":"turn-1","itemId":"item-1"}}`))
+	assertApprovalReply(t, server, "42", `{"decision":"decline"}`)
+	var request types.ApprovalRequest
+	select {
+	case request = <-captured:
+	default:
+		t.Fatal("file approval callback was not called")
+	}
+	data, err := json.Marshal(request)
 	if err != nil {
 		t.Fatal(err)
 	}

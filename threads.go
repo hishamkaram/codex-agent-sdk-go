@@ -107,17 +107,6 @@ func isTurnTerminus(ev types.ThreadEvent, expected string) bool {
 	return false
 }
 
-func turnIDFromTerminus(ev types.ThreadEvent) string {
-	switch e := ev.(type) {
-	case *types.TurnCompleted:
-		return e.TurnID
-	case *types.TurnFailed:
-		return e.TurnID
-	default:
-		return ""
-	}
-}
-
 // Turn is the buffered result of Thread.Run — all events accumulated
 // in order, with convenience fields for final response text and usage.
 type Turn struct {
