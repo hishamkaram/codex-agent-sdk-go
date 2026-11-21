@@ -21,12 +21,13 @@ type Installation struct {
 }
 
 type installationResources struct {
-	listener   *Listener
-	logger     *sdklog.Logger
-	hooksPath  string
-	backupPath string
-	codexHome  string
-	socketDir  string
+	listener    *Listener
+	logger      *sdklog.Logger
+	hooksPath   string
+	backupPath  string
+	configLease *os.File
+	codexHome   string
+	socketDir   string
 }
 
 // InstallationConfig supplies hook options and the Codex home selected for
@@ -59,8 +60,10 @@ func (i *Installation) Setup(ctx context.Context, cfg InstallationConfig) (_ []s
 	if mkErr := os.MkdirAll(cacheDir, 0o700); mkErr != nil {
 		return nil, fmt.Errorf("cache dir: %w", mkErr)
 	}
-	preferredSocket := filepath.Join(cacheDir, fmt.Sprintf("hook-%d.sock", os.Getpid()))
-	socketPath, socketDir := relocateHookSocketUnderPrivateDir(preferredSocket, hookSocketFallbackDir())
+	socketPath, socketDir, err := allocateHookSocket(cacheDir, os.Getenv("XDG_RUNTIME_DIR"), os.TempDir())
+	if err != nil {
+		return nil, err
+	}
 	resources := installationResources{logger: cfg.Logger, socketDir: socketDir}
 	if resources.logger == nil {
 		resources.logger = sdklog.NewLoggerFromZap(nil)
@@ -114,7 +117,7 @@ func (r *installationResources) installConfig(home, shimPath string, mode types.
 		if err := r.installHooksJSON(home, shimPath); err != nil {
 			return "", err
 		}
-		return filepath.Dir(r.hooksPath), nil
+		return filepath.Join(home, ".codex"), nil
 	default:
 		return "", fmt.Errorf("unsupported hook config mode %q", mode)
 	}
@@ -142,6 +145,12 @@ func (r *installationResources) close() {
 		_ = r.listener.Close()
 	}
 	r.restoreHooksJSON()
+	if r.configLease != nil {
+		// Keep the directory entry so every contender locks the same file.
+		if err := releaseHookConfigLease(r.configLease); err != nil {
+			r.logger.Warn("releasing user hook config lock failed", zap.Error(err))
+		}
+	}
 	if r.codexHome != "" {
 		if err := os.RemoveAll(r.codexHome); err != nil {
 			r.logger.Warn("removing isolated CODEX_HOME failed",

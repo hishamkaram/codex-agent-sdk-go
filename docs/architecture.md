@@ -1,13 +1,14 @@
 # Architecture
 
 The root package, `codex`, exposes `Client`, `Thread`, `Query` and public runtime
-probes. `Client` coordinates the internal packages below. The `types` package
+probes. `Client` adapts the public API to the session and its owners. The `types` package
 holds public options, events and errors and imports no SDK internals.
 
 - [transport](../internal/transport) owns CLI discovery, process lifecycle and
   stdio. It uses [jsonrpc](../internal/jsonrpc) for framing and request routing.
 - [events](../internal/events) parses JSON-RPC notifications and provider
   requests into [types](../types) and encodes callback decisions.
+- [session](../internal/session) owns connection readiness, the ordered dispatcher, and shutdown. Its [approval owner](../internal/session/approval) captures file evidence and runs the callback and denial lanes.
 - [threadexec](../internal/threadexec) owns the canonical thread registry, execution records, and operation lifetimes.
 - [threadconfig](../internal/threadconfig) builds thread requests and validates workspace policy replies.
 - [runtimeprobe](../internal/runtimeprobe) reads CLI help and checks provider schemas.
@@ -15,7 +16,7 @@ holds public options, events and errors and imports no SDK internals.
   by the client and the [hook shim](../cmd/codex-sdk-hook-shim).
 - [log](../internal/log) wraps injected zap loggers for SDK packages.
 
-The root client composes these internals. Internal packages depend on public
+The root client retains the public types and the typed subscription queues. Session publishes to those queues synchronously. Internal packages depend on public
 values in types and on the lower-level packages above as needed. They never
 import the root client.
 
@@ -26,9 +27,9 @@ and guides in the map show the corresponding public use cases.
 
 | Task | Owner, state and boundary | Focused checks and consumers |
 | --- | --- | --- |
-| Connect, close, route or subscribe | [Client](../client.go) owns the registry, connection attempt, and post-connect dispatcher. [Dispatch](../client_dispatch.go) reads ordered server messages, delivers to registered threads, and publishes [subscriptions](../client_thread_events.go) for provider-created child activity. Teardown belongs to Client. | [Checks](#client-lifecycle-and-subscriptions). See the [streaming example](../examples/streaming/main.go). |
+| Connect, close, route or subscribe | [Session](../internal/session/session.go) owns connection attempts and teardown. Its [dispatcher](../internal/session/dispatch.go) applies ordered messages and delivers events to the public [subscription registry](../client_thread_events.go). | [Checks](#client-lifecycle-and-subscriptions). See the [streaming example](../examples/streaming/main.go). |
 | Start, resume, fork, run, or control a thread | [The thread registry](../internal/threadexec/registry.go) owns one [execution record](../internal/threadexec/record.go) per canonical provider thread ID. Handles share admission and lifecycle evidence. Stream readers own bounded consumption. [Thread commands](../threads_commands.go) use the same handle, and [background terminal controls](../background_terminals.go) send exact provider IDs through the Client's RPC session. | [Checks](#threads-and-turn-controls). See [commands](commands.md), the [fork example](../examples/fork/main.go) and [MCP example](../examples/with_mcp/main.go). |
-| Frame, correlate, parse or reply | [LineWriter](../internal/jsonrpc/framing.go) owns frame serialization. [Demux](../internal/jsonrpc/demux.go) owns pending requests by ID. [Approval parsing and encoding](../internal/events/approvals.go) are protocol translations. The ordered dispatcher captures file-approval context. One [approval worker](../client_approval_worker.go) runs callbacks and replies on the matching request ID. | [Checks](#framing-and-approvals). See [wire protocol](wire-protocol.md), [approvals](approvals.md) and the [approval example](../examples/with_approvals/main.go). |
+| Frame, correlate, parse or reply | [LineWriter](../internal/jsonrpc/framing.go) owns frame serialization. [Demux](../internal/jsonrpc/demux.go) owns pending requests by ID. [Approval parsing and encoding](../internal/events/approvals.go) are protocol translations. The ordered dispatcher captures file-approval context. The [approval owner](../internal/session/approval/worker.go) runs callbacks and replies on the matching request ID. | [Checks](#framing-and-approvals). See [wire protocol](wire-protocol.md), [approvals](approvals.md) and the [approval example](../examples/with_approvals/main.go). |
 | Change a public event, option, usage counter, error, or history record | [types](../types) defines the public values. [The parser](../internal/events/parser.go) maps notifications and preserves unknown shapes. [Usage parsing](../internal/events/parser_lifecycle.go) reads provider snapshots. Thread.Run assembles the buffered result ([threads.go](../threads.go)), and [history](../thread_history.go) reads persisted records by RPC. | [Checks](#public-types-and-history). See the [wire protocol guide](wire-protocol.md) and [streaming example](../examples/streaming/main.go). |
 | Change executable discovery, spawn, environment, or optional capability detection | [transport](../internal/transport) owns executable resolution, child environment, pipes and reaping. [Runtime probes](../internal/runtimeprobe) validate schemas, parse CLI help, and apply supplied provider requirements. A CLI version alone cannot prove support. | [Checks](#transport-and-capability-probes). See [runtime prerequisites](../README.md#prerequisites) and [commands](commands.md). |
 | Change runtime hook configuration or execution | [Hook installation](../internal/hookbridge/installation.go) owns generated config, backups, and cleanup. The [listener](../internal/hookbridge/listener.go) owns its socket and serves the shim. Close stops the app-server before tearing down the listener and removing or restoring the config. | [Checks](#runtime-hooks). See [hooks](hooks.md) and the [hooks example](../examples/with_hooks/main.go). |
@@ -39,6 +40,7 @@ and guides in the map show the corresponding public use cases.
 #### Client lifecycle and subscriptions
 
 ```bash
+go test -race -short ./internal/session/...
 go test -race -short . -run 'Test(Client_.*Connect|Client_Close|SubscribeThreadEvents)'
 ```
 
@@ -103,15 +105,14 @@ affected paths.
   terminal evidence and tracks provider cache reads and writes independently.
 - **Launch options.** Transport resolves the child environment once for each
   connection and its CLI probes. Overlay is the default, and replacement uses
-  a caller allowlist. The Client owns connection-scoped proof of experimental
-  turn options. See [launch options](launch-options.md).
+  a caller allowlist. Session binds experimental proofs to the connected executable and handshake. See [launch options](launch-options.md).
 
 ## Choosing a package
 
 Use the package that owns the invariant. Thread execution owns admission, usage,
 and local consumption. Request configuration and runtime probes own their
-validation rules. The client composes the ordered notification and RPC paths
-and adapts them to the public types. Provider wire IDs remain exact on requests
+validation rules. Session composes the ordered notification and RPC paths. The
+client projects results and errors into the public types. Provider wire IDs remain exact on requests
 and errors even when handles share one canonical execution record.
 
 ## Persisted history and hook configuration
@@ -165,6 +166,11 @@ usage before publishing to subscribers. One bounded FIFO approval worker
 invokes callbacks independently of that dispatcher. A second bounded lane
 handles non-accepting overflow replies. Shutdown cancels and joins both workers
 within the caller's `Close` context.
+
+Subscription registration checks readiness and inserts under the session
+lifecycle lock. Source loss changes readiness under that lock before it fails
+current subscribers. Recoverable frame or parse gaps end current subscriptions
+and keep enrollment available. Intentional shutdown closes queues cleanly.
 
 Active operation streams have a 256-event queue with matching terminal
 evidence retained separately. Client-wide subscriptions have independent

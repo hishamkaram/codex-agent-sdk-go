@@ -48,12 +48,14 @@ func testRequiredApprovalReply(t *testing.T, overflow bool) {
 	demux := jsonrpc.NewDemux(jsonrpc.NewLineReader(peer.serverIn), jsonrpc.NewLineWriter(writer), logger,
 		jsonrpc.WithOrderedServerMessages(),
 		jsonrpc.WithUnrecoverableHandler(func(err error) { closed <- err }))
-	client := &Client{opts: opts, logger: logger, demux: demux}
-	client.connected.Store(true)
-	client.dispatcherCancel = stop
-	client.dispatcherDone = make(chan struct{})
+	client, err := NewClient(ctx, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if startErr := client.session.StartDispatcher(ctx, stop, demux, client.session.Dispatch); startErr != nil {
+		t.Fatal(startErr)
+	}
 	demux.Run(ctx)
-	go client.dispatch(ctx, demux, client.dispatcherDone)
 	defer func() {
 		_ = client.Close(ctx)
 		peer.close()
@@ -74,7 +76,8 @@ func testRequiredApprovalReply(t *testing.T, overflow bool) {
 	send(1)
 	awaitExecutionTest(t, ctx, entered)
 	if overflow {
-		for id := 2; id <= approvalQueueSize+2; id++ {
+		// One callback is active and sixteen requests fill its queue.
+		for id := 2; id <= 18; id++ {
 			send(id)
 		}
 	}

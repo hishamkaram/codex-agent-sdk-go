@@ -3,9 +3,9 @@ package codex
 import (
 	"context"
 	"encoding/json"
+	"sync/atomic"
 	"testing"
 
-	"github.com/hishamkaram/codex-agent-sdk-go/internal/jsonrpc"
 	"github.com/hishamkaram/codex-agent-sdk-go/types"
 )
 
@@ -25,40 +25,45 @@ func TestFileApprovalExposesGrantRoot(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			calls := 0
+			var calls atomic.Int32
 			opts := types.NewCodexOptions()
 			opts.ApprovalCallback = func(_ context.Context, request types.ApprovalRequest) types.ApprovalDecision {
-				calls++
+				calls.Add(1)
 				data, err := json.Marshal(request)
 				if err != nil {
-					t.Fatal(err)
+					t.Error(err)
+					return types.ApprovalDeny{}
 				}
 				var fields map[string]json.RawMessage
 				if err := json.Unmarshal(data, &fields); err != nil {
-					t.Fatal(err)
+					t.Error(err)
+					return types.ApprovalDeny{}
 				}
 				if string(fields["grantRoot"]) != tc.root {
-					t.Fatalf("grantRoot was not preserved: %s", data)
+					t.Errorf("grantRoot was not preserved: %s", data)
 				}
 				return types.ApprovalDeny{}
 			}
-			c, _ := setupMockClient(t, opts, nil)
+			_, server := setupMockClient(t, opts, nil)
 			if tc.files {
-				startFileApprovalForUpdate(c)
+				startFileApprovalForUpdate(server)
 			}
 			if tc.invalidated {
-				c.handleNotification(jsonrpc.Notification{
-					Method: "item/fileChange/patchUpdated",
-					Params: json.RawMessage(`{"threadId":"thread","turnId":"turn","itemId":"item","changes":{}}`),
-				})
+				server.push(json.RawMessage(`{"method":"item/fileChange/patchUpdated","params":{"threadId":"thread","turnId":"turn","itemId":"item","changes":{}}}`))
 			}
-			runMockApproval(c, t.Context(), c.demux, jsonrpc.ServerRequest{
-				ID: json.RawMessage("42"), Method: "item/fileChange/requestApproval",
-				Params: json.RawMessage(`{"threadId":"thread","turnId":"turn","itemId":"item","grantRoot":` + tc.root + `}`),
-			})
-			if calls != tc.wantCalls {
-				t.Fatalf("callback calls = %d, want %d", calls, tc.wantCalls)
+			server.push(json.RawMessage(`{"id":42,"method":"item/fileChange/requestApproval","params":{"threadId":"thread","turnId":"turn","itemId":"item","grantRoot":` + tc.root + `}}`))
+			wantReply := `{"decision":"decline"}`
+			if tc.wantCalls == 0 {
+				wantReply = `{"decision":"decline","reason":"no approval callback configured"}`
+			}
+			assertApprovalReply(t, server, "42", wantReply)
+			if got := int(calls.Load()); got != tc.wantCalls {
+				t.Fatalf("callback calls = %d, want %d", got, tc.wantCalls)
 			}
 		})
 	}
+}
+
+func startFileApprovalForUpdate(server *mockCodexServer) {
+	server.push(json.RawMessage(`{"method":"item/started","params":{"threadId":"thread","turnId":"turn","item":{"type":"fileChange","id":"item","changes":[{"path":"old.txt","kind":{"type":"add"},"diff":"+old"}]}}}`))
 }

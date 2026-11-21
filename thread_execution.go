@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/hishamkaram/codex-agent-sdk-go/internal/jsonrpc"
+	"github.com/hishamkaram/codex-agent-sdk-go/internal/session"
 	"github.com/hishamkaram/codex-agent-sdk-go/internal/threadexec"
 	"github.com/hishamkaram/codex-agent-sdk-go/types"
 )
@@ -43,12 +44,11 @@ func (t *Thread) beginOperation(ctx context.Context, kind threadexec.Kind, strea
 
 func (t *Thread) executionWire() threadexec.Wire {
 	id := threadexec.CanonicalID(t.id)
+	demux := t.client.session.Demux()
 	return threadexec.Wire{
-		PostGuarded: t.client.demux.PostGuarded,
+		PostGuarded: demux.PostGuarded,
 		PendingActivity: func() (bool, error) {
-			return t.client.demux.CheckPendingNotification(func(n jsonrpc.Notification) bool {
-				return pendingActivityAffectsThread(n, id)
-			})
+			return session.PendingActivity(demux, id)
 		},
 		Interrupt: t.client.InterruptThreadTurn,
 		Unconfirmed: func(threadID string) error {

@@ -13,7 +13,6 @@ import (
 
 	"github.com/hishamkaram/codex-agent-sdk-go/internal/jsonrpc"
 	sdklog "github.com/hishamkaram/codex-agent-sdk-go/internal/log"
-	"github.com/hishamkaram/codex-agent-sdk-go/internal/threadexec"
 	"github.com/hishamkaram/codex-agent-sdk-go/types"
 )
 
@@ -159,18 +158,15 @@ func setupMockClient(t *testing.T, opts *types.CodexOptions, handleRequest func(
 	demux := jsonrpc.NewDemux(lr, lw, logger, jsonrpc.WithOrderedServerMessages())
 	demux.Run(context.Background())
 
-	c := &Client{
-		opts:           opts,
-		logger:         logger,
-		demux:          demux,
-		threadRegistry: threadexec.NewRegistry(),
+	c, err := NewClient(t.Context(), opts)
+	if err != nil {
+		t.Fatal(err)
 	}
-	c.connected.Store(true)
 	dispatcherCtx, dispatcherCancel := context.WithCancel(context.Background())
-	c.dispatcherCtx = dispatcherCtx
-	c.dispatcherCancel = dispatcherCancel
-	c.dispatcherDone = make(chan struct{})
-	go c.dispatch(dispatcherCtx, demux, c.dispatcherDone)
+	if err := c.session.StartDispatcher(dispatcherCtx, dispatcherCancel, demux, c.session.Dispatch); err != nil {
+		dispatcherCancel()
+		t.Fatal(err)
+	}
 
 	t.Cleanup(func() {
 		_ = c.Close(context.Background())
@@ -287,7 +283,7 @@ func TestClient_CloseLeavesDemuxStableForConcurrentCallers(t *testing.T) {
 		return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{"data":[]}`)}
 	})
 	_ = srv
-	originalDemux := c.demux
+	originalDemux := c.session.Demux()
 	if originalDemux == nil {
 		t.Fatal("mock client demux is nil before Close")
 	}
@@ -295,8 +291,8 @@ func TestClient_CloseLeavesDemuxStableForConcurrentCallers(t *testing.T) {
 	if err := c.Close(context.Background()); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
-	if c.demux != originalDemux {
-		t.Fatal("Close changed c.demux; concurrent public send paths require a stable pointer")
+	if c.session.Demux() != originalDemux {
+		t.Fatal("Close changed c.session.Demux(); concurrent public send paths require a stable pointer")
 	}
 }
 
@@ -615,18 +611,15 @@ func TestClient_CloseUnblocksApprovalResponseWrite(t *testing.T) {
 			return types.ApprovalDeny{Reason: "closing"}
 		})
 
-	c := &Client{
-		opts:           opts,
-		logger:         logger,
-		demux:          demux,
-		threadRegistry: threadexec.NewRegistry(),
+	c, err := NewClient(t.Context(), opts)
+	if err != nil {
+		t.Fatal(err)
 	}
-	c.connected.Store(true)
 	dispatcherCtx, dispatcherCancel := context.WithCancel(context.Background())
-	c.dispatcherCtx = dispatcherCtx
-	c.dispatcherCancel = dispatcherCancel
-	c.dispatcherDone = make(chan struct{})
-	go c.dispatch(dispatcherCtx, demux, c.dispatcherDone)
+	if err := c.session.StartDispatcher(dispatcherCtx, dispatcherCancel, demux, c.session.Dispatch); err != nil {
+		dispatcherCancel()
+		t.Fatal(err)
+	}
 
 	t.Cleanup(func() {
 		writer.release()
@@ -634,7 +627,7 @@ func TestClient_CloseUnblocksApprovalResponseWrite(t *testing.T) {
 		_ = demux.Close()
 		srv.close()
 		select {
-		case <-c.dispatcherDone:
+		case <-c.session.DispatcherDone():
 		case <-time.After(2 * time.Second):
 			t.Fatal("dispatcher did not exit during cleanup")
 		}
@@ -682,7 +675,7 @@ func TestClient_ArchiveThreadUnregisters(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	present := c.threadRegistry.Lookup(thread.ID()) != nil
+	present := c.session.Threads().Lookup(thread.ID()) != nil
 	if !present {
 		t.Fatal("thread missing from routing table after StartThread")
 	}
@@ -690,7 +683,7 @@ func TestClient_ArchiveThreadUnregisters(t *testing.T) {
 	if err := c.ArchiveThread(ctx, thread.ID()); err != nil {
 		t.Fatal(err)
 	}
-	if c.threadRegistry.Lookup(thread.ID()) == nil {
+	if c.session.Threads().Lookup(thread.ID()) == nil {
 		t.Fatal("archive discarded the execution record still held by existing handles")
 	}
 	if got := c.SessionID(); got != "" {

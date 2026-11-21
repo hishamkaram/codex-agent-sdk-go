@@ -320,13 +320,13 @@ func (c *Client) GetAuthStatus(ctx context.Context) (*types.AuthStatus, error) {
 // experimentalApi capability" → *types.FeatureNotEnabledError).
 // Otherwise the generic *types.RPCError is returned.
 func (c *Client) sendRaw(ctx context.Context, callerName, method string, params any) (json.RawMessage, error) {
-	if c.closed.Load() {
+	if c.session.Closed() {
 		return nil, fmt.Errorf("codex.Client.%s: %w", callerName, types.ErrClientClosed)
 	}
-	if !c.connected.Load() {
+	if !c.session.Connected() {
 		return nil, fmt.Errorf("codex.Client.%s: %w", callerName, types.ErrClientNotConnected)
 	}
-	resp, err := c.demux.Send(ctx, method, params)
+	resp, err := c.session.Demux().Send(ctx, method, params)
 	if err != nil {
 		return nil, fmt.Errorf("codex.Client.%s: %w", callerName, err)
 	}
@@ -464,7 +464,7 @@ func (c *Client) rejectHookConfigWrite(callerName, keyPath string) error {
 	if c == nil || c.opts == nil || c.opts.HookCallback == nil {
 		return nil
 	}
-	if !c.connected.Load() || c.closed.Load() {
+	if !c.session.Connected() || c.session.Closed() {
 		return nil
 	}
 	return fmt.Errorf("codex.Client.%s: refusing to write %q while WithHookCallback owns generated hooks.json; close this client or create one without WithHookCallback", callerName, keyPath)

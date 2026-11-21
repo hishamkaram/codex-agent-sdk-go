@@ -13,10 +13,23 @@ import (
 	"github.com/hishamkaram/codex-agent-sdk-go/types"
 )
 
+func newTestInstallationResources(t *testing.T) *installationResources {
+	t.Helper()
+	resources := &installationResources{logger: sdklog.NewLoggerFromZap(nil)}
+	t.Cleanup(func() {
+		if resources.configLease != nil {
+			if err := releaseHookConfigLease(resources.configLease); err != nil {
+				t.Error(err)
+			}
+		}
+	})
+	return resources
+}
+
 func TestInstallHooksJSON_NoExistingConfig_RemoveOnRestore(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
-	resources := installationResources{logger: sdklog.NewLoggerFromZap(nil)}
+	resources := newTestInstallationResources(t)
 
 	if err := resources.installHooksJSON(home, "/path/to/shim"); err != nil {
 		t.Fatalf("installHooksJSON: %v", err)
@@ -55,7 +68,7 @@ func TestInstallHooksJSON_ExistingConfig_BackupAndRestoreByteIdentical(t *testin
 		t.Fatal(err)
 	}
 
-	resources := installationResources{logger: sdklog.NewLoggerFromZap(nil)}
+	resources := newTestInstallationResources(t)
 	if err := resources.installHooksJSON(home, "/path/to/sdk-shim"); err != nil {
 		t.Fatalf("installHooksJSON: %v", err)
 	}
@@ -119,7 +132,7 @@ func TestInstallHooksJSON_StaleBackupRecovered(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	resources := installationResources{logger: sdklog.NewLoggerFromZap(nil)}
+	resources := newTestInstallationResources(t)
 	if err := resources.installHooksJSON(home, "/path/to/new-shim"); err != nil {
 		t.Fatalf("installHooksJSON: %v", err)
 	}
@@ -176,7 +189,7 @@ func TestInstallHooksJSON_FreshConcurrentBackupRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	resources := installationResources{logger: sdklog.NewLoggerFromZap(nil)}
+	resources := newTestInstallationResources(t)
 	err := resources.installHooksJSON(home, "/shim")
 	if err == nil {
 		t.Fatal("expected concurrent-SDK refusal error, got nil")
@@ -213,9 +226,15 @@ func writeTestShim(t *testing.T) string {
 	return shim
 }
 
+func setHookTestHome(t *testing.T, home string) {
+	t.Helper()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+}
+
 func setupTestInstallation(t *testing.T) (*Installation, []string) {
 	t.Helper()
-	t.Setenv("HOME", t.TempDir())
+	setHookTestHome(t, t.TempDir())
 	installation := &Installation{}
 	env, err := installation.Setup(t.Context(), InstallationConfig{
 		ShimPath: writeTestShim(t),
@@ -269,7 +288,7 @@ func TestInstallationCloseConcurrentIsRaceFree(t *testing.T) {
 
 func TestInstallationSetupFailureRemovesRelocatedSocket(t *testing.T) {
 	home := filepath.Join(t.TempDir(), strings.Repeat("h", maxUnixSocketLen))
-	t.Setenv("HOME", home)
+	setHookTestHome(t, home)
 	runtimeDir, err := os.MkdirTemp("", "cxrt-")
 	if err != nil {
 		t.Fatalf("create runtime directory: %v", err)

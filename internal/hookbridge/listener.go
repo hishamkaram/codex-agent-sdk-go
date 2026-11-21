@@ -51,9 +51,8 @@ type Config struct {
 }
 
 // New creates and starts a Listener. The socket file is created at
-// SocketPath; the caller is responsible for choosing a unique path (the
-// SDK uses a PID-tagged tempdir). Returns after the accept loop is
-// running.
+// SocketPath. The caller supplies an unused path in a private directory.
+// New returns after starting the accept loop.
 //
 // parent supplies request-scoped values to the listener's internal
 // context; its cancellation is intentionally detached via
@@ -76,11 +75,6 @@ func New(parent context.Context, cfg Config) (*Listener, error) {
 		cfg.Logger = sdklog.NewLoggerFromZap(nil)
 	}
 
-	// Remove a stale socket file at this path (could exist from a crashed
-	// prior SDK process). If another live listener owns it, the bind
-	// below fails — propagated as an error.
-	_ = os.Remove(cfg.SocketPath)
-
 	ln, err := net.Listen("unix", cfg.SocketPath)
 	if err != nil {
 		return nil, fmt.Errorf("hookbridge.New: listen %q: %w", cfg.SocketPath, err)
@@ -91,8 +85,7 @@ func New(parent context.Context, cfg Config) (*Listener, error) {
 	// creates the socket with the process umask (commonly group-connectable);
 	// chmod 0700 closes it to non-owners (on Linux and macOS connect() honors the
 	// socket file mode). This is defense-in-depth: the SDK additionally places
-	// every hook socket under a 0700 parent directory (the preferred
-	// ~/.cache/codex-sdk dir or a freshly-created 0700 relocation dir), so the
+	// every hook socket under a freshly created 0700 parent directory, so the
 	// owner-only parent is the primary, atomically-established access gate that
 	// closes the brief net.Listen→chmod window entirely.
 	if err := os.Chmod(cfg.SocketPath, 0o700); err != nil {
@@ -132,7 +125,6 @@ func (l *Listener) Close() error {
 	l.cancel()
 	_ = l.ln.Close()
 	l.wg.Wait()
-	_ = os.Remove(l.socketPath)
 	return nil
 }
 

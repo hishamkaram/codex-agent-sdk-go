@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -33,10 +34,10 @@ func TestNewClient_ReturnsUnconnected(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.connected.Load() {
+	if c.session.Connected() {
 		t.Fatal("new client must not be connected")
 	}
-	if c.closed.Load() {
+	if c.session.Closed() {
 		t.Fatal("new client must not be closed")
 	}
 }
@@ -74,7 +75,7 @@ func TestClient_CloseNilContextDoesNotClose(t *testing.T) {
 	if !strings.Contains(err.Error(), "context is required") {
 		t.Fatalf("Close(nil) error = %v, want context-required error", err)
 	}
-	if c.closed.Load() {
+	if c.session.Closed() {
 		t.Fatal("Close(nil) marked client closed")
 	}
 	if err := c.Close(context.Background()); err != nil {
@@ -88,9 +89,20 @@ func TestClient_CloseWaitsForDispatcherBeforeClosingCompactSubscription(t *testi
 	thread := newThread(c, "T-close")
 	srv := newMockCodexServer()
 	t.Cleanup(srv.close)
-	c.demux = jsonrpc.NewDemux(jsonrpc.NewLineReader(srv.serverIn), jsonrpc.NewLineWriter(srv.clientOut), c.logger)
-	c.demux.Run(t.Context())
-	c.connected.Store(true)
+	demux := jsonrpc.NewDemux(jsonrpc.NewLineReader(srv.serverIn), jsonrpc.NewLineWriter(srv.clientOut), c.logger)
+	demux.Run(t.Context())
+	releaseDispatcher := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseDispatcher) }) }
+	defer release()
+	dispatchCtx, stop := context.WithCancel(t.Context())
+	defer stop()
+	if err := c.session.StartDispatcher(dispatchCtx, stop, demux, func(_ context.Context, _ *jsonrpc.Demux, done chan struct{}) {
+		defer close(done)
+		<-releaseDispatcher
+	}); err != nil {
+		t.Fatal(err)
+	}
 	c.registerThread(thread)
 	compact, err := thread.Compact(t.Context(), nil)
 	if err != nil {
@@ -101,8 +113,6 @@ func TestClient_CloseWaitsForDispatcherBeforeClosingCompactSubscription(t *testi
 		_, waitErr := compact.Wait(t.Context())
 		waitDone <- waitErr
 	}()
-	dispatcherDone := make(chan struct{})
-	c.dispatcherDone = dispatcherDone
 
 	closeDone := make(chan error, 1)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -125,7 +135,7 @@ func TestClient_CloseWaitsForDispatcherBeforeClosingCompactSubscription(t *testi
 	default:
 	}
 
-	close(dispatcherDone)
+	release()
 	select {
 	case err := <-closeDone:
 		if err != nil {
@@ -216,9 +226,9 @@ while IFS= read -r line; do :; done
 	if h := c.Health(); h.Ready {
 		t.Fatalf("Health.Ready after Close = true; health=%+v", h)
 	}
-	if c.dispatcherDone != nil {
+	if c.session.DispatcherDone() != nil {
 		select {
-		case <-c.dispatcherDone:
+		case <-c.session.DispatcherDone():
 		default:
 			t.Fatal("dispatcher still running after Close")
 		}
@@ -284,7 +294,7 @@ printf 'control protocol initialization failed OPENAI_API_KEY=%s\n' >&2
 printf 'DATABASE_URL=postgres://user:%s@localhost/db\n' >&2
 printf 'Authorization: Bearer %s%s\n' >&2
 while IFS= read -r line; do :; done
-`, secret, secret, strings.Repeat("x", stderrDiagnosticTailLimit), secretSuffix)
+`, secret, secret, strings.Repeat("x", 2048), secretSuffix)
 	writeClientExecutable(t, helper, script)
 	core, logs := observer.New(zap.DebugLevel)
 	c, err := NewClient(
@@ -338,62 +348,6 @@ func writeClientExecutable(t *testing.T, path, contents string) {
 	}
 }
 
-func TestRedactedStderrDiagnosticTailUsesAllowlistedDiagnostics(t *testing.T) {
-	t.Parallel()
-
-	secret := "sk-review-secret"
-	got := redactedStderrDiagnosticTail(strings.Join([]string{
-		"control protocol initialization failed OPENAI_API_KEY=" + secret,
-		"DATABASE_URL=postgres://user:" + secret + "@localhost/db",
-		"Authorization: Bearer " + strings.Repeat("x", stderrDiagnosticTailLimit) + secret,
-	}, "\n"))
-	if strings.Contains(got, secret) {
-		t.Fatalf("redacted stderr tail leaked secret: %q", got)
-	}
-	if strings.Contains(got, "DATABASE_URL") || strings.Contains(got, "Authorization") {
-		t.Fatalf("redacted stderr tail leaked raw stderr fields: %q", got)
-	}
-	if !strings.Contains(got, "control protocol initialization failed") {
-		t.Fatalf("redacted stderr tail = %q, want allowlisted diagnostic", got)
-	}
-	if !strings.Contains(got, "<redacted>") {
-		t.Fatalf("redacted stderr tail = %q, want redaction marker", got)
-	}
-}
-
-func TestClient_LogInitializeFailureOmitsRPCMessage(t *testing.T) {
-	t.Parallel()
-
-	core, logs := observer.New(zap.DebugLevel)
-	c, err := NewClient(
-		context.Background(),
-		types.NewCodexOptions().WithLogger(zap.New(core)),
-	)
-	if err != nil {
-		t.Fatalf("NewClient: %v", err)
-	}
-	secret := "DATABASE_URL=postgres://secret"
-	c.logInitializeFailure(types.NewRPCError(-32000, secret, []byte(`{"cookie":"secret"}`)), "")
-
-	entries := logs.FilterMessage("codex.Client.Connect: initialize failed").All()
-	if len(entries) == 0 {
-		t.Fatal("missing initialize failure diagnostic log")
-	}
-	fields := entries[0].ContextMap()
-	if _, ok := fields["error"]; ok {
-		t.Fatalf("initialize failure log included raw error field: %#v", fields)
-	}
-	if strings.Contains(fmt.Sprint(fields), secret) || strings.Contains(fmt.Sprint(fields), "cookie") {
-		t.Fatalf("initialize failure log leaked RPC payload: %#v", fields)
-	}
-	if fields["error_kind"] != "rpc_error" {
-		t.Fatalf("error_kind = %#v, want rpc_error; fields=%#v", fields["error_kind"], fields)
-	}
-	if fmt.Sprint(fields["rpc_error_code"]) != "-32000" {
-		t.Fatalf("rpc_error_code = %#v, want -32000; fields=%#v", fields["rpc_error_code"], fields)
-	}
-}
-
 func TestClient_StartThreadBeforeConnectIsError(t *testing.T) {
 	t.Parallel()
 	c, _ := NewClient(context.Background(), types.NewCodexOptions())
@@ -403,29 +357,6 @@ func TestClient_StartThreadBeforeConnectIsError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "not connected") {
 		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestBuildInitializeParams_IncludesNotificationOptOut(t *testing.T) {
-	t.Parallel()
-	opts := types.NewCodexOptions().
-		WithExperimentalAPI(true).
-		WithOptOutNotificationMethods("process/outputDelta", "warning")
-
-	params := buildInitializeParams(opts)
-	capabilities, ok := params["capabilities"].(map[string]any)
-	if !ok {
-		t.Fatalf("capabilities = %T", params["capabilities"])
-	}
-	if capabilities["experimentalApi"] != true {
-		t.Fatalf("experimentalApi = %#v", capabilities["experimentalApi"])
-	}
-	got, ok := capabilities["optOutNotificationMethods"].([]string)
-	if !ok {
-		t.Fatalf("optOutNotificationMethods = %T", capabilities["optOutNotificationMethods"])
-	}
-	if len(got) != 2 || got[0] != "process/outputDelta" || got[1] != "warning" {
-		t.Fatalf("optOutNotificationMethods = %#v", got)
 	}
 }
 

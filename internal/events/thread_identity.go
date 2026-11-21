@@ -1,11 +1,13 @@
-package codex
+package events
 
 import (
+	"encoding/json"
+
 	"github.com/hishamkaram/codex-agent-sdk-go/types"
 )
 
 // threadIDExtractors is the ordered set of category extractors consulted by
-// extractThreadIDFromEvent. Each event type is handled by exactly one extractor;
+// ThreadIdentity. Each event type is handled by exactly one extractor;
 // the first to report ok wins. Splitting the former single 38-case type switch
 // into category functions keeps each under the cyclomatic gate while preserving
 // the exact recognized-type set (proven by TestExtractThreadIDFromEvent_Oracle).
@@ -18,18 +20,10 @@ var threadIDExtractors = []func(types.ThreadEvent) (string, bool){
 	threadIDFromMiscEvent,
 }
 
-// extractThreadIDFromEvent returns the ThreadID field of every event type
-// that carries one. Returns "" for events that don't, including global
-// warnings and UnknownEvent values whose payload did not expose a thread ID.
-func extractThreadIDFromEvent(ev types.ThreadEvent) string {
-	threadID, _ := threadIdentityFromEvent(ev)
-	return threadID
-}
-
-// threadIdentityFromEvent returns the event's thread ID and whether its
+// ThreadIdentity returns the event's thread ID and whether its
 // concrete event family requires that identity. Optional-identity events are
 // routed when an ID exists but remain valid global events when it does not.
-func threadIdentityFromEvent(ev types.ThreadEvent) (string, bool) {
+func ThreadIdentity(ev types.ThreadEvent) (string, bool) {
 	for _, extract := range threadIDExtractors {
 		if id, ok := extract(ev); ok {
 			return id, threadIdentityRequired(ev)
@@ -182,4 +176,26 @@ func threadIDFromMiscEvent(ev types.ThreadEvent) (string, bool) {
 		return e.ThreadID, true
 	}
 	return "", false
+}
+
+// ThreadIDFromReply pulls thread.id from a thread/start or thread/resume or
+// thread/fork response. Accepts both nested ("thread.id") and flat
+// ("threadId") shapes.
+func ThreadIDFromReply(result json.RawMessage) (string, error) {
+	var shape struct {
+		ThreadID string `json:"threadId"`
+		Thread   *struct {
+			ID string `json:"id"`
+		} `json:"thread"`
+	}
+	if err := json.Unmarshal(result, &shape); err != nil {
+		return "", types.NewJSONDecodeError(string(result), err)
+	}
+	if shape.ThreadID != "" {
+		return shape.ThreadID, nil
+	}
+	if shape.Thread != nil && shape.Thread.ID != "" {
+		return shape.Thread.ID, nil
+	}
+	return "", types.NewMessageParseError("thread response missing thread id", string(result))
 }

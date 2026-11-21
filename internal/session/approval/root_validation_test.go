@@ -1,4 +1,4 @@
-package codex
+package approval
 
 import (
 	"testing"
@@ -21,7 +21,7 @@ func TestRootApprovalRequiresIdentity(t *testing.T) {
 			case "item":
 				request.ItemID = ""
 			}
-			if (&Client{}).resolveFileApproval(request) {
+			if (&Owner{}).resolveFileApproval(request) {
 				t.Fatal("root approval accepted without complete identity")
 			}
 		})
@@ -35,7 +35,7 @@ func TestRootOnlyApprovalDoesNotTrustUnresolvedChanges(t *testing.T) {
 		ThreadID: "thread", TurnID: "turn", ItemID: "item", GrantRoot: &root,
 		Changes: []types.FileChangePart{{Path: "unresolved.txt", Operation: "create"}},
 	}
-	if !(&Client{}).resolveFileApproval(request) {
+	if !(&Owner{}).resolveFileApproval(request) {
 		t.Fatal("valid root request rejected")
 	}
 	if len(request.Changes) != 0 {

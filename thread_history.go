@@ -12,10 +12,10 @@ import (
 // ReadThread returns persisted Codex thread state through app-server
 // thread/read. It does not resume the thread and does not start a turn.
 func (c *Client) ReadThread(ctx context.Context, threadID string, opts *types.ThreadReadOptions) (*types.ThreadReadResult, error) {
-	if c.closed.Load() {
+	if c.session.Closed() {
 		return nil, fmt.Errorf("codex.Client.ReadThread: %w", types.ErrClientClosed)
 	}
-	if !c.connected.Load() {
+	if !c.session.Connected() {
 		return nil, fmt.Errorf("codex.Client.ReadThread: %w", types.ErrClientNotConnected)
 	}
 	if strings.TrimSpace(threadID) == "" {
@@ -27,7 +27,7 @@ func (c *Client) ReadThread(ctx context.Context, threadID string, opts *types.Th
 	if opts != nil {
 		params["includeTurns"] = opts.IncludeTurns
 	}
-	resp, err := c.demux.Send(ctx, "thread/read", params)
+	resp, err := c.session.Demux().Send(ctx, "thread/read", params)
 	if err != nil {
 		return nil, fmt.Errorf("codex.Client.ReadThread: %w", err)
 	}
@@ -62,14 +62,14 @@ func (c *Client) ListThreads(ctx context.Context) ([]types.ThreadInfo, error) {
 
 // ListThreadsPage returns a page of persisted thread metadata via thread/list.
 func (c *Client) ListThreadsPage(ctx context.Context, opts *types.ThreadListOptions) (*types.ThreadListPage, error) {
-	if c.closed.Load() {
+	if c.session.Closed() {
 		return nil, fmt.Errorf("codex.Client.ListThreadsPage: %w", types.ErrClientClosed)
 	}
-	if !c.connected.Load() {
+	if !c.session.Connected() {
 		return nil, fmt.Errorf("codex.Client.ListThreadsPage: %w", types.ErrClientNotConnected)
 	}
 	params := buildThreadListParams(opts)
-	resp, err := c.demux.Send(ctx, "thread/list", params)
+	resp, err := c.session.Demux().Send(ctx, "thread/list", params)
 	if err != nil {
 		return nil, fmt.Errorf("codex.Client.ListThreadsPage: %w", err)
 	}

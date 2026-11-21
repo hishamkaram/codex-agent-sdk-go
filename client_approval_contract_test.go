@@ -65,7 +65,7 @@ func TestClient_ApprovalCallback_CanceledDecisionDeniesGrant(t *testing.T) {
 			Permissions: types.GrantedPermissionProfile{Network: &types.GrantedNetworkPermissions{Enabled: &enabled}},
 		}
 	}), nil)
-	runMockApproval(c, ctx, c.demux, jsonrpc.ServerRequest{
+	runMockApproval(t, c, ctx, jsonrpc.ServerRequest{
 		ID:     json.RawMessage("0"),
 		Method: "item/permissions/requestApproval",
 		Params: json.RawMessage(`{"threadId":"T","turnId":"U","itemId":"i","cwd":"/work","startedAtMs":1782904297563,"permissions":{"network":{"enabled":true}}}`),
@@ -118,7 +118,7 @@ func TestClient_ApprovalCallback_CanceledElicitationDropsContent(t *testing.T) {
 			Content: json.RawMessage(`{"format":"brief"}`),
 		}
 	}), nil)
-	runMockApproval(c, ctx, c.demux, jsonrpc.ServerRequest{
+	runMockApproval(t, c, ctx, jsonrpc.ServerRequest{
 		ID:     json.RawMessage(`"canceled"`),
 		Method: "mcpServer/elicitation/request",
 		Params: json.RawMessage(`{"threadId":"T","serverName":"forms","mode":"form","message":"Choose format","requestedSchema":{"type":"object","properties":{"format":{"type":"string"}}}}`),
@@ -158,6 +158,12 @@ func assertApprovalReply(t *testing.T, server *mockCodexServer, id, result strin
 	}
 }
 
-func runMockApproval(c *Client, ctx context.Context, demux *jsonrpc.Demux, request jsonrpc.ServerRequest) {
-	c.completeApproval(ctx, demux, c.prepareApproval(request))
+func runMockApproval(t *testing.T, c *Client, ctx context.Context, request jsonrpc.ServerRequest) {
+	t.Helper()
+	worker := c.session.StartApprovals(ctx, c.session.Demux())
+	t.Cleanup(func() {
+		worker.Cancel()
+		worker.Wait()
+	})
+	worker.Enqueue(request)
 }

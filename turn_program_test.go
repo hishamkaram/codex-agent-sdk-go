@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -134,7 +135,9 @@ func TestThreadTurnProgramUsesProofOnceAndPreservesProviderRejection(t *testing.
 		t.Fatal(err)
 	}
 	got := readTurnStartPrograms(t, fixture.requests)
-	assertStringsEqual(t, "wire program values", got, []string{`"standard"`, `"daybreakBlue"`, `"daybreakRed"`, ""})
+	if want := []string{`"standard"`, `"daybreakBlue"`, `"daybreakRed"`, ""}; !slices.Equal(got, want) {
+		t.Fatalf("wire program values = %q, want %q", got, want)
+	}
 	if probes := readProgramProbeCount(t, fixture.probes); probes != 1 {
 		t.Fatalf("schema generated %d times, want one connection-local proof", probes)
 	}
@@ -150,10 +153,25 @@ func TestThreadTurnProgramUsesProofOnceAndPreservesProviderRejection(t *testing.
 
 func TestTurnProgramRejectsApprovalCallbackReentry(t *testing.T) {
 	t.Parallel()
-	client := &Client{}
-	ctx := context.WithValue(t.Context(), approvalClientKey{}, client)
-	if err := client.requireTurnProgram(ctx, types.CyberAccessProgramStandard); !errors.Is(err, ErrApprovalCallbackReentry) {
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+	var client *Client
+	other := &Client{}
+	sameClient := make(chan error, 1)
+	otherClient := make(chan error, 1)
+	opts := types.NewCodexOptions().WithApprovalCallback(func(callbackCtx context.Context, _ types.ApprovalRequest) types.ApprovalDecision {
+		sameClient <- client.requireTurnProgram(callbackCtx, types.CyberAccessProgramStandard)
+		otherClient <- other.requireTurnProgram(callbackCtx, types.CyberAccessProgramStandard)
+		return types.ApprovalDeny{}
+	})
+	var server *mockCodexServer
+	client, server = setupMockClient(t, opts, nil)
+	server.push(json.RawMessage(`{"id":"guard","method":"item/permissions/requestApproval","params":{"threadId":"T","turnId":"U","itemId":"i","cwd":"/work","startedAtMs":1782904297563,"permissions":{"network":{"enabled":true}}}}`))
+	if err := awaitExecutionTest(t, ctx, sameClient); !errors.Is(err, ErrApprovalCallbackReentry) {
 		t.Fatalf("turn program reentry = %v, want ErrApprovalCallbackReentry", err)
+	}
+	if err := awaitExecutionTest(t, ctx, otherClient); errors.Is(err, ErrApprovalCallbackReentry) {
+		t.Fatalf("another client rejected valid callback context: %v", err)
 	}
 }
 

@@ -760,7 +760,7 @@ func TestClient_IdleResumeCannotOvertakeQueuedProviderStart(t *testing.T) {
 
 	// A distinct, ordinary reply proves the reader is past the idle
 	// response although the dispatcher still cannot apply the foreign root.
-	if _, sendErr := c.demux.Send(ctx, "wire/barrier", nil); sendErr != nil {
+	if _, sendErr := c.session.Demux().Send(ctx, "wire/barrier", nil); sendErr != nil {
 		t.Fatal(sendErr)
 	}
 	cancelResume()

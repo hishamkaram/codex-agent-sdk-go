@@ -1,4 +1,4 @@
-package codex
+package session
 
 import (
 	"context"
@@ -89,7 +89,7 @@ func TestValidateApprovalPolicyCompatibility(t *testing.T) {
 func TestValidateApprovalPolicyConcurrentPublication(t *testing.T) {
 	t.Parallel()
 
-	c := &Client{}
+	c := &Session{}
 	current := &cliCompatibilityState{
 		version: transport.SemVer{Major: 0, Minor: 144, Patch: 1},
 		known:   true,
@@ -106,7 +106,7 @@ func TestValidateApprovalPolicyConcurrentPublication(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for range 1000 {
-				_ = c.validateApprovalPolicy(legacyApprovalOnFailure)
+				_ = c.ValidateApprovalPolicy(legacyApprovalOnFailure)
 			}
 		}()
 	}
