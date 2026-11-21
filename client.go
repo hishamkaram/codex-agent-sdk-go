@@ -13,6 +13,7 @@ import (
 	"github.com/hishamkaram/codex-agent-sdk-go/internal/hookbridge"
 	"github.com/hishamkaram/codex-agent-sdk-go/internal/jsonrpc"
 	sdklog "github.com/hishamkaram/codex-agent-sdk-go/internal/log"
+	"github.com/hishamkaram/codex-agent-sdk-go/internal/runtimeprobe"
 	"github.com/hishamkaram/codex-agent-sdk-go/internal/session/approval"
 	"github.com/hishamkaram/codex-agent-sdk-go/internal/threadexec"
 	"github.com/hishamkaram/codex-agent-sdk-go/internal/transport"
@@ -41,7 +42,7 @@ type Client struct {
 	threadEventSubscribers      map[uint64]*threadEventSubscriber
 	nextThreadEventSubscriberID uint64
 	cliCompatibility            atomic.Pointer[cliCompatibilityState]
-	runtime                     *connectedRuntime // guarded by lifecycleMu
+	runtime                     *runtimeprobe.Connected // guarded by lifecycleMu
 
 	lifecycleMu    sync.Mutex
 	connectStarted atomic.Bool
@@ -49,9 +50,9 @@ type Client struct {
 	connectToken   *struct{}
 
 	// Dispatcher lifecycle.
-	dispatcherCtx    context.Context
-	dispatcherCancel context.CancelFunc
-	dispatcherDone   chan struct{}
+	onDispatcherClose func(context.CancelFunc) func() bool
+	dispatcherCancel  context.CancelFunc
+	dispatcherDone    chan struct{}
 
 	hooks hookbridge.Installation
 
@@ -115,7 +116,7 @@ func (c *Client) Connect(ctx context.Context) (err error) {
 	}
 	demux := tr.Demux()
 	initializeOptions := *c.opts
-	runtime := newConnectedRuntime(cli, tr, initializeOptions.ExperimentalAPI)
+	runtime := runtimeprobe.NewConnected(cli, tr, initializeOptions.ExperimentalAPI)
 	if publishErr := c.publishConnectingTransport(tr, demux, runtime); publishErr != nil {
 		_ = tr.Close(context.WithoutCancel(ctx))
 		return publishErr
@@ -148,9 +149,6 @@ func (c *Client) Connect(ctx context.Context) (err error) {
 	}
 
 	dispatcherCtx, dispatcherCancel := context.WithCancel(context.WithoutCancel(ctx))
-	runtime.onClose = func(cancel func()) func() bool {
-		return context.AfterFunc(dispatcherCtx, cancel)
-	}
 	if err := c.startDispatcher(dispatcherCtx, dispatcherCancel, demux); err != nil {
 		dispatcherCancel()
 		c.closeTransportAfterConnectError(ctx, tr)
@@ -252,7 +250,7 @@ func (c *Client) clearConnectCancel(cancel context.CancelFunc, token *struct{}) 
 	c.lifecycleMu.Unlock()
 }
 
-func (c *Client) publishConnectingTransport(tr *transport.AppServer, demux *jsonrpc.Demux, runtime *connectedRuntime) error {
+func (c *Client) publishConnectingTransport(tr *transport.AppServer, demux *jsonrpc.Demux, runtime *runtimeprobe.Connected) error {
 	c.lifecycleMu.Lock()
 	defer c.lifecycleMu.Unlock()
 	if c.closed.Load() {
@@ -274,7 +272,9 @@ func (c *Client) startDispatcher(
 	if c.closed.Load() {
 		return fmt.Errorf("codex.Client.Connect: %w", types.ErrClientClosed)
 	}
-	c.dispatcherCtx = dispatcherCtx
+	c.onDispatcherClose = func(cancel context.CancelFunc) func() bool {
+		return context.AfterFunc(dispatcherCtx, cancel)
+	}
 	c.dispatcherCancel = dispatcherCancel
 	c.dispatcherDone = make(chan struct{})
 	c.connected.Store(true)
@@ -482,6 +482,7 @@ func (c *Client) Close(ctx context.Context) error {
 	c.connectCancel = nil
 	c.connectToken = nil
 	c.dispatcherCancel = nil
+	c.onDispatcherClose = nil
 	c.tr = nil
 	c.runtime = nil
 	c.lifecycleMu.Unlock()

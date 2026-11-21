@@ -167,7 +167,6 @@ func setupMockClient(t *testing.T, opts *types.CodexOptions, handleRequest func(
 	}
 	c.connected.Store(true)
 	dispatcherCtx, dispatcherCancel := context.WithCancel(context.Background())
-	c.dispatcherCtx = dispatcherCtx
 	c.dispatcherCancel = dispatcherCancel
 	c.dispatcherDone = make(chan struct{})
 	go c.dispatch(dispatcherCtx, demux, c.dispatcherDone)
@@ -623,7 +622,6 @@ func TestClient_CloseUnblocksApprovalResponseWrite(t *testing.T) {
 	}
 	c.connected.Store(true)
 	dispatcherCtx, dispatcherCancel := context.WithCancel(context.Background())
-	c.dispatcherCtx = dispatcherCtx
 	c.dispatcherCancel = dispatcherCancel
 	c.dispatcherDone = make(chan struct{})
 	go c.dispatch(dispatcherCtx, demux, c.dispatcherDone)
