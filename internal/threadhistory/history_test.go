@@ -199,3 +199,49 @@ func TestReadThreadReportsMalformedProviderPayload(t *testing.T) {
 		})
 	}
 }
+
+func TestHistoryDecodesNativeTimestampsAndTaggedStatus(t *testing.T) {
+	t.Parallel()
+
+	const wantCreated = "2023-11-14T22:13:20Z"
+	const wantStarted = "2023-11-14T22:13:21Z"
+	const legacyUpdated = "2023-11-14T22:13:22Z"
+	raw := json.RawMessage(`{
+		"id":"thread","createdAt":1700000000,"updatedAt":"2023-11-14T22:13:22Z",
+		"status":{"type":"active","activeFlags":[]},
+		"turns":[{"id":"turn","status":"completed","startedAt":1700000001,"completedAt":null,"items":[]}]
+	}`)
+	record, err := parseThreadRecord(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.CreatedAt != wantCreated || record.UpdatedAt != legacyUpdated || record.Status != "active" {
+		t.Fatalf("metadata = %+v, want UTC creation, unchanged update and active status", record)
+	}
+	if len(record.Turns) != 1 || record.Turns[0].StartedAt != wantStarted ||
+		record.Turns[0].CompletedAt != "" || record.Turns[0].Status != "completed" {
+		t.Fatalf("turns = %+v, want UTC start, missing completion and unchanged status", record.Turns)
+	}
+
+	info, err := parseThreadInfo(json.RawMessage(`{"id":"thread","updatedAt":1700000000}`))
+	if err != nil || info.LastModified != wantCreated {
+		t.Fatalf("thread info = %+v, err = %v, want UTC last modification", info, err)
+	}
+}
+
+func TestHistoryRejectsMalformedTimestampOrStatus(t *testing.T) {
+	t.Parallel()
+
+	for _, payload := range []string{
+		`{"id":"thread","createdAt":1.5}`,
+		`{"id":"thread","createdAt":true}`,
+		`{"id":"thread","createdAt":9223372036854775807}`,
+		`{"id":"thread","status":{"activeFlags":[]}}`,
+	} {
+		_, err := parseThreadRecord(json.RawMessage(payload))
+		var decode *types.JSONDecodeError
+		if !errors.As(err, &decode) {
+			t.Errorf("parseThreadRecord(%s) = %v, want typed JSON decode error", payload, err)
+		}
+	}
+}

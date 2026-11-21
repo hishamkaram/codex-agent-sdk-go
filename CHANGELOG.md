@@ -9,6 +9,8 @@ All notable changes to the Codex Agent SDK for Go are documented in this file.
 - Preserve provider terminal failure text on `TurnCompleted.Error`.
 
 ### Fixed
+- Decode Unix-second history timestamps and tagged thread status from Codex
+  while preserving the public string fields and legacy wire shapes.
 - Read full MCP inventory responses up to the new 8 MiB default frame limit.
   Explicit limits still have a 2 MiB minimum. Oversized-frame errors report
   the configured limit.
