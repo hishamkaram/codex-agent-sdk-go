@@ -211,6 +211,11 @@ func (p *PendingResponse) Release() {
 // Post admits the request to the writer and returns its reply handle only
 // when the complete frame is on the wire.
 func (d *Demux) Post(ctx context.Context, method string, params any) (*PendingResponse, error) {
+	return d.PostGuarded(ctx, method, params, nil)
+}
+
+// PostGuarded checks guard at the serialized dispatch boundary.
+func (d *Demux) PostGuarded(ctx context.Context, method string, params any, guard func(context.Context) error) (*PendingResponse, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -232,19 +237,25 @@ func (d *Demux) Post(ctx context.Context, method string, params any) (*PendingRe
 	d.pending[id] = pending.reply
 	d.mu.Unlock()
 
-	if err := d.writeFrame(ctx, Request{ID: id, Method: method, Params: paramsRaw}); err != nil {
+	if err := d.writeFrame(ctx, Request{ID: id, Method: method, Params: paramsRaw}, guard); err != nil {
 		pending.Release()
 		return nil, fmt.Errorf("jsonrpc.Demux.Send: write: %w", err)
 	}
 	return pending, nil
 }
 
-func (d *Demux) writeFrame(ctx context.Context, frame any) error {
-	err := d.writer.WriteFrameContext(ctx, frame)
-	if errors.Is(err, ErrFramePoisoned) {
+func (d *Demux) writeFrame(ctx context.Context, frame any, guard func(context.Context) error) error {
+	err := d.writer.writeFrameContext(ctx, frame, guard)
+	if errors.Is(err, ErrFramePoisoned) && !d.isClosed() {
 		d.Abort(err)
 	}
 	return err
+}
+
+func (d *Demux) isClosed() bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.closed
 }
 
 // Abort closes a session whose transport or control backlog can no longer
@@ -277,7 +288,7 @@ func (d *Demux) NotifyContext(ctx context.Context, method string, params any) er
 		paramsRaw = b
 	}
 	n := Notification{Method: method, Params: paramsRaw}
-	if err := d.writeFrame(ctx, n); err != nil {
+	if err := d.writeFrame(ctx, n, nil); err != nil {
 		return fmt.Errorf("jsonrpc.Demux.Notify: write: %w", err)
 	}
 	return nil
@@ -301,7 +312,7 @@ func (d *Demux) RespondServerRequestContext(ctx context.Context, id json.RawMess
 		resultRaw = b
 	}
 	resp := serverResponse{ID: id, Result: resultRaw, Error: rpcErr}
-	if err := d.writeFrame(ctx, resp); err != nil {
+	if err := d.writeFrame(ctx, resp, nil); err != nil {
 		return fmt.Errorf("jsonrpc.Demux.RespondServerRequest: write: %w", err)
 	}
 	return nil

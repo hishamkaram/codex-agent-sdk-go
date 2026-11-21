@@ -53,8 +53,11 @@ type threadExecution struct {
 	// An unclassified start, gap or archive permanently disqualifies ownership.
 	private        bool
 	externalActive bool
-	lastTerminalID string
-	baseline       usageBaseline
+	// A resume snapshot can identify a terminal seen after the current
+	// unknown-active fence. A later active fence discards that evidence.
+	fencedTerminals map[string]struct{}
+	lastTerminalID  string
+	baseline        usageBaseline
 
 	activeTurnID  atomic.Value // string, a snapshot for manual Steer/Interrupt
 	closed        atomic.Bool
@@ -71,6 +74,7 @@ type threadOperation struct {
 	uncertain bool
 	waitUntil time.Time
 
+	dispatched     bool
 	acknowledged   bool
 	ackID          string
 	rootStartID    string
@@ -170,6 +174,7 @@ func (e *threadExecution) reserveLocked(kind executionKind, streamed bool) (*thr
 		e.compactTurnID = ""
 	}
 	e.op = op
+	e.signalLocked()
 	return op, nil
 }
 
@@ -287,8 +292,14 @@ func (e *threadExecution) reconcileExternalActivity(incoming *threadExecution) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	active := incoming.activeID()
-	if active != "" && active == e.lastTerminalID {
-		return
+	if active != "" {
+		if _, seen := e.fencedTerminals[active]; seen && e.externalActive && e.activeID() == "" {
+			e.clearExternalActivityLocked()
+			return
+		}
+		if active == e.lastTerminalID {
+			return
+		}
 	}
 	if current := e.activeID(); current != "" {
 		if active == "" || current == active {
@@ -297,10 +308,22 @@ func (e *threadExecution) reconcileExternalActivity(incoming *threadExecution) {
 		// Conflicting reports cannot identify an interrupt target.
 		active = ""
 	}
+	e.fenceExternalActivityLocked(active)
+}
+
+func (e *threadExecution) fenceExternalActivityLocked(turnID string) {
 	e.externalActive = true
-	e.activeTurnID.Store(active)
+	e.activeTurnID.Store(turnID)
+	e.fencedTerminals = nil
 	e.private = false
 	e.invalidateUsageLocked()
+	e.signalLocked()
+}
+
+func (e *threadExecution) clearExternalActivityLocked() {
+	e.externalActive = false
+	e.fencedTerminals = nil
+	e.activeTurnID.Store("")
 	e.signalLocked()
 }
 
@@ -359,17 +382,22 @@ func (e *threadExecution) observe(ev types.ThreadEvent) bool {
 }
 
 func (e *threadExecution) observeStatusLocked(op *threadOperation, raw json.RawMessage) {
-	if op != nil && !op.complete || e.activeID() != "" {
+	if op != nil && op.dispatched && !op.complete {
 		return
 	}
 	var status providerThreadStatus
-	if json.Unmarshal(raw, &status) == nil && status.Type == "active" {
-		// The status can precede turn/started. Its missing turn ID
-		// fences new work without making any turn interruptible.
-		e.externalActive = true
-		e.private = false
-		e.invalidateUsageLocked()
-		e.signalLocked()
+	if json.Unmarshal(raw, &status) != nil {
+		return
+	}
+	switch status.Type {
+	case "active":
+		if e.activeID() == "" {
+			e.fenceExternalActivityLocked("")
+		}
+	case "idle":
+		if e.externalActive {
+			e.clearExternalActivityLocked()
+		}
 	}
 }
 
@@ -379,13 +407,8 @@ func (e *threadExecution) observeStartLocked(op *threadOperation, event *types.T
 		return
 	}
 	e.activeTurnID.Store(id)
-	if op == nil || op.complete || (op.rootStartID != "" && op.rootStartID != id) {
-		e.externalActive = true
-		e.private = false
-		e.baseline = usageBaseline{}
-		if op != nil && !op.complete {
-			op.usage.broken = true
-		}
+	if op == nil || !op.dispatched || op.complete || (op.rootStartID != "" && op.rootStartID != id) {
+		e.fenceExternalActivityLocked(id)
 	} else {
 		op.rootStartID = id
 		if op.kind == executeCompact {
@@ -409,11 +432,16 @@ func (e *threadExecution) observeTerminalLocked(op *threadOperation, id string, 
 	if id == "" || id == e.lastTerminalID {
 		return
 	}
-	if e.activeID() == id {
-		e.activeTurnID.Store("")
-		e.externalActive = false
+	active := e.activeID()
+	if active == id {
+		e.clearExternalActivityLocked()
+	} else if active == "" && e.externalActive && len(e.fencedTerminals) < ThreadInboxBuffer {
+		if e.fencedTerminals == nil {
+			e.fencedTerminals = make(map[string]struct{})
+		}
+		e.fencedTerminals[id] = struct{}{}
 	}
-	if op == nil || op.complete {
+	if op == nil || !op.dispatched || op.complete {
 		e.lastTerminalID = id
 		e.signalLocked()
 		return
@@ -492,6 +520,9 @@ func (e *threadExecution) observeLegacyCompactLocked(op *threadOperation, event 
 	if event.TurnID == "" || event.TurnID != e.compactTurnID {
 		return
 	}
+	if op != nil && op.kind == executeCompact && op.dispatched && op.rootStartID == event.TurnID {
+		e.observeTerminalLocked(op, event.TurnID, event)
+	}
 	if sub := e.compactSub.Load(); sub != nil {
 		snapshot := *event
 		select {
@@ -534,7 +565,7 @@ func (e *threadExecution) finishLocked(op *threadOperation) {
 	if terminal, ok := op.terminal.(*types.TurnCompleted); ok && terminal.UsagePresent {
 		op.finalUsage, op.usageAvailable = terminal.Usage, true
 	}
-	e.baseline = op.usage.nextBaseline()
+	e.baseline = op.usage.nextBaseline(op.usageAvailable && op.finalUsage == (types.TokenUsage{}))
 	if op.events != nil {
 		close(op.events)
 	}
@@ -565,7 +596,9 @@ func (t *Thread) beginOperation(ctx context.Context, kind executionKind, streame
 	if err != nil {
 		return nil, jsonrpc.Response{}, err
 	}
-	pending, err := t.client.demux.Post(ctx, method, params)
+	pending, err := t.client.demux.PostGuarded(ctx, method, params, func(writeCtx context.Context) error {
+		return t.markDispatch(writeCtx, op)
+	})
 	if err != nil {
 		t.reject(op)
 		return nil, jsonrpc.Response{}, err
@@ -585,6 +618,22 @@ func (t *Thread) beginOperation(ctx context.Context, kind executionKind, streame
 	}
 	t.acknowledge(op, resp.Result)
 	return op, resp, nil
+}
+
+func (t *Thread) markDispatch(ctx context.Context, op *threadOperation) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if t.closed.Load() {
+		return types.ErrThreadClosed
+	}
+	if t.op != op || t.externalActive || t.resuming != 0 || t.activeID() != "" {
+		return &ThreadExecutionUnconfirmedError{ThreadID: t.id}
+	}
+	op.dispatched = true
+	return nil
 }
 
 func (t *Thread) startExecutionCleanup(ctx context.Context, op *threadOperation, pending *jsonrpc.PendingResponse) {

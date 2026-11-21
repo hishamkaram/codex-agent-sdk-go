@@ -48,6 +48,12 @@ func (lw *LineWriter) WriteFrame(v any) error {
 // cancellation raced with completion. Cancellation before writing any bytes
 // leaves a deadline-capable pipe usable. Partial frames are never reusable.
 func (lw *LineWriter) WriteFrameContext(ctx context.Context, v any) error {
+	return lw.writeFrameContext(ctx, v, nil)
+}
+
+// The guard runs after slot acquisition and immediately before the underlying
+// write. It may reject without putting any bytes on the pipe.
+func (lw *LineWriter) writeFrameContext(ctx context.Context, v any, guard func(context.Context) error) error {
 	data, err := json.Marshal(v)
 	if err != nil {
 		return fmt.Errorf("jsonrpc.LineWriter.WriteFrame: marshal: %w", err)
@@ -69,6 +75,11 @@ func (lw *LineWriter) WriteFrameContext(ctx context.Context, v any) error {
 		return ctxErr
 	}
 
+	if guard != nil {
+		if guardErr := guard(ctx); guardErr != nil {
+			return guardErr
+		}
+	}
 	written, aborted, err := lw.writeContext(ctx, append(data, '\n'))
 	if err == nil && !aborted {
 		return nil

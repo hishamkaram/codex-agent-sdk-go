@@ -270,8 +270,10 @@ Check `Turn.UsageAvailable` for buffered accounting. `Thread.Run` accepts
 explicit whole-turn terminal usage and otherwise requires a proven pre-turn
 total and a matching closing total in the same accounting epoch. Threads
 created by the Client start with a known zero baseline. Replays, gaps, missing
-baselines, resets, and late-only evidence can leave usage unavailable. An
-explicit zero on the matching terminal still counts as measured usage.
+baselines, resets, and late-only evidence can leave usage unavailable. A silent
+or replay-only turn discards the cumulative baseline because the next sample
+might contain unreported work. An explicit zero on the matching terminal
+counts as measured usage and can retain a known baseline.
 
 `CacheWriteInputTokens` decodes `cacheWriteInputTokens` and defaults to zero
 when absent. `CachedInputTokens` measures cache reads. Both counters are

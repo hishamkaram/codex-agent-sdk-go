@@ -59,16 +59,19 @@ func (l turnUsageLedger) final() (types.TokenUsage, bool) {
 	return usageDifference(l.latest.total, l.start.total)
 }
 
-func (l turnUsageLedger) nextBaseline() usageBaseline {
+func (l turnUsageLedger) nextBaseline(measuredZero bool) usageBaseline {
 	if l.broken {
 		return usageBaseline{}
 	}
 	if l.advance {
 		return l.latest
 	}
-	// Replays and silent turns do not establish a new measurement. The
-	// next advance must still equal its independent LastUsage sample.
-	return l.start
+	// A later replay could include unreported work from a silent turn.
+	// Only an explicit zero proves the cumulative baseline did not move.
+	if measuredZero {
+		return l.start
+	}
+	return usageBaseline{}
 }
 
 func syntheticUsageTotal(total types.TokenUsage) bool {

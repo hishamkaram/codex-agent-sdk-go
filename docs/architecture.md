@@ -177,13 +177,17 @@ Intentional client shutdown closes subscriptions normally.
 ## Turn execution
 
 A `Client` serializes runs, inline reviews, and compaction by provider thread
-ID across handles. Calls wait cancellably behind SDK-owned work. Canceling a
+ID across handles. Calls wait cancellably behind SDK-owned work. Before the
+serialized writer sends a reserved request, it rechecks observed provider
+activity. Canceling a
 run closes its local stream. The SDK asks the provider to interrupt the exact
 turn after correlating the reply with a fresh root start on a thread created
 by this Client. The same server reply can describe work steered onto an
 existing turn, so a reply alone supplies no ownership proof. A transport or
 decoding gap can invalidate ownership. The SDK logs unconfirmed cleanup and
-keeps admission blocked until it can correlate completion.
+keeps admission blocked until it can correlate completion. Ordered idle status
+can resolve an external-only fence. A canceled SDK operation still requires
+matching terminal evidence.
 
 The five-second reconciliation window bounds the cleanup RPC and the next
 call's admission wait. A matching terminal event releases the reservation.

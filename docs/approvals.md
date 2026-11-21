@@ -21,7 +21,8 @@ Callbacks run in a single FIFO worker per Client. The dispatcher keeps
 processing notifications while a decision is pending. When the bounded queue
 fills, a separate lane sends the method's non-accepting reply. If both
 bounded queues saturate, the SDK closes the connection so the provider cannot
-wait indefinitely for a dropped approval.
+wait indefinitely for a dropped approval. An undeliverable required reply also
+closes the session when it exceeds the write deadline.
 
 For human approval, submit the request to an independent UI and wait on a
 decision channel with a `select` that handles `ctx.Done()`. Return promptly

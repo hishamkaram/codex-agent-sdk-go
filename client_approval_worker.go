@@ -140,6 +140,9 @@ func (c *Client) completeApproval(ctx context.Context, demux *jsonrpc.Demux, job
 	if job.parseErr == nil {
 		decision = job.callback(ctx, job.request)
 		if ctx.Err() != nil {
+			if c.closed.Load() || !c.connected.Load() || errors.Is(context.Cause(ctx), errApprovalBacklog) {
+				return
+			}
 			decision = types.ApprovalCancel{}
 			// Send a non-accepting reply when the provider can still receive
 			// one. The reply has its own deadline and demux shutdown fence.
@@ -160,7 +163,9 @@ func (c *Client) writeApproval(ctx context.Context, demux *jsonrpc.Demux, job ap
 	}
 	replyCtx, cancel := context.WithTimeout(ctx, approvalReplyTimeout)
 	defer cancel()
-	if err := demux.RespondServerRequestContext(replyCtx, job.wire.ID, result, job.parseErr); err != nil && ctx.Err() == nil {
-		c.logger.Warn("approval response write failed", zap.String("method", job.wire.Method), zap.Error(err))
+	err := demux.RespondServerRequestContext(replyCtx, job.wire.ID, result, job.parseErr)
+	if err != nil && ctx.Err() == nil && !c.closed.Load() && c.connected.Load() && !errors.Is(err, jsonrpc.ErrClosed) {
+		c.logger.Warn("required approval response could not be delivered; closing connection", zap.String("method", job.wire.Method), zap.Error(err))
+		demux.Abort(err)
 	}
 }

@@ -103,12 +103,14 @@ func TestClient_CancelBeforeAcknowledgementInterruptsOwnedTurn(t *testing.T) {
 		t.Fatal("sibling did not complete during cancellation reconciliation")
 	}
 
-	if _, runErr := duplicate.Run(ctx, "unconfirmed work", nil); !errors.Is(runErr, ErrThreadExecutionUnconfirmed) {
-		t.Fatalf("admission after interrupt acknowledgement without terminal: %v", runErr)
-	}
 	ordered, err := c.SubscribeThreadEvents(ctx, 8)
 	if err != nil {
 		t.Fatal(err)
+	}
+	peer.push(json.RawMessage(`{"method":"thread/status/changed","params":{"threadId":"T","status":{"type":"idle"}}}`))
+	awaitExecutionTest(t, ctx, ordered)
+	if _, runErr := duplicate.Run(ctx, "unconfirmed work", nil); !errors.Is(runErr, ErrThreadExecutionUnconfirmed) {
+		t.Fatalf("admission after interrupt acknowledgement without terminal: %v", runErr)
 	}
 	peer.push(notify("turn/completed", map[string]string{"threadId": "T", "turnId": "U", "status": "interrupted"}))
 	awaitExecutionTest(t, ctx, ordered)
@@ -356,16 +358,16 @@ func TestClient_CompactAdmissionExpiresWithoutEndingWait(t *testing.T) {
 	}
 	peer.push(notify("turn/started", map[string]string{"threadId": "T", "turnId": "compact"}))
 	peer.push(json.RawMessage(`{"method":"item/completed","params":{"threadId":"T","turnId":"compact","item":{"type":"contextCompaction","id":"item"}}}`))
-	peer.push(notify("thread/compacted", map[string]string{"threadId": "T", "turnId": "compact"}))
-	if event, err := result.Wait(ctx); err != nil || event.TurnID != "compact" {
-		t.Fatalf("late CompactResult.Wait = %+v, %v", event, err)
-	}
 	if _, err := thread.RunStreamed(ctx, "compaction item is not a terminal", nil); !errors.Is(err, ErrThreadExecutionUnconfirmed) {
 		t.Fatalf("admission before compact terminal = %v", err)
 	}
 	peer.push(notify("turn/completed", map[string]string{"threadId": "T", "turnId": "compact", "status": "completed"}))
-	for range 4 {
+	for range 3 {
 		awaitExecutionTest(t, ctx, observed)
+	}
+	peer.push(notify("thread/compacted", map[string]string{"threadId": "T", "turnId": "compact"}))
+	if event, err := result.Wait(ctx); err != nil || event.TurnID != "compact" {
+		t.Fatalf("late CompactResult.Wait = %+v, %v", event, err)
 	}
 	out, startErr := thread.RunStreamed(ctx, "next", nil)
 	if startErr != nil {
@@ -403,6 +405,18 @@ func TestClient_CancelBeforeDispatchLeavesConnectionReady(t *testing.T) {
 
 func TestClient_ResumeRetainsTerminalObservedBeforeReply(t *testing.T) {
 	t.Parallel()
+	t.Run("matching terminal resolves fence", func(t *testing.T) {
+		t.Parallel()
+		testResumeBeforeReply(t, false)
+	})
+	t.Run("later active status keeps fence", func(t *testing.T) {
+		t.Parallel()
+		testResumeBeforeReply(t, true)
+	})
+}
+
+func testResumeBeforeReply(t *testing.T, newerActive bool) {
+	t.Helper()
 	ctx, stop := context.WithTimeout(t.Context(), 5*time.Second)
 	defer stop()
 	resumeSent := make(chan struct{})
@@ -436,12 +450,25 @@ func TestClient_ResumeRetainsTerminalObservedBeforeReply(t *testing.T) {
 		resumed <- resumeResult{thread: thread, err: resumeErr}
 	}()
 	awaitExecutionTest(t, ctx, resumeSent)
+	peer.push(json.RawMessage(`{"method":"thread/status/changed","params":{"threadId":"resumed","status":{"type":"active","activeFlags":[]}}}`))
+	awaitExecutionTest(t, ctx, observed)
 	peer.push(notify("turn/completed", map[string]string{"threadId": "resumed", "turnId": "old", "status": "completed"}))
 	awaitExecutionTest(t, ctx, observed)
+	if newerActive {
+		peer.push(json.RawMessage(`{"method":"thread/status/changed","params":{"threadId":"resumed","status":{"type":"active","activeFlags":[]}}}`))
+		awaitExecutionTest(t, ctx, observed)
+	}
 	close(releaseReply)
 	loaded := awaitExecutionTest(t, ctx, resumed)
 	if loaded.err != nil {
 		t.Fatal(loaded.err)
+	}
+	if newerActive {
+		if _, startErr := loaded.thread.RunStreamed(ctx, "newer active work is unknown", nil); !errors.Is(startErr, ErrThreadExecutionUnconfirmed) {
+			t.Fatalf("older terminal incorrectly cleared newer active status: %v", startErr)
+		}
+		peer.push(json.RawMessage(`{"method":"thread/status/changed","params":{"threadId":"resumed","status":{"type":"idle"}}}`))
+		awaitExecutionTest(t, ctx, observed)
 	}
 	out, startErr := loaded.thread.RunStreamed(ctx, "new work after terminal", nil)
 	if startErr != nil {
@@ -536,5 +563,44 @@ func TestClient_ExternalActiveStatusFencesAdmissionBeforeTurnStart(t *testing.T)
 	awaitExecutionTest(t, ctx, ordered)
 	if _, runErr := thread.RunStreamed(ctx, "would implicitly steer", nil); !errors.Is(runErr, ErrThreadExecutionUnconfirmed) {
 		t.Fatalf("new work admitted before external root start: %v", runErr)
+	}
+}
+
+func TestClient_MatchingLegacyCompactionCompletesAdmission(t *testing.T) {
+	t.Parallel()
+	ctx, stop := context.WithTimeout(t.Context(), 5*time.Second)
+	defer stop()
+	c, peer := setupMockClient(t, types.NewCodexOptions(), func(req jsonrpc.Request) jsonrpc.Response {
+		switch req.Method {
+		case "thread/start":
+			return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{"thread":{"id":"T"}}`)}
+		case "thread/compact/start":
+			return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{}`)}
+		case "turn/start":
+			return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{"turn":{"id":"next"}}`)}
+		}
+		t.Errorf("unexpected method %s", req.Method)
+		return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{}`)}
+	})
+	thread, err := c.StartThread(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := thread.Compact(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	peer.push(notify("turn/started", map[string]string{"threadId": "T", "turnId": "compact"}))
+	peer.push(notify("thread/compacted", map[string]string{"threadId": "T", "turnId": "compact"}))
+	if compact, waitErr := result.Wait(ctx); waitErr != nil || compact.TurnID != "compact" {
+		t.Fatalf("legacy compaction = %#v, %v", compact, waitErr)
+	}
+	out, err := thread.RunStreamed(ctx, "new work after legacy completion", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	peer.push(notify("turn/completed", map[string]string{"threadId": "T", "turnId": "next", "status": "completed"}))
+	if _, ok := awaitExecutionTest(t, ctx, out).(*types.TurnCompleted); !ok {
+		t.Fatal("next terminal missing")
 	}
 }
