@@ -299,6 +299,16 @@ func (p idleResumeProof) reconcile(status, statusThreadID, reportedID, requested
 	}
 }
 
+// A rejected resume can still reveal active work on a registered thread.
+// Resolve the provider's returned identity against the connection registry.
+func (c *Client) reconcileRejectedResume(t *Thread) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if execution := c.executions[threadExecutionID(t.id)]; execution != nil {
+		execution.reconcileExternalActivity(t.threadExecution)
+	}
+}
+
 // unregisterThread removes a Thread from routing. Called when the thread
 // is archived or the caller drops it. Clears latestThreadID when the
 // removed thread was the most recent so SessionID() reverts to "" for

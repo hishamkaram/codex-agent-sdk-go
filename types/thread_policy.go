@@ -26,6 +26,17 @@ func (e *ThreadResumeSettingsMismatchError) Error() string {
 	return fmt.Sprintf("codex: thread %q resumed without confirming requested reasoning effort; resume it when it is unloaded", e.ThreadID)
 }
 
+// ThreadResumeModelUnavailableError reports that thread/read could not
+// identify the thread's model. Resuming with a reasoning override without
+// that model could change the configuration, so no resume request was sent.
+type ThreadResumeModelUnavailableError struct {
+	ThreadID string
+}
+
+func (e *ThreadResumeModelUnavailableError) Error() string {
+	return fmt.Sprintf("codex: thread %q has no readable model for a reasoning-effort resume", e.ThreadID)
+}
+
 // WebSearchModeDisallowedError reports that managed Codex requirements
 // disallow an SDK-requested web-search mode. No thread request was sent.
 type WebSearchModeDisallowedError struct {

@@ -25,7 +25,7 @@ func TestClient_ThreadConfigurationWireScope(t *testing.T) {
 	sourceReply := workspaceThreadReply(t, "source", cwd, false, []string{root})
 	forkReply := workspaceThreadReply(t, "fork", cwd, true, []string{})
 
-	defaults := types.NewCodexOptions().WithSandbox(types.SandboxWorkspaceWrite).
+	defaults := types.NewCodexOptions().WithSandbox(types.SandboxWorkspaceWrite).WithModel("startup-model").
 		WithWebSearchMode(types.WebSearchCached).WithReasoningEffort("medium").
 		WithMCPServers(map[string]types.McpServerConfig{
 			"default": types.McpStdioConfig{Command: "default-mcp"},
@@ -45,6 +45,8 @@ func TestClient_ThreadConfigurationWireScope(t *testing.T) {
 			}
 		case "thread/fork":
 			result = forkReply
+		case "thread/read":
+			result = json.RawMessage(`{"thread":{"id":"source","model":"configured-model","createdAt":1234}}`)
 		case "thread/resume":
 			result = sourceReply
 		default:
@@ -88,7 +90,7 @@ func TestClient_ThreadConfigurationWireScope(t *testing.T) {
 		"configRequirements/read", "thread/start",
 		"configRequirements/read", "thread/start",
 		"configRequirements/read", "thread/fork",
-		"configRequirements/read", "thread/resume",
+		"configRequirements/read", "thread/read", "thread/resume",
 	)
 	assertThreadConfigJSON(t, wire[1].Params, string(threadConfigFixture(t, map[string]any{
 		"cwd": cwd, "model": "configured-model", "sandbox": "workspace-write", "approvalPolicy": "never", "threadSource": "interactive",
@@ -99,18 +101,19 @@ func TestClient_ThreadConfigurationWireScope(t *testing.T) {
 		},
 	})))
 	assertThreadConfigJSON(t, wire[3].Params, `{
-		"sandbox":"workspace-write","approvalPolicy":"on-request",
+		"sandbox":"workspace-write","approvalPolicy":"on-request","model":"startup-model",
 		"config":{"web_search":"cached","model_reasoning_effort":"medium","mcp_servers":{"default":{"command":"default-mcp"}}}
 	}`)
 	assertThreadConfigJSON(t, wire[5].Params, string(threadConfigFixture(t, map[string]any{
-		"threadId": "source", "cwd": cwd, "sandbox": "workspace-write", "approvalPolicy": "on-request", "threadSource": "scheduled:daily",
+		"threadId": "source", "cwd": cwd, "sandbox": "workspace-write", "approvalPolicy": "on-request", "model": "startup-model", "threadSource": "scheduled:daily",
 		"config": map[string]any{
 			"web_search": "indexed", "model_reasoning_effort": "medium",
 			"mcp_servers":             map[string]any{"default": map[string]string{"command": "default-mcp"}},
 			"sandbox_workspace_write": map[string]any{"network_access": true, "writable_roots": []string{}},
 		},
 	})))
-	assertThreadConfigJSON(t, wire[7].Params, `{"threadId":"source","config":{"web_search":"live","model_reasoning_effort":"low"}}`)
+	assertThreadConfigJSON(t, wire[7].Params, `{"threadId":"source","includeTurns":false}`)
+	assertThreadConfigJSON(t, wire[8].Params, `{"threadId":"source","model":"configured-model","config":{"web_search":"live","model_reasoning_effort":"low"}}`)
 }
 
 func TestClient_ThreadPolicyRejectsBeforeRegistration(t *testing.T) {
@@ -189,15 +192,20 @@ func TestClient_ThreadPolicyRejectsBeforeRegistration(t *testing.T) {
 func TestClient_ResumeLoadedThreadReportsUnappliedEffort(t *testing.T) {
 	t.Parallel()
 
-	loaded := json.RawMessage(`{"thread":{"id":"loaded"},"reasoningEffort":"medium"}`)
+	const canonical = "01234567-89ab-4cde-8abc-0123456789ab"
 	c, server := setupMockClient(t, types.NewCodexOptions().WithReasoningEffort("medium"), func(req jsonrpc.Request) jsonrpc.Response {
-		if req.Method == "configRequirements/read" {
-			return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{"requirements":{"allowedWebSearchModes":null}}`)}
+		var result json.RawMessage
+		switch req.Method {
+		case "configRequirements/read":
+			result = json.RawMessage(`{"requirements":{"allowedWebSearchModes":null}}`)
+		case "thread/read":
+			result = json.RawMessage(`{"thread":{"id":"` + canonical + `","model":"persisted-model"}}`)
+		case "thread/resume":
+			result = json.RawMessage(`{"thread":{"id":"` + canonical + `","status":{"type":"active"}},"reasoningEffort":"medium"}`)
+		default:
+			result = json.RawMessage(`{"thread":{"id":"` + canonical + `"},"reasoningEffort":"medium"}`)
 		}
-		if req.Method == "thread/resume" {
-			return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{"thread":{"id":"loaded","status":{"type":"active"}},"reasoningEffort":"medium"}`)}
-		}
-		return jsonrpc.Response{ID: req.ID, Result: loaded}
+		return jsonrpc.Response{ID: req.ID, Result: result}
 	})
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
@@ -206,7 +214,8 @@ func TestClient_ResumeLoadedThreadReportsUnappliedEffort(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resumed, err := c.ResumeThread(ctx, thread.ID(), &types.ResumeOptions{
+	alias := strings.ToUpper(canonical)
+	resumed, err := c.ResumeThread(ctx, alias, &types.ResumeOptions{
 		ReasoningEffort: "high", WebSearchMode: types.WebSearchDisabled,
 	})
 	var mismatch *types.ThreadResumeSettingsMismatchError
@@ -220,8 +229,67 @@ func TestClient_ResumeLoadedThreadReportsUnappliedEffort(t *testing.T) {
 		t.Fatalf("resume mismatch discarded active state: %v", runErr)
 	}
 	wire := observedThreadRequests(t, server)
-	assertThreadRequestMethods(t, wire, "thread/start", "configRequirements/read", "thread/resume")
-	assertThreadConfigJSON(t, wire[2].Params, `{"threadId":"loaded","config":{"model_reasoning_effort":"high","web_search":"disabled"}}`)
+	assertThreadRequestMethods(t, wire, "thread/start", "configRequirements/read", "thread/read", "thread/resume")
+	assertThreadConfigJSON(t, wire[2].Params, `{"threadId":"`+alias+`","includeTurns":false}`)
+	assertThreadConfigJSON(t, wire[3].Params, `{"threadId":"`+alias+`","model":"persisted-model","config":{"model_reasoning_effort":"high","web_search":"disabled"}}`)
+}
+
+func TestClient_ResumeReasoningRequiresReadableModel(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name  string
+		reply jsonrpc.Response
+	}{
+		{"legacy model omitted", jsonrpc.Response{Result: json.RawMessage(`{"thread":{"id":"saved","createdAt":1234}}`)}},
+		{"model null", jsonrpc.Response{Result: json.RawMessage(`{"thread":{"id":"saved","model":null}}`)}},
+		{"model malformed", jsonrpc.Response{Result: json.RawMessage(`{"thread":{"id":"saved","model":123}}`)}},
+		{"provider error", jsonrpc.Response{Error: &jsonrpc.RPCError{Code: -32601, Message: "method not found"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, server := setupMockClient(t, types.NewCodexOptions().WithReasoningEffort("high"), func(req jsonrpc.Request) jsonrpc.Response {
+				reply := tc.reply
+				reply.ID = req.ID
+				return reply
+			})
+			ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+			defer cancel()
+
+			thread, err := c.ResumeThread(ctx, "saved", nil)
+			if thread != nil {
+				t.Fatal("resume proceeded without a readable model")
+			}
+			if tc.reply.Error != nil {
+				var rpcErr *types.RPCError
+				if !errors.As(err, &rpcErr) || rpcErr.Code != tc.reply.Error.Code || rpcErr.Message != tc.reply.Error.Message {
+					t.Fatalf("provider error changed: %v", err)
+				}
+			} else {
+				var typedErr *types.ThreadResumeModelUnavailableError
+				if !errors.As(err, &typedErr) || typedErr.ThreadID != "saved" {
+					t.Fatalf("error=%v, want model-unavailable error for saved thread", err)
+				}
+			}
+			assertThreadRequestMethods(t, observedThreadRequests(t, server), "thread/read")
+		})
+	}
+}
+
+func TestClient_ResumeWithoutReasoningSkipsModelRead(t *testing.T) {
+	t.Parallel()
+
+	c, server := setupMockClient(t, types.NewCodexOptions(), func(req jsonrpc.Request) jsonrpc.Response {
+		return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{"thread":{"id":"saved"}}`)}
+	})
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+
+	if _, err := c.ResumeThread(ctx, "saved", nil); err != nil {
+		t.Fatal(err)
+	}
+	wire := observedThreadRequests(t, server)
+	assertThreadRequestMethods(t, wire, "thread/resume")
+	assertThreadConfigJSON(t, wire[0].Params, `{"threadId":"saved"}`)
 }
 
 func TestClient_ManagedWebSearchPolicyRejectsBeforeDispatch(t *testing.T) {
@@ -304,12 +372,16 @@ func TestClient_RelativeWorkspaceCwdUsesAppServerLaunchDirectory(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("fixture uses a POSIX shell")
 	}
-	launchCwd, err := filepath.EvalSymlinks(t.TempDir())
+	launchParent, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
+	launchCwd := filepath.Join(launchParent, "work")
+	if mkdirErr := os.Mkdir(launchCwd, 0o700); mkdirErr != nil {
+		t.Fatal(mkdirErr)
+	}
 	alias := filepath.Join(t.TempDir(), "launch-alias")
-	if linkErr := os.Symlink(launchCwd, alias); linkErr != nil {
+	if linkErr := os.Symlink(launchParent, alias); linkErr != nil {
 		t.Fatal(linkErr)
 	}
 	t.Chdir(alias)
@@ -317,10 +389,15 @@ func TestClient_RelativeWorkspaceCwdUsesAppServerLaunchDirectory(t *testing.T) {
 	want := filepath.Join(launchCwd, "project")
 	fixtureDir := t.TempDir()
 	marker := filepath.Join(fixtureDir, "cwd")
+	forkRequest := filepath.Join(fixtureDir, "fork-request")
 	helper := filepath.Join(fixtureDir, "codex-helper")
 	reply := threadConfigFixture(t, map[string]any{
 		"id":     2,
 		"result": workspaceThreadReply(t, "relative", want, false, []string{}),
+	})
+	forkReply := threadConfigFixture(t, map[string]any{
+		"id":     3,
+		"result": workspaceThreadReply(t, "inherited", launchCwd, false, []string{}),
 	})
 	script := fmt.Sprintf(`#!/bin/sh
 if [ "$1" = "--version" ]; then echo "codex 0.171.0"; exit 0; fi
@@ -332,13 +409,18 @@ IFS= read -r _initialized
 IFS= read -r _start
 printf '%%s
 ' %q
+IFS= read -r fork
+printf '%%s
+' "$fork" > %q
+printf '%%s
+' %q
 while IFS= read -r _line; do :; done
-`, marker, string(reply))
+`, marker, string(reply), forkRequest, string(forkReply))
 	writeClientExecutable(t, helper, script)
 
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
-	c, err := NewClient(ctx, types.NewCodexOptions().WithCLIPath(helper).WithSandbox(types.SandboxWorkspaceWrite))
+	c, err := NewClient(ctx, types.NewCodexOptions().WithCLIPath(helper).WithSandbox(types.SandboxWorkspaceWrite).WithCwd("work"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -352,9 +434,34 @@ while IFS= read -r _line; do :; done
 	}
 	t.Chdir(clientCwd)
 	falseValue := false
+	homeRelative := &types.ThreadOptions{Cwd: "~/project", NetworkAccessEnabled: &falseValue}
+	if started, pathErr := c.StartThread(ctx, homeRelative); started != nil || pathErr == nil || !strings.Contains(pathErr.Error(), "home-relative") {
+		t.Fatalf("home-relative start: thread=%v error=%v", started, pathErr)
+	}
+	if forked, fork, pathErr := c.ForkThread(ctx, "parent", homeRelative); forked != nil || fork != nil || pathErr == nil || !strings.Contains(pathErr.Error(), "home-relative") {
+		t.Fatalf("home-relative fork: thread=%v fork=%v error=%v", forked, fork, pathErr)
+	}
 	got, err := c.StartThread(ctx, &types.ThreadOptions{Cwd: "project", NetworkAccessEnabled: &falseValue})
 	if err != nil || got.Cwd() != want {
 		t.Fatalf("StartThread got %v, %v, want cwd %q", got, err, want)
+	}
+	inherited, _, err := c.ForkThread(ctx, got.ID(), &types.ThreadOptions{NetworkAccessEnabled: &falseValue})
+	if err != nil || inherited.Cwd() != launchCwd {
+		t.Fatalf("ForkThread got %v, %v, want inherited cwd %q", inherited, err, launchCwd)
+	}
+	forkWire, err := os.ReadFile(forkRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var forkCall jsonrpc.Request
+	if decodeErr := json.Unmarshal(forkWire, &forkCall); decodeErr != nil {
+		t.Fatal(decodeErr)
+	}
+	var forkParams struct {
+		Cwd string `json:"cwd"`
+	}
+	if decodeErr := json.Unmarshal(forkCall.Params, &forkParams); decodeErr != nil || forkParams.Cwd != launchCwd {
+		t.Fatalf("fork cwd = %q, decode error = %v, want %q", forkParams.Cwd, decodeErr, launchCwd)
 	}
 	actual, err := os.ReadFile(marker)
 	if err != nil || strings.TrimSpace(string(actual)) != launchCwd {

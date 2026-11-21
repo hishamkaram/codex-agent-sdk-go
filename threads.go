@@ -380,23 +380,9 @@ func (c *Client) ResumeThread(ctx context.Context, threadID string, opts *types.
 	if threadID == "" {
 		return nil, fmt.Errorf("codex.Client.ResumeThread: threadID must not be empty")
 	}
-	params := map[string]any{"threadId": threadID}
-	var cwd string
-	var configOverrides threadConfigOverrides
-	if opts != nil {
-		cwd = opts.Cwd
-		configOverrides.webSearchMode = opts.WebSearchMode
-		configOverrides.reasoningEffort = opts.ReasoningEffort
-	}
-	if cwd != "" {
-		params["cwd"] = cwd
-	}
-	configOverrides = configOverrides.withDefaults(c.opts)
-	if config := buildThreadConfig(configOverrides); config != nil {
-		params["config"] = config
-	}
-	if policyErr := c.validateThreadWebSearchMode(ctx, configOverrides.webSearchMode); policyErr != nil {
-		return nil, fmt.Errorf("codex.Client.ResumeThread: %w", policyErr)
+	request, err := c.prepareThreadResume(ctx, threadID, opts)
+	if err != nil {
+		return nil, fmt.Errorf("codex.Client.ResumeThread: %w", err)
 	}
 	observationID := threadExecutionID(threadID)
 	observation := c.beginResumeObservation(observationID)
@@ -404,7 +390,7 @@ func (c *Client) ResumeThread(ctx context.Context, threadID string, opts *types.
 		return nil, fmt.Errorf("codex.Client.ResumeThread: %w", types.ErrClientClosed)
 	}
 	defer c.endResumeObservation(observationID, observation)
-	resp, idleProof, err := c.requestThreadResume(ctx, params, observation)
+	resp, idleProof, err := c.requestThreadResume(ctx, request.params, observation)
 	if err != nil {
 		return nil, fmt.Errorf("codex.Client.ResumeThread: %w", err)
 	}
@@ -420,17 +406,12 @@ func (c *Client) ResumeThread(ctx context.Context, threadID string, opts *types.
 	t := newThread(c, id)
 	status, statusThreadID := t.seedExternalActivity(resp.Result)
 	idleProof.reconcile(status, statusThreadID, reportedID, observationID)
-	if policyErr := verifyResumeReasoningEffort(resp.Result, id, configOverrides.reasoningEffort); policyErr != nil {
-		if threadExecutionID(id) == observationID {
-			observation.reconcileExternalActivity(t.threadExecution)
-		}
+	if policyErr := verifyResumeReasoningEffort(resp.Result, id, request.reasoningEffort); policyErr != nil {
+		c.reconcileRejectedResume(t)
 		return nil, fmt.Errorf("codex.Client.ResumeThread: %w", policyErr)
 	}
 	t.model = extractThreadModel(resp.Result)
-	if cwd == "" {
-		cwd = c.opts.DefaultCwd
-	}
-	t.cwd = cwd
+	t.cwd = request.cwd
 	c.registerThread(t)
 	return t, nil
 }

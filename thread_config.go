@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"slices"
+	"strings"
 
 	"github.com/hishamkaram/codex-agent-sdk-go/types"
 )
@@ -63,7 +64,12 @@ func buildThreadStartParams(defaults *types.CodexOptions, opts *types.ThreadOpti
 	if opts == nil {
 		opts = &types.ThreadOptions{}
 	}
-	cwd := cmp.Or(opts.Cwd, defaults.DefaultCwd)
+	cwd := opts.Cwd
+	if defaults.DefaultCwd != "" {
+		// The default already positioned the app-server. Sending the
+		// relative spelling again would resolve it a second time.
+		cwd = cmp.Or(cwd, appServerCwd, defaults.DefaultCwd)
+	}
 	sandbox := cmp.Or(opts.Sandbox, defaults.DefaultSandbox)
 	workspaceWrite, err := resolveWorkspaceWrite(sandbox, opts)
 	if err != nil {
@@ -134,6 +140,60 @@ func (r threadCreationRequest) responseCwd(result json.RawMessage, id string) (s
 		return r.cwd, nil
 	}
 	return verifyWorkspaceWrite(result, id, r.cwd, r.workspaceWrite)
+}
+
+type threadResumeRequest struct {
+	params          map[string]any
+	cwd             string
+	reasoningEffort string
+}
+
+func (c *Client) prepareThreadResume(ctx context.Context, threadID string, opts *types.ResumeOptions) (threadResumeRequest, error) {
+	if opts == nil {
+		opts = &types.ResumeOptions{}
+	}
+	overrides := (threadConfigOverrides{
+		webSearchMode:   opts.WebSearchMode,
+		reasoningEffort: opts.ReasoningEffort,
+	}).withDefaults(c.opts)
+	if err := c.validateThreadWebSearchMode(ctx, overrides.webSearchMode); err != nil {
+		return threadResumeRequest{}, err
+	}
+	params := map[string]any{"threadId": threadID}
+	if opts.Cwd != "" {
+		params["cwd"] = opts.Cwd
+	}
+	if config := buildThreadConfig(overrides); config != nil {
+		params["config"] = config
+	}
+	if overrides.reasoningEffort != "" {
+		model, err := c.readResumeModel(ctx, threadID)
+		if err != nil {
+			return threadResumeRequest{}, err
+		}
+		params["model"] = model
+	}
+	return threadResumeRequest{params: params, cwd: cmp.Or(opts.Cwd, c.opts.DefaultCwd), reasoningEffort: overrides.reasoningEffort}, nil
+}
+
+// An effort override disables Codex's normal model restoration. Ask the
+// provider for the loaded or persisted model before building the resume.
+func (c *Client) readResumeModel(ctx context.Context, threadID string) (string, error) {
+	result, err := c.sendRaw(ctx, "ReadThread", "thread/read", map[string]any{
+		"threadId": threadID, "includeTurns": false,
+	})
+	if err != nil {
+		return "", err
+	}
+	var reply struct {
+		Thread struct {
+			Model string `json:"model"`
+		} `json:"thread"`
+	}
+	if json.Unmarshal(result, &reply) != nil || strings.TrimSpace(reply.Thread.Model) == "" {
+		return "", &types.ThreadResumeModelUnavailableError{ThreadID: threadID}
+	}
+	return reply.Thread.Model, nil
 }
 
 // verifyResumeReasoningEffort checks the provider's readback when available.

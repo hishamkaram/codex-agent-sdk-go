@@ -4,7 +4,7 @@ Set thread options on `StartThread` or `ForkThread` to configure one conversatio
 
 ## Web search and reasoning
 
-Use `WithWebSearchMode` and `WithReasoningEffort` for client defaults. Both `ThreadOptions` and `ResumeOptions` can supply a different value. Use a fresh app-server connection for a persisted thread when applying resume overrides. Codex 0.171.0 can rejoin an already loaded thread and keep its existing settings. If the resume reply reports a different reasoning effort, the SDK returns `*types.ThreadResumeSettingsMismatchError`. The reply has no web-search readback.
+Use `WithWebSearchMode` and `WithReasoningEffort` for client defaults. Both `ThreadOptions` and `ResumeOptions` can supply a different value. Use a fresh app-server connection for a persisted thread when applying resume overrides. Codex 0.171.0 can rejoin an already loaded thread and keep its existing settings. If the resume reply reports a different reasoning effort, the SDK returns `*types.ThreadResumeSettingsMismatchError`. The reply has no web-search readback. For an SDK-specified reasoning effort, the SDK reads the thread's model before resuming and supplies that model in the request. If the peer cannot report a model, the SDK returns an error before resuming.
 
 - `WebSearchDisabled` explicitly disables web search. `WebSearchCached` requests cached results. With `danger-full-access`, Codex 0.171.0 can prefer live search if the provider supports it and policy permits it. `WebSearchLive` enables live web search. `WebSearchIndexed` is an app-server mode. Support varies by installed CLI and policy.
 - Before sending a thread request with an SDK-specified web-search mode, the SDK reads the provider's managed requirements. A disallowed mode returns `*types.WebSearchModeDisallowedError` before the thread request. If the requirements read fails, its error is returned. With no SDK mode, the SDK leaves web search to Codex.
@@ -32,7 +32,7 @@ scheduled := &types.ThreadOptions{
 
 Select `SandboxWorkspaceWrite` on the request or through the client default before supplying either workspace-write option. `NetworkAccessEnabled` set to `nil` inherits the server's network policy. A pointer to false restricts command networking, while a pointer to true requests network access within the workspace-write sandbox. Managed settings can restrict which requests the app-server accepts.
 
-When requesting either workspace-write option, use a working directory without `..` components. Relative directories are based on the app-server's launch directory.
+When requesting either workspace-write option, use an absolute or launch-relative working directory without `..` components. Home-relative paths such as `~/project` are rejected. Per-call relative directories are based on the app-server's launch directory. If the request inherits the client's `WithCwd` setting, it uses that launch directory directly.
 
 `AdditionalDirectories` lists writable roots alongside the thread's working directory. Use absolute native paths without `..` components. The SDK preserves path spelling and deduplicates exact strings. A peer that changes one of those spellings may fail the effective-policy check. A nil list inherits the server's roots. An explicit empty list asks for zero additional roots.
 
