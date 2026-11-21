@@ -146,12 +146,13 @@ func (c *Client) handleServerRequest(ctx context.Context, demux *jsonrpc.Demux, 
 	req, err := events.ParseApprovalRequest(sreq.Method, sreq.Params)
 	if err != nil {
 		c.logger.Warn("parse server-request failed",
-			zap.String("method", sreq.Method),
-			zap.Error(err))
-		_ = demux.RespondServerRequest(sreq.ID, nil, &jsonrpc.RPCError{
+			zap.String("method", sreq.Method))
+		if writeErr := demux.RespondServerRequest(sreq.ID, nil, &jsonrpc.RPCError{
 			Code:    -32000,
-			Message: "client parse error: " + err.Error(),
-		})
+			Message: "client could not parse approval request parameters",
+		}); writeErr != nil {
+			c.logger.Warn("approval error response write failed", zap.String("method", sreq.Method), zap.Error(writeErr))
+		}
 		return
 	}
 	cb := c.opts.ApprovalCallback
@@ -164,7 +165,16 @@ func (c *Client) handleServerRequest(ctx context.Context, demux *jsonrpc.Demux, 
 	}
 	// Use dispatcherCtx so callbacks get canceled on Close.
 	decision := cb(ctx, req)
-	result := events.EncodeApprovalDecision(decision)
+	if ctx.Err() != nil {
+		switch req.(type) {
+		case *types.PermissionsApprovalRequest, *types.ElicitationRequest:
+			decision = types.ApprovalCancel{}
+		}
+	}
+	result, err := events.EncodeApprovalDecision(req, decision)
+	if err != nil {
+		c.logger.Warn("invalid approval decision; denying", zap.String("method", sreq.Method), zap.Error(err))
+	}
 	if err := demux.RespondServerRequest(sreq.ID, result, nil); err != nil {
 		c.logger.Warn("approval response write failed",
 			zap.String("method", sreq.Method),

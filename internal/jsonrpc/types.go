@@ -1,6 +1,10 @@
 package jsonrpc
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"errors"
+	"strconv"
+)
 
 // Request is a client-initiated JSON-RPC request.
 //
@@ -38,13 +42,18 @@ type Response struct {
 // ServerRequest is a request initiated by the server (e.g., approval prompts).
 // The client MUST respond with a matching ID or the server will block.
 //
-// Wire shape: {"id":<uint64>,"method":"...","params":...} — same shape as
-// Request but arriving from the server. Distinguished from Response by the
-// presence of "method".
+// Its ID is a validated JSON string or signed 64-bit integer token, kept
+// separately from the SDK's uint64 client-request IDs.
 type ServerRequest struct {
-	ID     uint64          `json:"id"`
+	ID     json.RawMessage `json:"id"`
 	Method string          `json:"method"`
 	Params json.RawMessage `json:"params,omitempty"`
+}
+
+type serverResponse struct {
+	ID     json.RawMessage `json:"id"`
+	Result json.RawMessage `json:"result,omitempty"`
+	Error  *RPCError       `json:"error,omitempty"`
 }
 
 // RPCError is the "error" field of a JSON-RPC Response.
@@ -63,11 +72,38 @@ func (e *RPCError) Error() string {
 }
 
 // rawFrame is the polymorphic shape used by the demux to classify an inbound
-// line. Fields are pointers so presence/absence can be distinguished.
+// line. Decode the ID only after distinguishing a request from a reply.
 type rawFrame struct {
-	ID     *uint64         `json:"id,omitempty"`
+	ID     json.RawMessage `json:"id,omitempty"`
 	Method *string         `json:"method,omitempty"`
 	Params json.RawMessage `json:"params,omitempty"`
 	Result json.RawMessage `json:"result,omitempty"`
 	Error  *RPCError       `json:"error,omitempty"`
+
+	responseID uint64
+}
+
+func decodeFrame(line []byte) (rawFrame, error) {
+	var frame rawFrame
+	if err := json.Unmarshal(line, &frame); err != nil {
+		return rawFrame{}, err
+	}
+	if string(frame.ID) == "null" {
+		frame.ID = nil
+	}
+	if frame.ID == nil {
+		return frame, nil
+	}
+	if frame.Method != nil {
+		if frame.ID[0] != '"' {
+			if _, err := strconv.ParseInt(string(frame.ID), 10, 64); err != nil {
+				return rawFrame{}, errors.New("server request ID must be a JSON string or int64")
+			}
+		}
+		return frame, nil
+	}
+	if err := json.Unmarshal(frame.ID, &frame.responseID); err != nil {
+		return rawFrame{}, errors.New("client response ID must be a uint64")
+	}
+	return frame, nil
 }

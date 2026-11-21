@@ -21,7 +21,7 @@ func TestFileApprovalResolvesStartedItem(t *testing.T) {
 	c.handleNotification(jsonrpc.Notification{Method: "item/started", Params: json.RawMessage(
 		`{"threadId":"thread-1","turnId":"turn-1","item":{"type":"fileChange","id":"item-1","changes":[{"path":"one.txt","kind":{"type":"add"},"diff":"+one"},{"path":"two.txt","kind":{"type":"update","move_path":"three.txt"},"diff":"+two"}]}}`,
 	)})
-	c.handleServerRequest(t.Context(), c.demux, jsonrpc.ServerRequest{ID: 42, Method: "item/fileChange/requestApproval", Params: json.RawMessage(`{"threadId":"thread-1","turnId":"turn-1","itemId":"item-1"}`)})
+	c.handleServerRequest(t.Context(), c.demux, jsonrpc.ServerRequest{ID: json.RawMessage("42"), Method: "item/fileChange/requestApproval", Params: json.RawMessage(`{"threadId":"thread-1","turnId":"turn-1","itemId":"item-1"}`)})
 	data, err := json.Marshal(captured)
 	if err != nil {
 		t.Fatal(err)

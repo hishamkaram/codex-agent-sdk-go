@@ -38,7 +38,7 @@ field names preferred in this order: flat > nested.
 | `thread/start` | `{cwd?,model?,sandbox?,approvalPolicy?}` | `{thread:{id,…},model}` | `Client.StartThread` |
 | `thread/resume` | `{threadId,cwd?}` | `{thread:{id,…},model}` | `Client.ResumeThread` |
 | `thread/list` | `{}` | `{threads:[…]}` | `Client.ListThreads` |
-| `thread/fork` | `{sourceThreadId,…}` | `{thread:{id,…},model}` | `Client.ForkThread` ([#50](https://github.com/hishamkaram/codex-agent-sdk-go/issues/50)) |
+| `thread/fork` | `{threadId,…}` | `{thread:{id,…},model}` | `Client.ForkThread` |
 | `thread/archive` | `{threadId}` | `{}` | `Client.ArchiveThread` |
 | `turn/start` | `{threadId,input:[{type:"text"|"localImage",…}],outputSchema?,collaborationMode?}` | `{turn:{id,…}}` | `Thread.RunStreamed` |
 | `turn/interrupt` | `{threadId,turnId}` | `{}` | `Thread.Interrupt`, `Client.InterruptThreadTurn` |
@@ -165,20 +165,18 @@ These are REQUESTS (with `id`), not notifications. The client MUST
 respond. The SDK dispatches to `ApprovalCallback` and sends the encoded
 decision back.
 
-| Method | Go type |
-|---|---|
-| `item/commandExecution/requestApproval` | `*types.CommandExecutionApprovalRequest` |
-| `item/fileChange/requestApproval` | `*types.FileChangeApprovalRequest` |
-| `item/permissions/requestApproval` | `*types.PermissionsApprovalRequest` |
-| `mcpServer/elicitation/request` | `*types.ElicitationRequest` |
-| `item/tool/requestUserInput` | `*types.ToolRequestUserInputRequest` |
+| Method | Go request type | Response shape |
+|---|---|---|
+| `item/commandExecution/requestApproval` | `*types.CommandExecutionApprovalRequest` | `{decision,reason?}` |
+| `item/fileChange/requestApproval` | `*types.FileChangeApprovalRequest` | `{decision,reason?}` |
+| `item/permissions/requestApproval` | `*types.PermissionsApprovalRequest` | `{permissions,scope,strictAutoReview?}` |
+| `mcpServer/elicitation/request` | `*types.ElicitationRequest` | `{action,content?,_meta?}` |
+| `item/tool/requestUserInput` | `*types.ToolRequestUserInputRequest` | `{answers:{[questionId]:{answers:[...]}}}` |
 
-The SDK currently encodes generic decisions as
-`{decision: "accept"|"acceptForSession"|"decline"|"cancel", reason?}` and
-user input as `{answers:{[questionId]:{answers:[...]}}}`. The permission and
-MCP elicitation methods require their own response contracts. Those known
-gaps are tracked in [#48](https://github.com/hishamkaram/codex-agent-sdk-go/issues/48)
-and [#49](https://github.com/hishamkaram/codex-agent-sdk-go/issues/49).
+The SDK echoes the provider's string or signed 64-bit request ID in its
+reply. SDK-generated client request IDs continue to use unsigned integers.
+See [approvals](approvals.md) for response scope, method-specific defaults,
+and compatibility fields.
 
 ## Wire quirks (derived from real transcripts)
 

@@ -36,9 +36,12 @@ case *types.FileChangeApprovalRequest:
     // r.Changes: every path, operation, diff, and optional rename destination
     // r.GrantRoot: optional proposed session-wide write root
 case *types.PermissionsApprovalRequest:
-    // r.Permission, r.Scope, r.Reason  (e.g., network egress)
+    // r.Permissions: exact JSON grant requested by the provider
+    // r.ThreadID, r.TurnID, r.ItemID, r.EnvironmentID, r.Reason
 case *types.ElicitationRequest:
-    // r.ServerName, r.Prompt, r.Schema  (MCP server asking for user input)
+    // r.Mode, r.ServerName, r.ThreadID, r.TurnID, r.EnvironmentID
+    // form: r.Message and r.RequestedSchema
+    // URL: r.Message, r.URL, and r.ElicitationID
 case *types.ToolRequestUserInputRequest:
     // r.ItemID, r.ThreadID, r.TurnID, r.Questions  (Codex request_user_input)
 case *types.UnknownApprovalRequest:
@@ -75,10 +78,66 @@ types.ToolRequestUserInputResponse{  // answer Codex request_user_input
 }
 ```
 
-The encoder treats unknown decision types as `Deny`. The permission and
-MCP elicitation methods require distinct responses. See the
-[wire protocol notes](wire-protocol.md#server-initiated-requests-approvals)
-for the current gaps.
+Use generic approve and cancel decisions for command and file requests.
+Permission grants and MCP elicitation use their own response values.
+
+### Permission grants
+
+Inspect the requested profile in `PermissionsApprovalRequest.Permissions`.
+After the caller approves a specific subset, return only that subset. This
+example grants read access to one selected directory for the current turn.
+
+```go
+return types.PermissionsApprovalResponse{
+    Scope: types.PermissionGrantTurn,
+    Permissions: types.GrantedPermissionProfile{
+        FileSystem: &types.GrantedFileSystemPermissions{
+            Entries: []types.FileSystemPermissionEntry{{
+                Path: types.FileSystemPermissionPath{Type: types.FileSystemPathLiteral, Path: "/work/approved"},
+                Access: types.FileSystemPermissionRead,
+            }},
+        },
+    },
+}
+```
+
+Use absolute paths in the target environment's syntax. The provider gives
+`Entries` precedence over the legacy `Read` and `Write` root lists, including
+an explicitly empty entries list. For network, set
+`GrantedNetworkPermissions.Enabled` explicitly. The provider decides the
+effective access. `PermissionGrantSession` requests scope for the session.
+`StrictAutoReview` may be enabled only for a turn-scoped grant.
+
+Return `types.ApprovalDeny{}` to send an empty turn-scoped grant. A nil,
+invalid, mismatched, or canceled decision also grants nothing. Canceling a
+permission response does not itself stop the turn.
+
+### MCP elicitation
+
+For a form, present the request's `Message` and `RequestedSchema` to your
+caller. After validating their submitted form against that schema, return
+structured JSON as the content. For a form with a `format` field, one
+accepted response is:
+
+```go
+return types.ElicitationResponse{
+    Action:  types.ElicitationAccept,
+    Content: json.RawMessage(`{"format":"brief"}`),
+}
+```
+
+Set `Meta` to send optional JSON under `_meta`. Supply `ElicitationDecline`
+or `ElicitationCancel` to send an action without accepted content.
+`ApprovalDeny` maps to decline and `ApprovalCancel` maps to cancel for this
+method. The caller owns opening and completing an external URL flow.
+Only return an accept decision when the caller approves the elicitation.
+
+`TurnID` and `EnvironmentID` may be nil. The SDK retains unknown modes in
+`RawParams` and declines an attempt to accept one. Current `serverName`,
+`message`, and `requestedSchema` take precedence over the legacy
+`server_name`, `prompt`, and `schema` fields. `Prompt` and `Schema` remain
+compatibility projections. A complete legacy form can use the typed form
+response. See the [wire protocol notes](wire-protocol.md#server-initiated-requests-approvals).
 
 ## Approval policies
 
@@ -142,7 +201,8 @@ denies them too.
 
 ## Cancellation semantics
 
-`ApprovalCancel` aborts the entire turn. The server typically emits a
+`ApprovalCancel` on a command or file request asks the provider to abort the
+turn. The server typically emits a
 `turn/completed{Status:"cancelled"}` notification shortly after. Your
 running `Thread.Run` will return a `*Turn` with `Status == "cancelled"`.
 Subsequent `Run` calls on the same thread are unaffected; the turn lock

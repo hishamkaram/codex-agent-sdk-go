@@ -244,7 +244,7 @@ func TestDemux_DeliversServerRequestAndCallerResponds(t *testing.T) {
 
 	select {
 	case req := <-d.ServerRequests():
-		if req.ID != 99 || req.Method != "item/commandExecution/requestApproval" {
+		if string(req.ID) != "99" || req.Method != "item/commandExecution/requestApproval" {
 			t.Fatalf("unexpected server request: %+v", req)
 		}
 		// Respond with decision=decline.
@@ -344,12 +344,40 @@ func TestDemux_ClassifiesFrames(t *testing.T) {
 			if tt.wantServReq {
 				select {
 				case req := <-d.ServerRequests():
-					if req.ID == 0 || req.Method == "" {
+					if string(req.ID) != "77" || req.Method == "" {
 						t.Fatalf("malformed server-request: %+v", req)
 					}
 				case <-ctx.Done():
 					t.Fatal("no server request within timeout")
 				}
+			}
+		})
+	}
+}
+
+func TestDemux_InvalidIDSignalsGap(t *testing.T) {
+	t.Parallel()
+	for _, wire := range []string{
+		`{"id":9223372036854775808,"method":"request"}`,
+		`{"id":1e2,"method":"request"}`,
+		`{"id":"1","result":{}}`,
+	} {
+		t.Run(wire, func(t *testing.T) {
+			t.Parallel()
+			d, server := makeDemux(t)
+			t.Cleanup(server.close)
+			t.Cleanup(func() { _ = d.Close() })
+			ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+			defer cancel()
+			server.sendToClient(t, wire)
+			server.sendToClient(t, `{"method":"turn/started","params":{}}`)
+			gap := expectNotification(t, ctx, d)
+			if gap.DecodeError == nil {
+				t.Fatalf("invalid ID was not signaled: %+v", gap)
+			}
+			note := expectNotification(t, ctx, d)
+			if note.DecodeError != nil || note.Method != "turn/started" {
+				t.Fatalf("valid notification after gap = %+v", note)
 			}
 		})
 	}
