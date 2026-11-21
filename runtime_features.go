@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/hishamkaram/codex-agent-sdk-go/internal/transport"
@@ -35,30 +34,21 @@ func discoverRuntimeFeatures(
 	if options == nil {
 		options = types.NewCodexOptions()
 	}
-	cliPath := strings.TrimSpace(options.CLIPath)
-	if cliPath == "" {
-		var err error
-		cliPath, err = transport.FindCLI()
-		if err != nil {
-			return types.RuntimeFeatureCapabilities{}, fmt.Errorf("codex.DiscoverRuntimeFeatures: find CLI: %w", err)
-		}
+	cli, err := resolveDiscoveryCLI(options)
+	if err != nil {
+		return types.RuntimeFeatureCapabilities{}, fmt.Errorf("codex.DiscoverRuntimeFeatures: resolve Codex runtime: %w", err)
 	}
 	probeCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	features := types.RuntimeFeatureCapabilities{}
-	version, err := transport.ProbeCLIVersionContext(probeCtx, cliPath, options.Env)
+	version, err := cli.ProbeVersion(probeCtx)
 	if err == nil {
 		features.CLIVersion = version.String()
 	} else if ctxErr := probeCtx.Err(); ctxErr != nil {
 		return types.RuntimeFeatureCapabilities{}, fmt.Errorf("codex.DiscoverRuntimeFeatures: CLI version: %w", ctxErr)
 	}
-	outDir, cleanup, experimentalSchema, err := generateRuntimeFeatureSchema(
-		probeCtx,
-		cliPath,
-		options.Env,
-		options.ExperimentalAPI,
-	)
+	outDir, cleanup, experimentalSchema, err := generateRuntimeFeatureSchema(probeCtx, cli, options.ExperimentalAPI)
 	if err != nil {
 		if errors.Is(err, ErrRuntimeControlsUnsupported) {
 			return features, nil
@@ -76,16 +66,15 @@ func discoverRuntimeFeatures(
 
 func generateRuntimeFeatureSchema(
 	ctx context.Context,
-	cliPath string,
-	env []string,
+	cli transport.CLI,
 	experimental bool,
 ) (outDir string, cleanup func(), experimentalSchema bool, err error) {
 	const caller = "codex.DiscoverRuntimeFeatures"
-	outDir, cleanup, err = generateAppServerSchema(ctx, cliPath, env, caller, experimental)
+	outDir, cleanup, err = generateAppServerSchema(ctx, cli, caller, experimental)
 	if err == nil || !experimental || !errors.Is(err, ErrRuntimeControlsUnsupported) {
 		return outDir, cleanup, experimental, err
 	}
-	outDir, cleanup, err = generateAppServerSchema(ctx, cliPath, env, caller, false)
+	outDir, cleanup, err = generateAppServerSchema(ctx, cli, caller, false)
 	return outDir, cleanup, false, err
 }
 

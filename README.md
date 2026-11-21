@@ -205,6 +205,7 @@ opts = opts.WithApprovalCallback(func(ctx context.Context, req types.ApprovalReq
 - [`docs/approvals.md`](docs/approvals.md) — approval request/decision taxonomy, sandbox × policy matrix, deadlock warning
 - [`docs/hooks.md`](docs/hooks.md) — observer mode + auto-wired programmatic callbacks via `WithHookCallback` (v0.3.0)
 - [`docs/commands.md`](docs/commands.md) — slash-command-equivalent typed methods (Compact, SetModel, Rollback, StartReview, …) and local-helper parity (GitDiff, InitAgentsMD) (v0.4.0)
+- [Launch environment and experimental turn options](docs/launch-options.md)
 
 ## Examples
 

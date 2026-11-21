@@ -28,10 +28,9 @@ type approvalPolicyVariant struct {
 
 func discoverExperimentalApprovalPolicies(
 	ctx context.Context,
-	cliPath string,
-	env []string,
+	cli transport.CLI,
 ) ([]string, error) {
-	outDir, cleanup, err := generateExperimentalSchema(ctx, cliPath, env, "codex.DiscoverRuntimeControls")
+	outDir, cleanup, err := generateAppServerSchema(ctx, cli, "codex.DiscoverRuntimeControls", true)
 	if err != nil {
 		return nil, err
 	}
@@ -74,23 +73,13 @@ func discoverExperimentalApprovalPolicies(
 	return values, nil
 }
 
-func generateExperimentalSchema(
-	ctx context.Context,
-	cliPath string,
-	env []string,
-	caller string,
-) (outDir string, cleanup func(), err error) {
-	return generateAppServerSchema(ctx, cliPath, env, caller, true)
-}
-
 func generateAppServerSchema(
 	ctx context.Context,
-	cliPath string,
-	env []string,
+	cli transport.CLI,
 	caller string,
 	experimental bool,
 ) (outDir string, cleanup func(), err error) {
-	if checkErr := requireSchemaCommand(ctx, cliPath, env, caller, experimental); checkErr != nil {
+	if checkErr := requireSchemaCommand(ctx, cli, caller, experimental); checkErr != nil {
 		return "", func() {}, checkErr
 	}
 	outDir, err = os.MkdirTemp("", "codex-app-server-schema-")
@@ -103,7 +92,7 @@ func generateAppServerSchema(
 		args = append(args, "--experimental")
 	}
 	args = append(args, "--out", outDir)
-	_, _, runErr := transport.RunCLICommand(ctx, cliPath, env, runtimeControlCommandWaitDelay, args...)
+	_, _, runErr := cli.Run(ctx, runtimeControlCommandWaitDelay, args...)
 	if runErr != nil {
 		cleanup()
 		if ctxErr := ctx.Err(); ctxErr != nil {
@@ -115,20 +104,21 @@ func generateAppServerSchema(
 }
 
 func requireExperimentalSchemaCommand(ctx context.Context, cliPath string, env []string) error {
-	return requireSchemaCommand(ctx, cliPath, env, "codex.DiscoverRuntimeControls", true)
+	cli, err := transport.ResolveCLI(cliPath, "", env, false)
+	if err != nil {
+		return err
+	}
+	return requireSchemaCommand(ctx, cli, "codex.DiscoverRuntimeControls", true)
 }
 
 func requireSchemaCommand(
 	ctx context.Context,
-	cliPath string,
-	env []string,
+	cli transport.CLI,
 	caller string,
 	experimental bool,
 ) error {
-	stdout, stderr, err := transport.RunCLICommand(
+	stdout, stderr, err := cli.Run(
 		ctx,
-		cliPath,
-		env,
 		runtimeControlCommandWaitDelay,
 		"app-server",
 		"generate-json-schema",

@@ -1,7 +1,8 @@
 package codex
 
 import (
-	"context"
+	"fmt"
+	"strings"
 
 	"github.com/hishamkaram/codex-agent-sdk-go/internal/transport"
 	"github.com/hishamkaram/codex-agent-sdk-go/types"
@@ -20,21 +21,17 @@ type cliCompatibilityState struct {
 	known   bool
 }
 
-func probeCLICompatibilityVersion(
-	ctx context.Context,
-	opts *types.CodexOptions,
-	env []string,
-) transport.CLIVersionProbeResult {
-	cliPath := opts.CLIPath
-	if cliPath == "" {
-		var err error
-		cliPath, err = transport.FindCLI()
-		if err != nil {
-			return transport.CLIVersionProbeResult{Err: err}
-		}
+func resolveDiscoveryCLI(opts *types.CodexOptions) (transport.CLI, error) {
+	return resolveCLIOptions(strings.TrimSpace(opts.CLIPath), "", opts.Env, opts.EnvMode)
+}
+
+func resolveCLIOptions(path, cwd string, env []string, mode types.EnvMode) (transport.CLI, error) {
+	switch mode {
+	case types.EnvOverlay, types.EnvReplacement:
+		return transport.ResolveCLI(path, cwd, env, mode == types.EnvReplacement)
+	default:
+		return transport.CLI{}, fmt.Errorf("invalid Codex environment mode")
 	}
-	version, err := transport.ProbeCLIVersionContext(ctx, cliPath, env)
-	return transport.CLIVersionProbeResult{Version: version, Err: err}
 }
 
 func cliCompatibilityArgs(

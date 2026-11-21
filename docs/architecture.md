@@ -97,10 +97,10 @@ affected paths.
 - **Usage.** Streaming usage preserves provider snapshots. The ordered
   [usage ledger](../thread_usage.go) measures buffered usage from matching
   terminal evidence and tracks provider cache reads and writes independently.
-- **Environment.** Transport overlays the supplied environment on inherited
-  variables. [#46](https://github.com/hishamkaram/codex-agent-sdk-go/issues/46)
-  tracks exact replacement as a separate capability while preserving overlay
-  defaults.
+- **Launch options.** Transport resolves the child environment once for each
+  connection and its CLI probes. Overlay is the default, and replacement uses
+  a caller allowlist. The Client owns connection-scoped proof of experimental
+  turn options. See [launch options](launch-options.md).
 
 ## Choosing a package
 

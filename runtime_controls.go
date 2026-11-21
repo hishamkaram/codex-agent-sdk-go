@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hishamkaram/codex-agent-sdk-go/internal/transport"
 	"github.com/hishamkaram/codex-agent-sdk-go/types"
 )
 
@@ -33,20 +32,14 @@ func DiscoverRuntimeControls(
 	if options == nil {
 		options = types.NewCodexOptions()
 	}
-	cliPath := strings.TrimSpace(options.CLIPath)
-	if cliPath == "" {
-		var err error
-		cliPath, err = transport.FindCLI()
-		if err != nil {
-			return types.RuntimeControlCapabilities{}, fmt.Errorf("codex.DiscoverRuntimeControls: find CLI: %w", err)
-		}
+	cli, err := resolveDiscoveryCLI(options)
+	if err != nil {
+		return types.RuntimeControlCapabilities{}, fmt.Errorf("codex.DiscoverRuntimeControls: resolve Codex runtime: %w", err)
 	}
 	probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	stdout, stderr, err := transport.RunCLICommand(
+	stdout, stderr, err := cli.Run(
 		probeCtx,
-		cliPath,
-		options.Env,
 		runtimeControlCommandWaitDelay,
 		"--help",
 	)
@@ -65,11 +58,7 @@ func DiscoverRuntimeControls(
 		)
 	}
 	if options.ExperimentalAPI {
-		experimentalApprovals, discoveryErr := discoverExperimentalApprovalPolicies(
-			probeCtx,
-			cliPath,
-			options.Env,
-		)
+		experimentalApprovals, discoveryErr := discoverExperimentalApprovalPolicies(probeCtx, cli)
 		if discoveryErr != nil {
 			return types.RuntimeControlCapabilities{}, discoveryErr
 		}
@@ -77,7 +66,7 @@ func DiscoverRuntimeControls(
 			approvals = appendUnique(approvals, value)
 		}
 	}
-	version, err := transport.ProbeCLIVersionContext(ctx, cliPath, options.Env)
+	version, err := cli.ProbeVersion(ctx)
 	if err != nil {
 		return types.RuntimeControlCapabilities{}, fmt.Errorf("codex.DiscoverRuntimeControls: CLI version: %w", err)
 	}

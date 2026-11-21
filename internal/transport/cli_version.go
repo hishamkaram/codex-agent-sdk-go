@@ -75,7 +75,7 @@ func ParseSemVer(s string) (SemVer, error) {
 // the semver from the output. Returns the parsed SemVer or an error if the
 // binary can't be exec'd or the output doesn't contain a semver.
 func ProbeCLIVersion(cliPath string) (SemVer, error) {
-	return probeCLIVersionCtx(context.Background(), cliPath)
+	return ProbeCLIVersionContext(context.Background(), cliPath, nil)
 }
 
 // ProbeCLIVersionContext probes the CLI using the caller's context and runtime
@@ -85,32 +85,24 @@ func ProbeCLIVersionContext(
 	cliPath string,
 	env []string,
 ) (SemVer, error) {
-	return probeCLIVersionWithEnvironment(ctx, cliPath, env)
+	cli, err := ResolveCLI(cliPath, "", env, false)
+	if err != nil {
+		return SemVer{}, fmt.Errorf("transport.ProbeCLIVersion: %w", err)
+	}
+	return cli.ProbeVersion(ctx)
 }
 
-// probeCLIVersionCtx is the context-threading core of ProbeCLIVersion. The
-// 5s probe timeout is layered onto the caller's parent ctx so connect-time
-// cancellation (e.g. the Connect context being canceled) aborts the probe
-// instead of leaving it to run to the full timeout.
-func probeCLIVersionCtx(parent context.Context, cliPath string) (SemVer, error) {
-	return probeCLIVersionWithEnvironment(parent, cliPath, nil)
-}
-
-func probeCLIVersionWithEnvironment(
-	parent context.Context,
-	cliPath string,
-	env []string,
-) (SemVer, error) {
+// ProbeVersion runs under the same launch inputs as the app-server.
+func (cli CLI) ProbeVersion(parent context.Context) (SemVer, error) {
 	ctx, cancel := context.WithTimeout(parent, 5*time.Second)
 	defer cancel()
 
-	stdout, stderr, err := RunCLICommand(ctx, cliPath, env, cliVersionWaitDelay, "--version")
+	stdout, _, err := cli.Run(ctx, cliVersionWaitDelay, "--version")
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return SemVer{}, fmt.Errorf("transport.ProbeCLIVersion: %w", ctxErr)
 		}
-		return SemVer{}, fmt.Errorf("transport.ProbeCLIVersion: run %q --version: %w (stderr=%q)",
-			cliPath, err, stderr)
+		return SemVer{}, fmt.Errorf("transport.ProbeCLIVersion: run %q --version: %w", cli.path, err)
 	}
 	return ParseSemVer(stdout)
 }

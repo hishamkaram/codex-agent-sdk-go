@@ -23,10 +23,11 @@ type CodexOptions struct {
 	// ExtraArgs are appended to the `codex app-server` argv. Rarely needed.
 	ExtraArgs []string
 
-	// Env is a list of "KEY=VALUE" entries overlaid on os.Environ for the
-	// subprocess. A "KEY=" entry (empty value) unsets KEY. OPENAI_API_KEY
-	// passes through from os.Environ by default.
-	Env []string
+	// Env contains KEY=VALUE entries for the app-server and CLI probes.
+	// Overlay is the default mode and treats KEY= as deletion. Replacement
+	// uses only these entries and preserves explicitly empty values.
+	Env     []string
+	EnvMode EnvMode
 
 	// Logger is the injected zap logger. If nil, a no-op logger is used.
 	Logger *zap.Logger
@@ -134,6 +135,16 @@ type CodexOptions struct {
 	MaxConsecutiveParseErrors *uint `json:"-"`
 }
 
+// EnvMode controls how the SDK builds the Codex subprocess environment.
+type EnvMode string
+
+const (
+	// EnvOverlay inherits the parent environment and applies caller entries.
+	EnvOverlay EnvMode = ""
+	// EnvReplacement builds a child environment from caller entries.
+	EnvReplacement EnvMode = "replacement"
+)
+
 type HookConfigMode string
 
 const (
@@ -167,9 +178,19 @@ func (o *CodexOptions) WithExtraArgs(args ...string) *CodexOptions {
 	return o
 }
 
-// WithEnv overlays KEY=VALUE entries onto os.Environ for the subprocess.
+// WithEnv appends KEY=VALUE entries in the selected EnvMode. By default it
+// overlays os.Environ, with KEY= deleting an inherited key.
 func (o *CodexOptions) WithEnv(entries ...string) *CodexOptions {
 	o.Env = append(o.Env, entries...)
+	return o
+}
+
+// WithEnvReplacement replaces any previous entries and selects an
+// allowlisted child environment. With no entries it starts empty. Hook
+// wiring and Windows SYSTEMROOT may add narrowly scoped variables.
+func (o *CodexOptions) WithEnvReplacement(entries ...string) *CodexOptions {
+	o.EnvMode = EnvReplacement
+	o.Env = append([]string(nil), entries...)
 	return o
 }
 
@@ -420,6 +441,10 @@ type RunOptions struct {
 	// subsequent turns. Empty leaves the server's current value in effect.
 	// An explicit CollaborationMode takes precedence.
 	ReasoningEffort string
+
+	// CyberAccessProgram optionally selects an authorized program for this turn.
+	// It requires experimental opt-in and runtime schema support.
+	CyberAccessProgram *CyberAccessProgram
 
 	// Skills are explicitly invoked Codex skills to attach to the turn.
 	// Codex app-server expects both the prompt text and the structured
