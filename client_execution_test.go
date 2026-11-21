@@ -112,6 +112,13 @@ func TestClient_CancelBeforeAcknowledgementInterruptsOwnedTurn(t *testing.T) {
 	if _, runErr := duplicate.Run(ctx, "unconfirmed work", nil); !errors.Is(runErr, ErrThreadExecutionUnconfirmed) {
 		t.Fatalf("admission after interrupt acknowledgement without terminal: %v", runErr)
 	}
+	reloaded, resumeErr := c.ResumeThread(ctx, "T", nil)
+	if resumeErr != nil {
+		t.Fatal(resumeErr)
+	}
+	if _, startErr := reloaded.RunStreamed(ctx, "idle snapshot is not SDK completion", nil); !errors.Is(startErr, ErrThreadExecutionUnconfirmed) {
+		t.Fatalf("idle resume incorrectly cleared a canceled SDK operation: %v", startErr)
+	}
 	peer.push(notify("turn/completed", map[string]string{"threadId": "T", "turnId": "U", "status": "interrupted"}))
 	awaitExecutionTest(t, ctx, ordered)
 	next, err := duplicate.RunStreamed(ctx, "after the old terminal", nil)
@@ -602,5 +609,86 @@ func TestClient_MatchingLegacyCompactionCompletesAdmission(t *testing.T) {
 	peer.push(notify("turn/completed", map[string]string{"threadId": "T", "turnId": "next", "status": "completed"}))
 	if _, ok := awaitExecutionTest(t, ctx, out).(*types.TurnCompleted); !ok {
 		t.Fatal("next terminal missing")
+	}
+}
+
+func TestClient_FreshIdleResumeOnlyClearsUnchangedExternalFence(t *testing.T) {
+	t.Parallel()
+	t.Run("unchanged external fence", func(t *testing.T) {
+		t.Parallel()
+		testFreshIdleResume(t, false)
+	})
+	t.Run("new activity during resume", func(t *testing.T) {
+		t.Parallel()
+		testFreshIdleResume(t, true)
+	})
+}
+
+func testFreshIdleResume(t *testing.T, newerActive bool) {
+	t.Helper()
+	ctx, stop := context.WithTimeout(t.Context(), 5*time.Second)
+	defer stop()
+	secondResume := make(chan struct{})
+	allowReply := make(chan struct{})
+	resumeCount := 0
+	c, peer := setupMockClient(t, types.NewCodexOptions(), func(req jsonrpc.Request) jsonrpc.Response {
+		switch req.Method {
+		case "thread/resume":
+			resumeCount++
+			if resumeCount == 1 {
+				return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{"thread":{"id":"T","status":{"type":"active"}}}`)}
+			}
+			close(secondResume)
+			select {
+			case <-allowReply:
+			case <-ctx.Done():
+			}
+			return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{"thread":{"id":"T","status":{"type":"idle"}}}`)}
+		case "turn/start":
+			return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{"turn":{"id":"next"}}`)}
+		}
+		t.Errorf("unexpected provider method %s", req.Method)
+		return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{}`)}
+	})
+	first, err := c.ResumeThread(ctx, "T", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, startErr := first.RunStreamed(ctx, "unknown active work", nil); !errors.Is(startErr, ErrThreadExecutionUnconfirmed) {
+		t.Fatalf("missing initial external fence: %v", startErr)
+	}
+	ordered, err := c.SubscribeThreadEvents(ctx, 8)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	reloaded := make(chan error, 1)
+	go func() {
+		_, resumeErr := c.ResumeThread(ctx, "T", nil)
+		reloaded <- resumeErr
+	}()
+	awaitExecutionTest(t, ctx, secondResume)
+	if newerActive {
+		peer.push(notify("turn/started", map[string]string{"threadId": "T", "turnId": "external"}))
+		awaitExecutionTest(t, ctx, ordered)
+	}
+	close(allowReply)
+	if resumeErr := awaitExecutionTest(t, ctx, reloaded); resumeErr != nil {
+		t.Fatal(resumeErr)
+	}
+
+	if newerActive {
+		if _, startErr := first.RunStreamed(ctx, "new activity is unresolved", nil); !errors.Is(startErr, ErrThreadExecutionUnconfirmed) {
+			t.Fatalf("idle reply incorrectly cleared newer activity: %v", startErr)
+		}
+		return
+	}
+	out, err := first.RunStreamed(ctx, "external fence recovered", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	peer.push(notify("turn/completed", map[string]string{"threadId": "T", "turnId": "next", "status": "completed"}))
+	if terminal, ok := awaitExecutionTest(t, ctx, out).(*types.TurnCompleted); !ok || terminal.TurnID != "next" {
+		t.Fatalf("new operation terminal = %#v", terminal)
 	}
 }

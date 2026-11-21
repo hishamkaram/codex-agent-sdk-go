@@ -186,8 +186,9 @@ by this Client. The same server reply can describe work steered onto an
 existing turn, so a reply alone supplies no ownership proof. A transport or
 decoding gap can invalidate ownership. The SDK logs unconfirmed cleanup and
 keeps admission blocked until it can correlate completion. Ordered idle status
-can resolve an external-only fence. A canceled SDK operation still requires
-matching terminal evidence.
+can resolve an external-only fence. A fresh idle resume reply can also
+resolve that fence when no newer activity has been observed. A canceled SDK
+operation still requires matching terminal evidence.
 
 The five-second reconciliation window bounds the cleanup RPC and the next
 call's admission wait. A matching terminal event releases the reservation.

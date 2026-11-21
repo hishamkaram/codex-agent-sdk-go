@@ -378,6 +378,7 @@ func (c *Client) ResumeThread(ctx context.Context, threadID string, opts *types.
 		return nil, fmt.Errorf("codex.Client.ResumeThread: %w", types.ErrClientClosed)
 	}
 	defer c.endResumeObservation(threadID, observation)
+	activeGeneration, mayReconcileIdle := observation.resumeIdleCandidate()
 	resp, err := c.demux.Send(ctx, "thread/resume", params)
 	if err != nil {
 		return nil, fmt.Errorf("codex.Client.ResumeThread: %w", err)
@@ -391,7 +392,10 @@ func (c *Client) ResumeThread(ctx context.Context, threadID string, opts *types.
 		id = threadID
 	}
 	t := newThread(c, id)
-	t.seedExternalActivity(resp.Result)
+	status := t.seedExternalActivity(resp.Result)
+	if status == "idle" && id == threadID && mayReconcileIdle {
+		observation.reconcileIdleResume(activeGeneration)
+	}
 	t.model = extractThreadModel(resp.Result)
 	if cwd == "" {
 		cwd = c.opts.DefaultCwd

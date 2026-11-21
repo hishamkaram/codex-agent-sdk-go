@@ -51,8 +51,9 @@ type threadExecution struct {
 
 	// Private threads were freshly created on this Client's stdio connection.
 	// An unclassified start, gap or archive permanently disqualifies ownership.
-	private        bool
-	externalActive bool
+	private          bool
+	externalActive   bool
+	activeGeneration uint64
 	// A resume snapshot can identify a terminal seen after the current
 	// unknown-active fence. A later active fence discards that evidence.
 	fencedTerminals map[string]struct{}
@@ -117,6 +118,9 @@ func (e *threadExecution) invalidate() {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.private = false
+	// A gap could hide new activity, so an in-flight idle reply cannot
+	// reconcile an older external fence across the gap.
+	e.activeGeneration++
 	e.invalidateUsageLocked()
 	e.signalLocked()
 }
@@ -256,7 +260,7 @@ type providerThreadStatus struct {
 // seedExternalActivity is used before publishing a resumed or forked
 // handle. An active status without a unique ID never permits terminal
 // notifications for arbitrary turns to release admission.
-func (e *threadExecution) seedExternalActivity(result json.RawMessage) {
+func (e *threadExecution) seedExternalActivity(result json.RawMessage) string {
 	var reply struct {
 		Thread struct {
 			Status providerThreadStatus `json:"status"`
@@ -267,20 +271,42 @@ func (e *threadExecution) seedExternalActivity(result json.RawMessage) {
 			} `json:"turns"`
 		} `json:"thread"`
 	}
-	if json.Unmarshal(result, &reply) != nil || reply.Thread.Status.Type != "active" {
-		return
+	if json.Unmarshal(result, &reply) != nil {
+		return ""
+	}
+	status := reply.Thread.Status.Type
+	if status != "active" {
+		return status
 	}
 	e.externalActive = true
 	active := ""
 	for _, turn := range reply.Thread.Turns {
 		if turn.Status == "inProgress" && isRootTurn(turn.ID, turn.RootTurnID) {
 			if active != "" {
-				return
+				return status
 			}
 			active = turn.ID
 		}
 	}
 	e.activeTurnID.Store(active)
+	return status
+}
+
+func (e *threadExecution) resumeIdleCandidate() (generation uint64, eligible bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.activeGeneration, e.externalActive && e.op == nil
+}
+
+func (e *threadExecution) reconcileIdleResume(generation uint64) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	// The explicit idle reply covers the fence observed when this resume
+	// started. It supplies no terminal proof for reserved SDK work and
+	// cannot clear newer provider activity.
+	if e.externalActive && e.op == nil && !e.closed.Load() && e.activeGeneration == generation {
+		e.clearExternalActivityLocked()
+	}
 }
 
 // A resume response can reveal activity that began before the SDK observed
@@ -313,6 +339,7 @@ func (e *threadExecution) reconcileExternalActivity(incoming *threadExecution) {
 
 func (e *threadExecution) fenceExternalActivityLocked(turnID string) {
 	e.externalActive = true
+	e.activeGeneration++
 	e.activeTurnID.Store(turnID)
 	e.fencedTerminals = nil
 	e.private = false
@@ -393,6 +420,8 @@ func (e *threadExecution) observeStatusLocked(op *threadOperation, raw json.RawM
 	case "active":
 		if e.activeID() == "" {
 			e.fenceExternalActivityLocked("")
+		} else {
+			e.activeGeneration++
 		}
 	case "idle":
 		if e.externalActive {
