@@ -411,7 +411,7 @@ func (c *Client) ResumeThread(ctx context.Context, threadID string, opts *types.
 	if resp.Error != nil {
 		return nil, types.NewRPCError(resp.Error.Code, resp.Error.Message, resp.Error.Data)
 	}
-	// Prefer the ID from the response; fall back to what the caller passed.
+	// Older peers can omit the ID, so the requested identity is the fallback.
 	reportedID, _ := extractThreadID(resp.Result)
 	id := reportedID
 	if id == "" {
