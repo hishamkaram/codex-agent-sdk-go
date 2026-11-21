@@ -149,17 +149,18 @@ func (*FileChange) isThreadItem()    {}
 func (*FileChange) ItemType() string { return "fileChange" }
 
 // MCPToolCall captures a call the agent made to a Model Context Protocol
-// tool. Wire discriminator: "mcpToolCall". Shape inferred — not yet seen
-// in a captured transcript.
+// tool. EnvironmentID identifies the registration scope when supplied by
+// the server. Wire discriminator: "mcpToolCall".
 type MCPToolCall struct {
-	ID         string                `json:"id,omitempty"`
-	ServerName string                `json:"server,omitempty"`
-	ToolName   string                `json:"tool,omitempty"`
-	Input      json.RawMessage       `json:"arguments,omitempty"`
-	Result     json.RawMessage       `json:"result,omitempty"`
-	Status     string                `json:"status,omitempty"`
-	Error      MCPToolCallErrorField `json:"error,omitempty"`
-	DurationMs *int64                `json:"durationMs,omitempty"`
+	ID            string                `json:"id,omitempty"`
+	ServerName    string                `json:"server,omitempty"`
+	ToolName      string                `json:"tool,omitempty"`
+	Input         json.RawMessage       `json:"arguments,omitempty"`
+	Result        json.RawMessage       `json:"result,omitempty"`
+	Status        string                `json:"status,omitempty"`
+	Error         MCPToolCallErrorField `json:"error,omitempty"`
+	DurationMs    *int64                `json:"durationMs,omitempty"`
+	EnvironmentID *string               `json:"environmentId,omitempty"`
 }
 
 func (*MCPToolCall) isThreadItem()    {}
@@ -268,6 +269,18 @@ type DynamicToolCall struct {
 func (*DynamicToolCall) isThreadItem()    {}
 func (*DynamicToolCall) ItemType() string { return "dynamicToolCall" }
 
+// FunctionCallOutput is a function result emitted as a thread item. Output
+// preserves the wire JSON, which can be a string or an array of content items.
+type FunctionCallOutput struct {
+	ID        string          `json:"id"`
+	Name      string          `json:"name"`
+	Namespace *string         `json:"namespace,omitempty"`
+	Output    json.RawMessage `json:"output"`
+}
+
+func (*FunctionCallOutput) isThreadItem()    {}
+func (*FunctionCallOutput) ItemType() string { return "functionCallOutput" }
+
 // CollabAgentToolCall is a multi-agent delegation item. Wire discriminator:
 // "collabAgentToolCall". US4's translator emits one MsgTask per AgentsStates
 // entry so the PWA agent panel gets one row per delegated sub-agent.
@@ -288,12 +301,15 @@ func (*CollabAgentToolCall) ItemType() string { return "collabAgentToolCall" }
 
 // SubAgentActivity is the provider-authored lifecycle item for one Codex
 // child-agent thread. AgentThreadID is the child thread identity; AgentPath is
-// the provider role path that launched it.
+// the provider role path that launched it. Model and ReasoningEffort are the
+// resolved settings at creation when reported by the server.
 type SubAgentActivity struct {
-	ID            string               `json:"id"`
-	AgentPath     string               `json:"agentPath"`
-	AgentThreadID string               `json:"agentThreadId"`
-	Kind          SubAgentActivityKind `json:"kind"`
+	ID              string               `json:"id"`
+	AgentPath       string               `json:"agentPath"`
+	AgentThreadID   string               `json:"agentThreadId"`
+	Kind            SubAgentActivityKind `json:"kind"`
+	Model           *string              `json:"model,omitempty"`
+	ReasoningEffort *string              `json:"reasoningEffort,omitempty"`
 }
 
 func (*SubAgentActivity) isThreadItem()    {}

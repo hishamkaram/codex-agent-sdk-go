@@ -5,11 +5,13 @@ import "encoding/json"
 // --- v0.2.0 expansion: MCP events ---
 
 // MCPServerStartupStatusUpdated is emitted as each MCP server moves through
-// its startup lifecycle (starting -> connected | error).
+// its startup lifecycle (starting -> connected | error). EnvironmentID
+// identifies the registration scope when supplied by the server.
 // Wire method: "mcpServer/startupStatus/updated".
 type MCPServerStartupStatusUpdated struct {
 	ThreadID      *string         `json:"thread_id,omitempty"`
 	Name          string          `json:"name"`
+	EnvironmentID *string         `json:"environment_id,omitempty"`
 	Status        json.RawMessage `json:"status"`
 	Error         *string         `json:"error,omitempty"`
 	FailureReason *string         `json:"failure_reason,omitempty"`
