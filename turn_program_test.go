@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -134,7 +135,9 @@ func TestThreadTurnProgramUsesProofOnceAndPreservesProviderRejection(t *testing.
 		t.Fatal(err)
 	}
 	got := readTurnStartPrograms(t, fixture.requests)
-	assertStringsEqual(t, "wire program values", got, []string{`"standard"`, `"daybreakBlue"`, `"daybreakRed"`, ""})
+	if want := []string{`"standard"`, `"daybreakBlue"`, `"daybreakRed"`, ""}; !slices.Equal(got, want) {
+		t.Fatalf("wire program values = %q, want %q", got, want)
+	}
 	if probes := readProgramProbeCount(t, fixture.probes); probes != 1 {
 		t.Fatalf("schema generated %d times, want one connection-local proof", probes)
 	}

@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/hishamkaram/codex-agent-sdk-go/internal/jsonrpc"
-	"github.com/hishamkaram/codex-agent-sdk-go/internal/threadexec"
 	"github.com/hishamkaram/codex-agent-sdk-go/types"
 )
 
@@ -27,21 +26,21 @@ func TestStartDispatcherCannotPublishConnectedAfterSourceExit(t *testing.T) {
 	for range demux.ServerRequests() {
 	}
 
-	client := &Client{
-		threadRegistry:         threadexec.NewRegistry(),
-		threadEventSubscribers: make(map[uint64]*threadEventSubscriber),
+	client, err := NewClient(t.Context(), types.NewCodexOptions())
+	if err != nil {
+		t.Fatal(err)
 	}
 	dispatcherCtx, dispatcherCancel := context.WithCancel(context.Background())
 	defer dispatcherCancel()
-	if err := client.startDispatcher(dispatcherCtx, dispatcherCancel, demux); err != nil {
+	if err := client.session.StartDispatcher(dispatcherCtx, dispatcherCancel, demux, client.session.Dispatch); err != nil {
 		t.Fatalf("startDispatcher: %v", err)
 	}
 	select {
-	case <-client.dispatcherDone:
+	case <-client.session.DispatcherDone():
 	case <-time.After(time.Second):
 		t.Fatal("dispatcher did not observe the closed event source")
 	}
-	if client.connected.Load() {
+	if client.session.Connected() {
 		dispatcherCancel()
 		t.Fatal("exited dispatcher left client connected")
 	}
@@ -71,7 +70,7 @@ func TestSubscribeThreadEventsDeliversUnknownThreadFIFO(t *testing.T) {
 		if marshalErr != nil {
 			t.Fatal(marshalErr)
 		}
-		c.handleNotification(jsonrpc.Notification{Method: "item/started", Params: params})
+		c.session.HandleNotification(jsonrpc.Notification{Method: "item/started", Params: params})
 	}
 
 	for _, want := range []string{"one", "two"} {
@@ -102,7 +101,7 @@ func TestSubscribeThreadEventsDeliversThreadScopedError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SubscribeThreadEvents: %v", err)
 	}
-	c.handleNotification(jsonrpc.Notification{
+	c.session.HandleNotification(jsonrpc.Notification{
 		Method: "error",
 		Params: json.RawMessage(`{"threadId":"child","turnId":"turn","willRetry":false,"error":{"message":"failed"}}`),
 	})
@@ -141,7 +140,7 @@ func TestSubscribeThreadEventsObserveRegisteredThreadStateBeforeEvent(t *testing
 	notificationDone := make(chan struct{})
 	go func() {
 		defer close(notificationDone)
-		c.handleNotification(jsonrpc.Notification{
+		c.session.HandleNotification(jsonrpc.Notification{
 			Method: "turn/started",
 			Params: json.RawMessage(`{"threadId":"registered-thread","turn":{"id":"turn-1"}}`),
 		})
@@ -187,7 +186,7 @@ func TestSubscribeThreadEventsOverflowReportsGapAndCloses(t *testing.T) {
 
 	params := json.RawMessage(`{"threadId":"child","turnId":"turn","item":{"type":"agentMessage","id":"message","text":"x"}}`)
 	for range 3 {
-		c.handleNotification(jsonrpc.Notification{Method: "item/started", Params: params})
+		c.session.HandleNotification(jsonrpc.Notification{Method: "item/started", Params: params})
 	}
 
 	var got []ThreadEventEnvelope
@@ -211,7 +210,7 @@ func TestSubscribeThreadEventsParseFailureReportsGapAndCloses(t *testing.T) {
 		t.Fatalf("SubscribeThreadEvents: %v", err)
 	}
 
-	c.handleNotification(jsonrpc.Notification{
+	c.session.HandleNotification(jsonrpc.Notification{
 		Method: "item/started",
 		Params: json.RawMessage(`{"threadId":"child","turnId":"turn"}`),
 	})
@@ -251,7 +250,7 @@ func TestSubscribeThreadEventsMissingRequiredThreadIDReportsGap(t *testing.T) {
 		t.Fatalf("SubscribeThreadEvents: %v", err)
 	}
 
-	c.handleNotification(jsonrpc.Notification{
+	c.session.HandleNotification(jsonrpc.Notification{
 		Method: "item/started",
 		Params: json.RawMessage(`{"turnId":"turn","item":{"type":"agentMessage","id":"message","text":"output"}}`),
 	})
@@ -286,11 +285,11 @@ func TestSubscribeThreadEventsIdentitylessLegacyGlobalEventDoesNotGap(t *testing
 		t.Fatalf("SubscribeThreadEvents: %v", err)
 	}
 
-	c.handleNotification(jsonrpc.Notification{
+	c.session.HandleNotification(jsonrpc.Notification{
 		Method: "error",
 		Params: json.RawMessage(`{"code":"legacy","message":"global warning"}`),
 	})
-	c.handleNotification(jsonrpc.Notification{
+	c.session.HandleNotification(jsonrpc.Notification{
 		Method: "item/started",
 		Params: json.RawMessage(`{"threadId":"child","turnId":"turn","item":{"type":"agentMessage","id":"message","text":"output"}}`),
 	})
@@ -336,13 +335,13 @@ func TestSubscribeThreadEventsMalformedFrameReportsGapAndParentContinues(t *test
 	if _, ok := <-events; ok {
 		t.Fatal("subscription remained open after frame gap")
 	}
-	if !c.connected.Load() {
+	if !c.session.Connected() {
 		t.Fatal("malformed frame disconnected the parent client")
 	}
 	if _, err := c.ListModels(context.Background()); err != nil {
 		t.Fatalf("parent RPC after malformed frame: %v", err)
 	}
-	if !c.connected.Load() {
+	if !c.session.Connected() {
 		t.Fatal("parent client disconnected after follow-up RPC")
 	}
 }
@@ -378,13 +377,13 @@ func TestSubscribeThreadEventsUnclassifiableFrameReportsGapAndParentContinues(t 
 	if _, ok := <-events; ok {
 		t.Fatal("subscription remained open after frame gap")
 	}
-	if !c.connected.Load() {
+	if !c.session.Connected() {
 		t.Fatal("unclassifiable frame disconnected the parent client")
 	}
 	if _, err := c.ListModels(context.Background()); err != nil {
 		t.Fatalf("parent RPC after unclassifiable frame: %v", err)
 	}
-	if !c.connected.Load() {
+	if !c.session.Connected() {
 		t.Fatal("parent client disconnected after follow-up RPC")
 	}
 }

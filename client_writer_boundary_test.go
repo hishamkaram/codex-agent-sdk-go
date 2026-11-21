@@ -60,12 +60,10 @@ func TestClient_QueuedRunRejectsProviderActivityAtWriteBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c.demux = demux
-	c.connected.Store(true)
-	c.dispatcherDone = make(chan struct{})
-	c.dispatcherCancel = stop
+	if startErr := c.session.StartDispatcher(ctx, stop, demux, c.session.Dispatch); startErr != nil {
+		t.Fatal(startErr)
+	}
 	demux.Run(ctx)
-	go c.dispatch(ctx, demux, c.dispatcherDone)
 	defer func() {
 		_ = c.Close(ctx)
 		peer.close()
@@ -228,7 +226,7 @@ func TestClient_ReceivedProviderStartFencesOnlyItsThread(t *testing.T) {
 		defer release()
 		peer.push(notify("turn/started", map[string]string{"threadId": "blocker", "turnId": "hold"}))
 		peer.push(json.RawMessage(`{"method":"turn/started","params":{"thread":{"id":"T"},"turn":{"id":"external"}}}`))
-		if _, sendErr := c.demux.Send(ctx, "wire/barrier", nil); sendErr != nil {
+		if _, sendErr := c.session.Demux().Send(ctx, "wire/barrier", nil); sendErr != nil {
 			t.Fatal(sendErr)
 		}
 		if _, runErr := target.RunStreamed(ctx, "must not steer external work", nil); !errors.Is(runErr, ErrThreadExecutionUnconfirmed) {

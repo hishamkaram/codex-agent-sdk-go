@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"sync"
 
+	"github.com/hishamkaram/codex-agent-sdk-go/internal/session"
 	"github.com/hishamkaram/codex-agent-sdk-go/types"
 )
 
@@ -175,87 +177,92 @@ func (c *Client) SubscribeThreadEvents(ctx context.Context, buffer int) (<-chan 
 	if buffer < 1 || buffer > maxThreadEventSubscriptionBuffer {
 		return nil, fmt.Errorf("codex.Client.SubscribeThreadEvents: buffer must be between 1 and %d", maxThreadEventSubscriptionBuffer)
 	}
-	if c.closed.Load() {
-		return nil, fmt.Errorf("codex.Client.SubscribeThreadEvents: %w", types.ErrClientClosed)
-	}
-	if !c.connected.Load() {
-		return nil, fmt.Errorf("codex.Client.SubscribeThreadEvents: %w", types.ErrClientNotConnected)
-	}
-
 	subscriber := newThreadEventSubscriber(buffer)
-	c.mu.Lock()
-	if c.closed.Load() || !c.connected.Load() {
-		c.mu.Unlock()
+	var id uint64
+	if err := c.session.WithReady(func() {
+		id = c.subscriptions.add(subscriber)
+	}); err != nil {
 		subscriber.close()
-		if c.closed.Load() {
-			return nil, fmt.Errorf("codex.Client.SubscribeThreadEvents: %w", types.ErrClientClosed)
-		}
-		return nil, fmt.Errorf("codex.Client.SubscribeThreadEvents: %w", types.ErrClientNotConnected)
+		return nil, fmt.Errorf("codex.Client.SubscribeThreadEvents: %w", err)
 	}
-	if c.threadEventSubscribers == nil {
-		c.threadEventSubscribers = make(map[uint64]*threadEventSubscriber)
-	}
-	c.nextThreadEventSubscriberID++
-	id := c.nextThreadEventSubscriberID
-	c.threadEventSubscribers[id] = subscriber
-	c.mu.Unlock()
 
 	go func() {
 		select {
 		case <-ctx.Done():
-			c.removeThreadEventSubscriber(id, subscriber)
+			c.subscriptions.remove(id, subscriber)
 		case <-subscriber.done:
 		}
 	}()
 	return subscriber.events, nil
 }
 
-func (c *Client) publishThreadEvent(event ThreadEventEnvelope) {
-	c.mu.Lock()
-	subscribers := make(map[uint64]*threadEventSubscriber, len(c.threadEventSubscribers))
-	for id, subscriber := range c.threadEventSubscribers {
-		subscribers[id] = subscriber
-	}
-	c.mu.Unlock()
+// threadSubscriptions owns the concrete public queues. Enrollment runs
+// under Session's readiness lock, then under this registry's own lock.
+type threadSubscriptions struct {
+	mu      sync.Mutex
+	entries map[uint64]*threadEventSubscriber
+	nextID  uint64
+}
 
-	for id, subscriber := range subscribers {
-		if !subscriber.deliver(event) {
-			c.removeThreadEventSubscriber(id, subscriber)
+func (s *threadSubscriptions) add(subscriber *threadEventSubscriber) uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.entries == nil {
+		s.entries = make(map[uint64]*threadEventSubscriber)
+	}
+	s.nextID++
+	s.entries[s.nextID] = subscriber
+	return s.nextID
+}
+
+func (s *threadSubscriptions) snapshot() map[uint64]*threadEventSubscriber {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return maps.Clone(s.entries)
+}
+
+func (s *threadSubscriptions) Publish(threadID string, event types.ThreadEvent) {
+	envelope := ThreadEventEnvelope{ThreadID: threadID, Event: event}
+	for id, subscriber := range s.snapshot() {
+		if !subscriber.deliver(envelope) {
+			s.remove(id, subscriber)
 		}
 	}
 }
 
-func (c *Client) failThreadEventSubscriptions(event ThreadEventEnvelope) {
-	c.mu.Lock()
-	subscribers := make(map[uint64]*threadEventSubscriber, len(c.threadEventSubscribers))
-	for id, subscriber := range c.threadEventSubscribers {
-		subscribers[id] = subscriber
+func (s *threadSubscriptions) Fail(gap session.Gap) {
+	event := ThreadEventEnvelope{ThreadID: gap.ThreadID}
+	switch gap.Kind {
+	case session.FrameGap:
+		event.Err = &ThreadEventFrameGapError{Cause: gap.Cause}
+	case session.ParseGap:
+		event.Err = &ThreadEventParseGapError{ThreadID: gap.ThreadID, Method: gap.Method, Cause: gap.Cause}
+	case session.SourceGap:
+		event.Err = &ThreadEventSourceGapError{Cause: gap.Cause}
 	}
-	c.mu.Unlock()
-
-	for id, subscriber := range subscribers {
+	for id, subscriber := range s.snapshot() {
 		if subscriber.fail(event) {
-			c.removeThreadEventSubscriber(id, subscriber)
+			s.remove(id, subscriber)
 		}
 	}
 }
 
-func (c *Client) closeThreadEventSubscriptions() {
-	c.mu.Lock()
-	subscribers := c.threadEventSubscribers
-	c.threadEventSubscribers = nil
-	c.mu.Unlock()
+func (s *threadSubscriptions) Close() {
+	s.mu.Lock()
+	subscribers := s.entries
+	s.entries = nil
+	s.mu.Unlock()
 
 	for _, subscriber := range subscribers {
 		subscriber.close()
 	}
 }
 
-func (c *Client) removeThreadEventSubscriber(id uint64, subscriber *threadEventSubscriber) {
-	c.mu.Lock()
-	if current := c.threadEventSubscribers[id]; current == subscriber {
-		delete(c.threadEventSubscribers, id)
+func (s *threadSubscriptions) remove(id uint64, subscriber *threadEventSubscriber) {
+	s.mu.Lock()
+	if current := s.entries[id]; current == subscriber {
+		delete(s.entries, id)
 	}
-	c.mu.Unlock()
+	s.mu.Unlock()
 	subscriber.close()
 }

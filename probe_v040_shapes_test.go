@@ -4,7 +4,7 @@
 // RPC against a live codex 0.121.0 and dumping raw responses to
 // tests/fixtures/v040_probes/<method>.json.
 //
-// Lives in the root `codex` package so it can call c.demux.Send directly
+// Lives in the root `codex` package so it can call c.session.Demux().Send directly
 // (the public Client API does not expose arbitrary RPCs by design — see
 // Risk R4 in the v0.4.0 plan).
 //
@@ -246,7 +246,7 @@ func throwawayThread(t *testing.T, c *Client) *Thread {
 	t.Cleanup(func() {
 		archCtx, archCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer archCancel()
-		if _, err := c.demux.Send(archCtx, "thread/archive", map[string]any{"threadId": thread.ID()}); err != nil {
+		if _, err := c.session.Demux().Send(archCtx, "thread/archive", map[string]any{"threadId": thread.ID()}); err != nil {
 			t.Logf("WARN: failed to archive throwaway thread %q: %v", thread.ID(), err)
 		} else {
 			t.Logf("archived throwaway thread %q (still in ~/.codex/archived_sessions/ — codex has no delete API)",
@@ -263,7 +263,7 @@ func probeRPC(t *testing.T, c *Client, method string, params any) json.RawMessag
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	resp, err := c.demux.Send(ctx, method, params)
+	resp, err := c.session.Demux().Send(ctx, method, params)
 	if err != nil {
 		t.Fatalf("%s: transport error: %v", method, err)
 	}
@@ -326,7 +326,7 @@ func TestProbeV040Shapes(t *testing.T) {
 
 	t.Run("config_value_write_known_key", func(t *testing.T) {
 		// Read current model first, then write it back (semantic no-op).
-		readResp, err := c.demux.Send(context.Background(), "config/read", map[string]any{})
+		readResp, err := c.session.Demux().Send(context.Background(), "config/read", map[string]any{})
 		if err != nil || readResp.Error != nil {
 			t.Skipf("could not read current config to round-trip: err=%v rpcErr=%v", err, readResp.Error)
 		}
@@ -355,7 +355,7 @@ func TestProbeV040Shapes(t *testing.T) {
 
 	t.Run("config_batchWrite", func(t *testing.T) {
 		// Round-trip: read current, batch-write same.
-		readResp, err := c.demux.Send(context.Background(), "config/read", map[string]any{})
+		readResp, err := c.session.Demux().Send(context.Background(), "config/read", map[string]any{})
 		if err != nil || readResp.Error != nil {
 			t.Skipf("could not read current config: err=%v rpcErr=%v", err, readResp.Error)
 		}

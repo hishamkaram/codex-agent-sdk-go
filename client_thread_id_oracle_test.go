@@ -3,6 +3,7 @@ package codex
 import (
 	"testing"
 
+	"github.com/hishamkaram/codex-agent-sdk-go/internal/events"
 	"github.com/hishamkaram/codex-agent-sdk-go/types"
 )
 
@@ -76,7 +77,7 @@ func TestExtractThreadIDFromEvent_Oracle(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if got := extractThreadIDFromEvent(tc.ev); got != tc.want {
+			if got, _ := events.ThreadIdentity(tc.ev); got != tc.want {
 				t.Fatalf("extractThreadIDFromEvent(%s) = %q, want %q", tc.name, got, tc.want)
 			}
 		})

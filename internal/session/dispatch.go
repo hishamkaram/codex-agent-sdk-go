@@ -1,4 +1,4 @@
-package codex
+package session
 
 import (
 	"context"
@@ -14,16 +14,16 @@ import (
 
 var errThreadEventIdentityMissing = errors.New("thread-scoped notification is missing required thread ID")
 
-// dispatch runs the event-routing goroutine. Reads notifications and
+// Dispatch runs the event-routing goroutine. Reads notifications and
 // server-initiated requests from the demux and fans them out.
-func (c *Client) dispatch(ctx context.Context, demux *jsonrpc.Demux, done chan struct{}) {
-	approvals := c.startApprovals(ctx, demux)
+func (s *Session) Dispatch(ctx context.Context, demux *jsonrpc.Demux, done chan struct{}) {
+	approvals := s.StartApprovals(ctx, demux)
 	defer func() {
 		approvals.Cancel()
-		c.connected.Store(false)
-		c.closeThreadEventSubscriptions()
-		c.approvals.ClearEvidence()
-		c.threadRegistry.CloseRecords()
+		s.MarkDisconnected()
+		s.sink.Close()
+		s.approvals.ClearEvidence()
+		s.threadRegistry.CloseRecords()
 		approvals.Wait()
 		close(done)
 	}()
@@ -40,13 +40,13 @@ func (c *Client) dispatch(ctx context.Context, demux *jsonrpc.Demux, done chan s
 				serverMessages = nil
 				continue
 			}
-			c.routeServerMessage(demux, approvals, message)
+			s.routeServerMessage(demux, approvals, message)
 		case note, ok := <-notifications:
 			if !ok {
 				notifications = nil
 				continue
 			}
-			c.handleNotification(note)
+			s.HandleNotification(note)
 		case sreq, ok := <-serverRequests:
 			if !ok {
 				serverRequests = nil
@@ -56,25 +56,20 @@ func (c *Client) dispatch(ctx context.Context, demux *jsonrpc.Demux, done chan s
 		}
 	}
 
-	if ctx.Err() == nil && !c.closed.Load() {
-		// Publish disconnected state before the terminal gap so a consumer that
-		// reacts immediately cannot register a subscription on a dead source.
-		c.connected.Store(false)
+	if ctx.Err() == nil && s.MarkSourceLost() {
 		var cause error
 		select {
 		case cause = <-demux.LoopError():
 		default:
 		}
-		c.failThreadEventSubscriptions(ThreadEventEnvelope{
-			Err: &ThreadEventSourceGapError{Cause: cause},
-		})
+		s.sink.Fail(Gap{Kind: SourceGap, Cause: cause})
 	}
 }
 
-func (c *Client) routeServerMessage(demux *jsonrpc.Demux, approvals *approval.Worker, message jsonrpc.ServerMessage) {
+func (s *Session) routeServerMessage(demux *jsonrpc.Demux, approvals *approval.Worker, message jsonrpc.ServerMessage) {
 	switch {
 	case message.Notification != nil:
-		c.handleNotification(*message.Notification)
+		s.HandleNotification(*message.Notification)
 		demux.NotificationApplied(message.Notification)
 	case message.Request != nil:
 		approvals.Enqueue(*message.Request)
@@ -94,10 +89,10 @@ func pendingActivityAffectsThread(n jsonrpc.Notification, threadID string) bool 
 	}
 	ev, err := events.ParseEvent(n)
 	if err != nil {
-		id, _ := extractThreadID(n.Params)
+		id, _ := events.ThreadIDFromReply(n.Params)
 		return id == "" || threadexec.CanonicalID(id) == threadID
 	}
-	id, _ := threadIdentityFromEvent(ev)
+	id, _ := events.ThreadIdentity(ev)
 	if id == "" {
 		return true
 	}
@@ -115,31 +110,23 @@ func pendingActivityAffectsThread(n jsonrpc.Notification, threadID string) bool 
 	}
 }
 
-func (c *Client) handleNotification(n jsonrpc.Notification) {
+// HandleNotification applies one notification in dispatcher order.
+func (s *Session) HandleNotification(n jsonrpc.Notification) {
 	if n.DecodeError != nil {
-		c.threadRegistry.Invalidate("")
-		c.approvals.ClearEvidence()
-		c.failThreadEventSubscriptions(ThreadEventEnvelope{
-			Err: &ThreadEventFrameGapError{Cause: n.DecodeError},
-		})
-		c.logger.Warn("decode inbound frame failed", zap.Error(n.DecodeError))
+		s.threadRegistry.Invalidate("")
+		s.approvals.ClearEvidence()
+		s.sink.Fail(Gap{Kind: FrameGap, Cause: n.DecodeError})
+		s.logger.Warn("decode inbound frame failed", zap.Error(n.DecodeError))
 		return
 	}
 
 	ev, err := events.ParseEvent(n)
 	if err != nil {
-		c.approvals.ClearEvidence()
-		threadID, _ := extractThreadID(n.Params)
-		c.threadRegistry.Invalidate(threadID)
-		c.failThreadEventSubscriptions(ThreadEventEnvelope{
-			ThreadID: threadID,
-			Err: &ThreadEventParseGapError{
-				ThreadID: threadID,
-				Method:   n.Method,
-				Cause:    err,
-			},
-		})
-		c.logger.Warn("parse event failed",
+		s.approvals.ClearEvidence()
+		threadID, _ := events.ThreadIDFromReply(n.Params)
+		s.threadRegistry.Invalidate(threadID)
+		s.sink.Fail(Gap{Kind: ParseGap, ThreadID: threadID, Method: n.Method, Cause: err})
+		s.logger.Warn("parse event failed",
 			zap.String("method", n.Method),
 			zap.Error(err))
 		return
@@ -149,61 +136,77 @@ func (c *Client) handleNotification(n jsonrpc.Notification) {
 	// drift is observable, not silent. (The demux already classifies frame-shape
 	// drift; this catches method-name drift one layer up.)
 	if _, ok := ev.(*types.UnknownEvent); ok {
-		c.opts.ObserverOrNop().OnUnknownMessage(n.Method)
+		s.opts.ObserverOrNop().OnUnknownMessage(n.Method)
 	}
-	threadID, identityRequired := threadIdentityFromEvent(ev)
+	threadID, identityRequired := events.ThreadIdentity(ev)
 	if threadID == "" {
 		if identityRequired {
-			c.threadRegistry.Invalidate("")
-			c.approvals.ClearEvidence()
-			c.failThreadEventSubscriptions(ThreadEventEnvelope{
-				Err: &ThreadEventParseGapError{
-					Method: n.Method,
-					Cause:  errThreadEventIdentityMissing,
-				},
-			})
-			c.logger.Warn("thread-scoped notification missing thread ID",
+			s.threadRegistry.Invalidate("")
+			s.approvals.ClearEvidence()
+			s.sink.Fail(Gap{Kind: ParseGap, Method: n.Method, Cause: errThreadEventIdentityMissing})
+			s.logger.Warn("thread-scoped notification missing thread ID",
 				zap.String("method", n.Method))
 			return
 		}
 		// Global events — configWarning, account/rateLimits/updated, etc.
 		// Logged at debug; clients that want them must expose a hook in v1.1.
-		c.logger.Debug("unroutable event (no thread_id)",
+		s.logger.Debug("unroutable event (no thread_id)",
 			zap.String("method", ev.EventMethod()))
 		return
 	}
-	c.approvals.Observe(ev)
+	s.approvals.Observe(ev)
 	// Record lifecycle evidence before any lossy event delivery.
-	if c.threadRegistry.Observe(threadID, ev) {
-		c.logger.Warn("operation event queue full, dropped notification",
+	if s.threadRegistry.Observe(threadID, ev) {
+		s.logger.Warn("operation event queue full, dropped notification",
 			zap.String("thread_id", threadID), zap.String("method", n.Method))
 	}
 	// Unregistered provider-created child threads have no Thread handle, but
 	// their events still belong in the client-wide runtime stream.
-	c.publishThreadEvent(ThreadEventEnvelope{ThreadID: threadID, Event: ev})
+	s.sink.Publish(threadID, ev)
 }
 
-func (c *Client) registerThread(t *Thread) {
-	t.record = c.threadRegistry.Register(t.id, t.record, c.connected.Load)
+// GapKind distinguishes the existing terminal subscription failures.
+type GapKind uint8
+
+const (
+	FrameGap GapKind = iota
+	ParseGap
+	SourceGap
+)
+
+type Gap struct {
+	Kind     GapKind
+	ThreadID string
+	Method   string
+	Cause    error
 }
 
-type idleResumeProof struct {
-	execution  *threadexec.Record
-	generation uint64
+// EventSink receives synchronous delivery after execution and approval
+// evidence is applied. It owns the public queue and error projection.
+type EventSink interface {
+	Publish(string, types.ThreadEvent)
+	Fail(Gap)
+	Close()
 }
 
-func (c *Client) requestThreadResume(ctx context.Context, params map[string]any, execution *threadexec.Record) (jsonrpc.Response, idleResumeProof, error) {
-	generation, eligible := execution.ResumeIdleCandidate()
-	if eligible && c.demux.ServerMessages() != nil {
-		reply, err := c.demux.SendOrdered(ctx, "thread/resume", params)
-		return reply, idleResumeProof{execution: execution, generation: generation}, err
-	}
-	reply, err := c.demux.Send(ctx, "thread/resume", params)
-	return reply, idleResumeProof{}, err
+// Threads returns the canonical execution registry for this session.
+func (s *Session) Threads() *threadexec.Registry { return s.threadRegistry }
+
+// PendingActivity checks receipts for a provider thread at the writer guard.
+func PendingActivity(demux *jsonrpc.Demux, id string) (bool, error) {
+	return demux.CheckPendingNotification(func(n jsonrpc.Notification) bool {
+		return pendingActivityAffectsThread(n, id)
+	})
 }
 
-func (p idleResumeProof) reconcile(status, statusThreadID, reportedID, requestedID string) {
-	if p.execution != nil && status == "idle" && threadexec.CanonicalID(statusThreadID) == requestedID && threadexec.CanonicalID(reportedID) == requestedID {
-		p.execution.ReconcileIdleResume(p.generation)
-	}
+// IsApprovalReentry identifies a callback from this same session.
+func (s *Session) IsApprovalReentry(ctx context.Context) bool { return s.approvals.IsReentrant(ctx) }
+
+// StartApprovals starts the callback and denial lanes for this dispatcher.
+func (s *Session) StartApprovals(ctx context.Context, demux *jsonrpc.Demux) *approval.Worker {
+	return s.approvals.Start(ctx, demux, approval.Options{
+		Logger:    s.logger,
+		Callback:  func() types.ApprovalCallback { return s.opts.ApprovalCallback },
+		Available: func() bool { return !s.Closed() && s.Connected() },
+	})
 }

@@ -60,12 +60,4 @@ func (c *Client) readResumeModel(ctx context.Context, threadID string) (string, 
 
 // appServerWorkingDirectory reads the launch directory from the transport
 // retained by this connection. Close may clear that transport concurrently.
-func (c *Client) appServerWorkingDirectory() string {
-	c.lifecycleMu.Lock()
-	tr := c.tr
-	c.lifecycleMu.Unlock()
-	if tr == nil {
-		return ""
-	}
-	return tr.WorkingDirectory()
-}
+func (c *Client) appServerWorkingDirectory() string { return c.session.WorkingDirectory() }

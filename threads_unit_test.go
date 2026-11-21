@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/hishamkaram/codex-agent-sdk-go/internal/events"
 	"github.com/hishamkaram/codex-agent-sdk-go/types"
 )
 
@@ -137,7 +138,7 @@ func TestExtractThreadModel(t *testing.T) {
 func TestExtractThreadID_NestedShape(t *testing.T) {
 	t.Parallel()
 	raw := json.RawMessage(`{"thread":{"id":"T-nested"},"model":"gpt-5.4"}`)
-	id, err := extractThreadID(raw)
+	id, err := events.ThreadIDFromReply(raw)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,7 +150,7 @@ func TestExtractThreadID_NestedShape(t *testing.T) {
 func TestExtractThreadID_FlatShape(t *testing.T) {
 	t.Parallel()
 	raw := json.RawMessage(`{"threadId":"T-flat"}`)
-	id, _ := extractThreadID(raw)
+	id, _ := events.ThreadIDFromReply(raw)
 	if id != "T-flat" {
 		t.Fatalf("id = %q", id)
 	}
@@ -158,7 +159,7 @@ func TestExtractThreadID_FlatShape(t *testing.T) {
 func TestExtractThreadID_Missing(t *testing.T) {
 	t.Parallel()
 	raw := json.RawMessage(`{"unrelated":"field"}`)
-	_, err := extractThreadID(raw)
+	_, err := events.ThreadIDFromReply(raw)
 	if err == nil {
 		t.Fatal("expected error for missing thread id")
 	}
@@ -194,7 +195,7 @@ func TestExtractThreadIDFromEvent(t *testing.T) {
 		c := c
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
-			if got := extractThreadIDFromEvent(c.ev); got != c.want {
+			if got, _ := events.ThreadIdentity(c.ev); got != c.want {
 				t.Fatalf("got %q, want %q", got, c.want)
 			}
 		})

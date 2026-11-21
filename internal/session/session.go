@@ -13,6 +13,8 @@ import (
 	"github.com/hishamkaram/codex-agent-sdk-go/internal/jsonrpc"
 	sdklog "github.com/hishamkaram/codex-agent-sdk-go/internal/log"
 	"github.com/hishamkaram/codex-agent-sdk-go/internal/runtimeprobe"
+	"github.com/hishamkaram/codex-agent-sdk-go/internal/session/approval"
+	"github.com/hishamkaram/codex-agent-sdk-go/internal/threadexec"
 	"github.com/hishamkaram/codex-agent-sdk-go/internal/transport"
 	"github.com/hishamkaram/codex-agent-sdk-go/types"
 	"go.uber.org/zap"
@@ -24,6 +26,10 @@ type Dispatcher func(ctx context.Context, demux *jsonrpc.Demux, done chan struct
 // Session owns one connection attempt, its transport, and dispatcher lifetime.
 // Its zero value supports Close and accessors before a client is initialized.
 type Session struct {
+	threadRegistry *threadexec.Registry
+	sink           EventSink
+	approvals      approval.Owner
+
 	opts   *types.CodexOptions
 	logger *sdklog.Logger
 
@@ -53,8 +59,8 @@ type Session struct {
 }
 
 // New configures a fresh session before it is shared with any callers.
-func New(opts *types.CodexOptions, logger *sdklog.Logger) Session {
-	return Session{opts: opts, logger: logger}
+func New(opts *types.CodexOptions, logger *sdklog.Logger, sink EventSink) Session {
+	return Session{opts: opts, logger: logger, threadRegistry: threadexec.NewRegistry(), sink: sink}
 }
 
 // Connect spawns the subprocess, sends the initialize RPC, waits for the
@@ -63,7 +69,7 @@ func New(opts *types.CodexOptions, logger *sdklog.Logger) Session {
 //
 // Calling Connect more than once returns an error — create a new Client
 // for a new session.
-func (s *Session) Connect(ctx context.Context, dispatch Dispatcher) (err error) {
+func (s *Session) Connect(ctx context.Context) (err error) {
 	connectCtx, connectCancel, connectToken, err := s.beginConnect(ctx)
 	if err != nil {
 		return err
@@ -124,7 +130,7 @@ func (s *Session) Connect(ctx context.Context, dispatch Dispatcher) (err error) 
 	}
 
 	dispatcherCtx, dispatcherCancel := context.WithCancel(context.WithoutCancel(ctx))
-	if err := s.StartDispatcher(dispatcherCtx, dispatcherCancel, demux, dispatch); err != nil {
+	if err := s.StartDispatcher(dispatcherCtx, dispatcherCancel, demux, s.Dispatch); err != nil {
 		dispatcherCancel()
 		s.closeTransportAfterConnectError(ctx, tr)
 		return err
@@ -270,8 +276,8 @@ func (s *Session) StartDispatcher(
 }
 
 // Close stops the dispatcher and then closes connection routes, transport and
-// hooks. closeRoutes must complete without waiting on the dispatcher.
-func (s *Session) Close(ctx context.Context, closeRoutes func()) error {
+// hooks. Route teardown runs outside the lifecycle lock.
+func (s *Session) Close(ctx context.Context) error {
 	s.lifecycleMu.Lock()
 	if ctx == nil {
 		closed := s.closed.Load()
@@ -291,9 +297,10 @@ func (s *Session) Close(ctx context.Context, closeRoutes func()) error {
 	s.lifecycleMu.Unlock()
 
 	waitErr := stopClientDispatcher(ctx, connectCancel, dispatcherCancel, dispatcherDone, demux)
-	if closeRoutes != nil {
-		closeRoutes()
+	if s.sink != nil {
+		s.sink.Close()
 	}
+	s.threadRegistry.Close()
 
 	var trErr error
 	if tr != nil {

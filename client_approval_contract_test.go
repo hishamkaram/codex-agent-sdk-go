@@ -160,7 +160,7 @@ func assertApprovalReply(t *testing.T, server *mockCodexServer, id, result strin
 
 func runMockApproval(t *testing.T, c *Client, ctx context.Context, request jsonrpc.ServerRequest) {
 	t.Helper()
-	worker := c.startApprovals(ctx, c.demux)
+	worker := c.session.StartApprovals(ctx, c.session.Demux())
 	t.Cleanup(func() {
 		worker.Cancel()
 		worker.Wait()

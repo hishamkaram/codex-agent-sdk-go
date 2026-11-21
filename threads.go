@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 
+	sdkevents "github.com/hishamkaram/codex-agent-sdk-go/internal/events"
+	"github.com/hishamkaram/codex-agent-sdk-go/internal/jsonrpc"
 	"github.com/hishamkaram/codex-agent-sdk-go/internal/threadconfig"
 	"github.com/hishamkaram/codex-agent-sdk-go/internal/threadexec"
 	"github.com/hishamkaram/codex-agent-sdk-go/types"
@@ -219,10 +221,10 @@ func buildTurnInput(prompt string, opts *types.RunOptions) ([]map[string]any, er
 // StartThread sends thread/start and returns a new Thread. The thread is
 // registered in the client's routing table.
 func (c *Client) StartThread(ctx context.Context, opts *types.ThreadOptions) (*Thread, error) {
-	if c.closed.Load() {
+	if c.session.Closed() {
 		return nil, fmt.Errorf("codex.Client.StartThread: %w", types.ErrClientClosed)
 	}
-	if !c.connected.Load() {
+	if !c.session.Connected() {
 		return nil, fmt.Errorf("codex.Client.StartThread: %w", types.ErrClientNotConnected)
 	}
 	if err := c.validateThreadApprovalPolicy(opts); err != nil {
@@ -235,14 +237,14 @@ func (c *Client) StartThread(ctx context.Context, opts *types.ThreadOptions) (*T
 	if policyErr := c.validateThreadWebSearchMode(ctx, request.WebSearchMode); policyErr != nil {
 		return nil, fmt.Errorf("codex.Client.StartThread: %w", policyErr)
 	}
-	resp, err := c.demux.Send(ctx, "thread/start", request.Params)
+	resp, err := c.session.Demux().Send(ctx, "thread/start", request.Params)
 	if err != nil {
 		return nil, fmt.Errorf("codex.Client.StartThread: %w", err)
 	}
 	if resp.Error != nil {
 		return nil, types.NewRPCError(resp.Error.Code, resp.Error.Message, resp.Error.Data)
 	}
-	id, err := extractThreadID(resp.Result)
+	id, err := sdkevents.ThreadIDFromReply(resp.Result)
 	if err != nil {
 		return nil, err
 	}
@@ -260,10 +262,10 @@ func (c *Client) StartThread(ctx context.Context, opts *types.ThreadOptions) (*T
 // ResumeThread applies optional resume overrides and returns a handle for
 // the resumed conversation.
 func (c *Client) ResumeThread(ctx context.Context, threadID string, opts *types.ResumeOptions) (*Thread, error) {
-	if c.closed.Load() {
+	if c.session.Closed() {
 		return nil, fmt.Errorf("codex.Client.ResumeThread: %w", types.ErrClientClosed)
 	}
-	if !c.connected.Load() {
+	if !c.session.Connected() {
 		return nil, fmt.Errorf("codex.Client.ResumeThread: %w", types.ErrClientNotConnected)
 	}
 	if threadID == "" {
@@ -274,11 +276,11 @@ func (c *Client) ResumeThread(ctx context.Context, threadID string, opts *types.
 		return nil, fmt.Errorf("codex.Client.ResumeThread: %w", err)
 	}
 	observationID := threadexec.CanonicalID(threadID)
-	observation := c.threadRegistry.BeginResume(observationID, c.closed.Load)
+	observation := c.session.Threads().BeginResume(observationID, c.session.Closed)
 	if observation == nil {
 		return nil, fmt.Errorf("codex.Client.ResumeThread: %w", types.ErrClientClosed)
 	}
-	defer c.threadRegistry.EndResume(observationID, observation)
+	defer c.session.Threads().EndResume(observationID, observation)
 	resp, idleProof, err := c.requestThreadResume(ctx, request.params, observation)
 	if err != nil {
 		return nil, fmt.Errorf("codex.Client.ResumeThread: %w", err)
@@ -287,7 +289,7 @@ func (c *Client) ResumeThread(ctx context.Context, threadID string, opts *types.
 		return nil, types.NewRPCError(resp.Error.Code, resp.Error.Message, resp.Error.Data)
 	}
 	// Older peers can omit the ID, so the requested identity is the fallback.
-	reportedID, _ := extractThreadID(resp.Result)
+	reportedID, _ := sdkevents.ThreadIDFromReply(resp.Result)
 	id := reportedID
 	if id == "" {
 		id = threadID
@@ -296,7 +298,7 @@ func (c *Client) ResumeThread(ctx context.Context, threadID string, opts *types.
 	status, statusThreadID := t.record.SeedExternalActivity(resp.Result)
 	idleProof.reconcile(status, statusThreadID, reportedID, observationID)
 	if policyErr := threadconfig.VerifyResumeReasoningEffort(resp.Result, id, request.reasoningEffort); policyErr != nil {
-		c.threadRegistry.ReconcileRejectedResume(t.id, t.record)
+		c.session.Threads().ReconcileRejectedResume(t.id, t.record)
 		return nil, fmt.Errorf("codex.Client.ResumeThread: %w", policyErr)
 	}
 	t.model = extractThreadModel(resp.Result)
@@ -314,10 +316,10 @@ func (t *Thread) Cwd() string { return t.cwd }
 // unaffected. Uses "thread/fork" — if the server doesn't expose this verb
 // in the current CLI version, the error is returned as-is.
 func (c *Client) ForkThread(ctx context.Context, sourceThreadID string, opts *types.ThreadOptions) (*Thread, *types.ForkResult, error) {
-	if c.closed.Load() {
+	if c.session.Closed() {
 		return nil, nil, fmt.Errorf("codex.Client.ForkThread: %w", types.ErrClientClosed)
 	}
-	if !c.connected.Load() {
+	if !c.session.Connected() {
 		return nil, nil, fmt.Errorf("codex.Client.ForkThread: %w", types.ErrClientNotConnected)
 	}
 	if sourceThreadID == "" {
@@ -334,14 +336,14 @@ func (c *Client) ForkThread(ctx context.Context, sourceThreadID string, opts *ty
 	if policyErr := c.validateThreadWebSearchMode(ctx, request.WebSearchMode); policyErr != nil {
 		return nil, nil, fmt.Errorf("codex.Client.ForkThread: %w", policyErr)
 	}
-	resp, err := c.demux.Send(ctx, "thread/fork", request.Params)
+	resp, err := c.session.Demux().Send(ctx, "thread/fork", request.Params)
 	if err != nil {
 		return nil, nil, fmt.Errorf("codex.Client.ForkThread: %w", err)
 	}
 	if resp.Error != nil {
 		return nil, nil, types.NewRPCError(resp.Error.Code, resp.Error.Message, resp.Error.Data)
 	}
-	newID, err := extractThreadID(resp.Result)
+	newID, err := sdkevents.ThreadIDFromReply(resp.Result)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -363,43 +365,21 @@ func (c *Client) ForkThread(ctx context.Context, sourceThreadID string, opts *ty
 // ArchiveThread marks a thread as archived on the server and unregisters
 // it locally.
 func (c *Client) ArchiveThread(ctx context.Context, threadID string) error {
-	if c.closed.Load() {
+	if c.session.Closed() {
 		return fmt.Errorf("codex.Client.ArchiveThread: %w", types.ErrClientClosed)
 	}
-	if !c.connected.Load() {
+	if !c.session.Connected() {
 		return fmt.Errorf("codex.Client.ArchiveThread: %w", types.ErrClientNotConnected)
 	}
-	resp, err := c.demux.Send(ctx, "thread/archive", map[string]any{"threadId": threadID})
+	resp, err := c.session.Demux().Send(ctx, "thread/archive", map[string]any{"threadId": threadID})
 	if err != nil {
 		return fmt.Errorf("codex.Client.ArchiveThread: %w", err)
 	}
 	if resp.Error != nil {
 		return types.NewRPCError(resp.Error.Code, resp.Error.Message, resp.Error.Data)
 	}
-	c.threadRegistry.Archive(threadID)
+	c.session.Threads().Archive(threadID)
 	return nil
-}
-
-// extractThreadID pulls thread.id from a thread/start or thread/resume or
-// thread/fork response. Accepts both nested ("thread.id") and flat
-// ("threadId") shapes.
-func extractThreadID(result json.RawMessage) (string, error) {
-	var shape struct {
-		ThreadID string `json:"threadId"`
-		Thread   *struct {
-			ID string `json:"id"`
-		} `json:"thread"`
-	}
-	if err := json.Unmarshal(result, &shape); err != nil {
-		return "", types.NewJSONDecodeError(string(result), err)
-	}
-	if shape.ThreadID != "" {
-		return shape.ThreadID, nil
-	}
-	if shape.Thread != nil && shape.Thread.ID != "" {
-		return shape.Thread.ID, nil
-	}
-	return "", types.NewMessageParseError("thread response missing thread id", string(result))
 }
 
 func extractThreadModel(result json.RawMessage) string {
@@ -414,3 +394,28 @@ func extractThreadModel(result json.RawMessage) string {
 
 // Compile-time check that Thread exposes the stdlib-expected surface.
 var _ = (&Thread{}).ID
+
+func (c *Client) registerThread(t *Thread) {
+	t.record = c.session.Threads().Register(t.id, t.record, c.session.Connected)
+}
+
+type idleResumeProof struct {
+	execution  *threadexec.Record
+	generation uint64
+}
+
+func (c *Client) requestThreadResume(ctx context.Context, params map[string]any, execution *threadexec.Record) (jsonrpc.Response, idleResumeProof, error) {
+	generation, eligible := execution.ResumeIdleCandidate()
+	if eligible && c.session.Demux().ServerMessages() != nil {
+		reply, err := c.session.Demux().SendOrdered(ctx, "thread/resume", params)
+		return reply, idleResumeProof{execution: execution, generation: generation}, err
+	}
+	reply, err := c.session.Demux().Send(ctx, "thread/resume", params)
+	return reply, idleResumeProof{}, err
+}
+
+func (p idleResumeProof) reconcile(status, statusThreadID, reportedID, requestedID string) {
+	if p.execution != nil && status == "idle" && threadexec.CanonicalID(statusThreadID) == requestedID && threadexec.CanonicalID(reportedID) == requestedID {
+		p.execution.ReconcileIdleResume(p.generation)
+	}
+}

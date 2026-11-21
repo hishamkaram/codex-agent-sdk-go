@@ -267,8 +267,7 @@ func TestClientCommands_MutatingNotConnected(t *testing.T) {
 func TestClientCommands_HookCallbackBlocksHooksConfigWrites(t *testing.T) {
 	t.Parallel()
 
-	c, _ := NewClient(context.Background(), types.NewCodexOptions().WithHookCallback(types.DefaultAllowHookHandler))
-	c.connected.Store(true)
+	c, _ := setupMockClient(t, types.NewCodexOptions().WithHookCallback(types.DefaultAllowHookHandler), nil)
 
 	_, err := c.WriteConfigValue(context.Background(), "hooks.PreToolUse", []any{}, types.MergeReplace)
 	if err == nil {
