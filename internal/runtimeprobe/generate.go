@@ -1,4 +1,4 @@
-package codex
+package runtimeprobe
 
 import (
 	"context"
@@ -29,8 +29,9 @@ type approvalPolicyVariant struct {
 func discoverExperimentalApprovalPolicies(
 	ctx context.Context,
 	cli transport.CLI,
+	unsupported error,
 ) ([]string, error) {
-	outDir, cleanup, err := generateAppServerSchema(ctx, cli, "codex.DiscoverRuntimeControls", true)
+	outDir, cleanup, err := GenerateSchema(ctx, cli, "codex.DiscoverRuntimeControls", true, unsupported)
 	if err != nil {
 		return nil, err
 	}
@@ -41,7 +42,7 @@ func discoverExperimentalApprovalPolicies(
 		if os.IsNotExist(err) {
 			return nil, fmt.Errorf(
 				"codex.DiscoverRuntimeControls: app-server schema is unavailable: %w",
-				ErrRuntimeControlsUnsupported,
+				unsupported,
 			)
 		}
 		return nil, fmt.Errorf("codex.DiscoverRuntimeControls: read app-server schema: %w", err)
@@ -50,14 +51,14 @@ func discoverExperimentalApprovalPolicies(
 	if err := json.Unmarshal(raw, &schema); err != nil {
 		return nil, fmt.Errorf(
 			"codex.DiscoverRuntimeControls: decode app-server schema: %w",
-			errors.Join(ErrRuntimeControlsUnsupported, err),
+			errors.Join(unsupported, err),
 		)
 	}
 	approval, ok := schema.Definitions["AskForApproval"]
 	if !ok {
 		return nil, fmt.Errorf(
 			"codex.DiscoverRuntimeControls: app-server schema omitted AskForApproval: %w",
-			ErrRuntimeControlsUnsupported,
+			unsupported,
 		)
 	}
 
@@ -73,13 +74,15 @@ func discoverExperimentalApprovalPolicies(
 	return values, nil
 }
 
-func generateAppServerSchema(
+// GenerateSchema generates a schema in a temporary directory the caller must release using cleanup.
+func GenerateSchema(
 	ctx context.Context,
 	cli transport.CLI,
 	caller string,
 	experimental bool,
+	unsupported error,
 ) (outDir string, cleanup func(), err error) {
-	if checkErr := requireSchemaCommand(ctx, cli, caller, experimental); checkErr != nil {
+	if checkErr := requireSchemaCommand(ctx, cli, caller, experimental, unsupported); checkErr != nil {
 		return "", func() {}, checkErr
 	}
 	outDir, err = os.MkdirTemp("", "codex-app-server-schema-")
@@ -103,19 +106,12 @@ func generateAppServerSchema(
 	return outDir, cleanup, nil
 }
 
-func requireExperimentalSchemaCommand(ctx context.Context, cliPath string, env []string) error {
-	cli, err := transport.ResolveCLI(cliPath, "", env, false)
-	if err != nil {
-		return err
-	}
-	return requireSchemaCommand(ctx, cli, "codex.DiscoverRuntimeControls", true)
-}
-
 func requireSchemaCommand(
 	ctx context.Context,
 	cli transport.CLI,
 	caller string,
 	experimental bool,
+	unsupported error,
 ) error {
 	stdout, stderr, err := cli.Run(
 		ctx,
@@ -135,7 +131,7 @@ func requireSchemaCommand(
 			return fmt.Errorf(
 				"%s: app-server schema command is unavailable: %w",
 				caller,
-				errors.Join(ErrRuntimeControlsUnsupported, err),
+				errors.Join(unsupported, err),
 			)
 		}
 		return fmt.Errorf("%s: app-server help: %w", caller, err)
@@ -154,7 +150,7 @@ func requireSchemaCommand(
 			return fmt.Errorf(
 				"%s: app-server does not advertise required schema options: %w",
 				caller,
-				ErrRuntimeControlsUnsupported,
+				unsupported,
 			)
 		}
 	}

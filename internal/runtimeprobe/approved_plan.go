@@ -1,4 +1,4 @@
-package codex
+package runtimeprobe
 
 import (
 	"encoding/json"
@@ -6,9 +6,13 @@ import (
 	"slices"
 )
 
+// PrepareApprovedPlanMethod names the request validated by SupportsApprovedPlan.
+const PrepareApprovedPlanMethod = "thread/prepareApprovedPlan"
+
 const approvedPlanParamsDefinition = "ThreadPrepareApprovedPlanParams"
 
-func schemaSupportsApprovedPlan(root string) (bool, error) {
+// SupportsApprovedPlan checks the method binding and both schemas for plan preparation.
+func SupportsApprovedPlan(root string) (bool, error) {
 	if supported, err := schemaHasApprovedPlanMethod(filepath.Join(root, "ClientRequest.json")); err != nil || !supported {
 		return false, err
 	}
@@ -44,7 +48,7 @@ func schemaHasApprovedPlanMethod(path string) (bool, error) {
 	found := false
 	for _, variant := range schema.Variants {
 		var method runtimePropertySchema
-		if json.Unmarshal(variant.Properties["method"], &method) != nil || !slices.Contains(method.Enum, prepareApprovedPlanMethod) {
+		if json.Unmarshal(variant.Properties["method"], &method) != nil || !slices.Contains(method.Enum, PrepareApprovedPlanMethod) {
 			continue
 		}
 		if found || !approvedPlanMethodMatches(variant) {
@@ -59,7 +63,7 @@ func approvedPlanMethodMatches(method runtimeObjectSchema) bool {
 	return equalStringSet(method.Required, []string{"id", "method", "params"}) && objectSchemaMatches(
 		method,
 		runtimePropertyExpectation{name: "id", required: true, ref: "#/definitions/RequestId"},
-		runtimePropertyExpectation{name: "method", required: true, types: []string{"string"}, enum: []string{prepareApprovedPlanMethod}},
+		runtimePropertyExpectation{name: "method", required: true, types: []string{"string"}, enum: []string{PrepareApprovedPlanMethod}},
 		runtimePropertyExpectation{name: "params", required: true, ref: "#/definitions/" + approvedPlanParamsDefinition},
 	)
 }

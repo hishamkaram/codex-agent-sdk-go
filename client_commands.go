@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/hishamkaram/codex-agent-sdk-go/internal/jsonrpc"
+	"github.com/hishamkaram/codex-agent-sdk-go/internal/threadconfig"
 	"github.com/hishamkaram/codex-agent-sdk-go/types"
 	"go.uber.org/zap"
 )
@@ -508,7 +509,7 @@ func (c *Client) SetApprovalPolicy(ctx context.Context, policy types.ApprovalPol
 	if err := c.validateApprovalPolicy(policy); err != nil {
 		return fmt.Errorf("codex.Client.SetApprovalPolicy: %w", err)
 	}
-	_, err := c.WriteConfigValue(ctx, "approval_policy", encodeApprovalPolicy(policy), types.MergeReplace)
+	_, err := c.WriteConfigValue(ctx, "approval_policy", threadconfig.EncodeApprovalPolicy(policy), types.MergeReplace)
 	return err
 }
 

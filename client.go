@@ -53,24 +53,7 @@ type Client struct {
 	dispatcherCancel context.CancelFunc
 	dispatcherDone   chan struct{}
 
-	// Hook bridge — populated only when HookCallback is registered.
-	hookBridgeMu sync.Mutex
-	hookListener *hookbridge.Listener
-	// hookHooksJSONPath is the absolute path to the user's
-	// ~/.codex/hooks.json that the SDK overwrote during Connect.
-	hookHooksJSONPath string
-	// hookBackupPath, when non-empty, is the absolute path to the byte-for-byte
-	// backup of the user's pre-Connect hooks.json. Empty when no hooks.json
-	// existed before Connect (Close removes the SDK-written hooks.json instead).
-	hookBackupPath string
-	// hookCodexHome is non-empty only for isolated hook mode; Close removes it.
-	hookCodexHome string
-	// hookSocketDir is non-empty only when the hook socket was relocated under a
-	// freshly-created 0700 directory (the sun_path-overflow fallback); Close
-	// removes it. The 0700 parent is the authoritative owner-only access gate.
-	hookSocketDir string
-	// hookHadUserConfig records whether a hooks.json existed at Connect time.
-	hookHadUserConfig bool
+	hooks hookbridge.Installation
 
 	connected atomic.Bool
 	closed    atomic.Bool
@@ -123,7 +106,7 @@ func (c *Client) Connect(ctx context.Context) (err error) {
 	defer func() { c.opts.ObserverOrNop().OnConnect(time.Since(connectStart), err) }()
 	defer func() {
 		if err != nil {
-			c.closeHookBridge()
+			c.hooks.Close()
 		}
 	}()
 
@@ -190,8 +173,15 @@ func (c *Client) connectTransport(ctx context.Context) (*transport.AppServer, tr
 		return nil, transport.CLI{}, fmt.Errorf("codex.Client.Connect: %w", transport.CLIResolutionError(err))
 	}
 	if c.opts.HookCallback != nil {
-		var additions []string
-		if hookErr := c.setupHookBridge(ctx, &additions, cli.EnvironmentValue("CODEX_HOME")); hookErr != nil {
+		additions, hookErr := c.hooks.Setup(ctx, hookbridge.InstallationConfig{
+			Handler:            c.opts.HookCallback,
+			Timeout:            c.opts.HookTimeout,
+			Logger:             c.logger,
+			Mode:               c.opts.HookConfigMode,
+			ShimPath:           c.opts.ShimPath,
+			RequestedCodexHome: cli.EnvironmentValue("CODEX_HOME"),
+		})
+		if hookErr != nil {
 			return nil, transport.CLI{}, fmt.Errorf("codex.Client.Connect: hook bridge: %w", hookErr)
 		}
 		cli = cli.WithEnvironmentAdditions(additions)
@@ -508,7 +498,7 @@ func (c *Client) Close(ctx context.Context) error {
 	c.lifecycleMu.Unlock()
 	// Tear down the hook bridge AFTER the transport is stopped so no
 	// in-flight hook subprocess can still dial the socket.
-	c.closeHookBridge()
+	c.hooks.Close()
 	return errors.Join(trErr, waitErr)
 }
 

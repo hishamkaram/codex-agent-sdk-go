@@ -1,4 +1,4 @@
-package codex
+package threadconfig
 
 import (
 	"encoding/json"
@@ -75,7 +75,7 @@ func TestVerifyResumeReasoningEffortReadback(t *testing.T) {
 		{"unset request", `{"reasoningEffort":"medium"}`, "", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			err := verifyResumeReasoningEffort(json.RawMessage(tc.reply), "resumed", tc.expected)
+			err := VerifyResumeReasoningEffort(json.RawMessage(tc.reply), "resumed", tc.expected)
 			var mismatch *types.ThreadResumeSettingsMismatchError
 			if tc.mismatch {
 				if !errors.As(err, &mismatch) || mismatch.ThreadID != "resumed" {

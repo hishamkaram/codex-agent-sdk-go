@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hishamkaram/codex-agent-sdk-go/internal/runtimeprobe"
 	"github.com/hishamkaram/codex-agent-sdk-go/types"
 )
 
@@ -46,11 +47,15 @@ func TestTurnProgramSchemaRequiresExactOptionalEnum(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			path := filepath.Join(t.TempDir(), "TurnStartParams.json")
-			if err := os.WriteFile(path, []byte(tc.schema), 0o600); err != nil {
+			root := t.TempDir()
+			v2 := filepath.Join(root, "v2")
+			if err := os.Mkdir(v2, 0o700); err != nil {
 				t.Fatal(err)
 			}
-			if got, err := schemaSupportsTurnProgram(path); err != nil || got != tc.want {
+			if err := os.WriteFile(filepath.Join(v2, "TurnStartParams.json"), []byte(tc.schema), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if got, err := runtimeprobe.SupportsTurnProgram(root); err != nil || got != tc.want {
 				t.Fatalf("schema match = %t, err = %v, want %t", got, err, tc.want)
 			}
 		})

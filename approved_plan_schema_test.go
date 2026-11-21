@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/hishamkaram/codex-agent-sdk-go/internal/runtimeprobe"
 )
 
 func TestApprovedPlanSchemaRequiresMethodAndBothShapes(t *testing.T) {
@@ -39,7 +41,7 @@ func TestApprovedPlanSchemaRequiresMethodAndBothShapes(t *testing.T) {
 				}
 			}
 			writeApprovedPlanPeerSchemas(t, root, schemas)
-			if got, err := schemaSupportsApprovedPlan(root); err != nil || got != (test.path == "") {
+			if got, err := runtimeprobe.SupportsApprovedPlan(root); err != nil || got != (test.path == "") {
 				t.Fatalf("schema support = %t, %v", got, err)
 			}
 		})
