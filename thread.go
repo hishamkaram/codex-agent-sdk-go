@@ -204,31 +204,39 @@ func (c *Client) threadFromHandle(handle session.ThreadHandle) *Thread {
 	return &Thread{client: c, id: handle.ID, model: handle.Model, cwd: handle.Cwd, record: handle.Record}
 }
 
-// Rollback removes the last numTurns turns from this thread's history
-// and persists a rollback marker. numTurns must be >= 1.
+// Rollback removes the last numTurns turns from this thread's history.
+// It does not revert local file changes. numTurns must be at least 1.
+// Rollback waits for this client's active work on the thread to settle and
+// rejects calls made through the same client's approval callback context.
 //
-// IMPORTANT: rollback only modifies thread history — it does NOT
-// revert local file changes the agent made during those turns. Callers
-// are responsible for reverting file edits separately (e.g., via
-// `git checkout` or the SDK's GitDiff helper).
-//
-// Wire shape (verified live — codex 0.121.0 errors with `"Invalid
-// request: missing field 'numTurns'"` when the param is named
-// otherwise):
-//
-//	{"threadId": "...", "numTurns": <int>}
+// Codex runtimes that replaced thread/rollback with thread/revert require
+// paginated history. On those runtimes, numTurns counts persisted provider
+// turns and must not exceed the available history. Keep other clients from
+// changing the same provider thread while a rollback is in progress. If
+// the mutation's outcome is unconfirmed, use a fresh connection to inspect
+// persisted history before attempting another rollback.
 func (t *Thread) Rollback(ctx context.Context, numTurns int) error {
+	const caller = "codex.Thread.Rollback"
 	if numTurns < 1 {
-		return fmt.Errorf("codex.Thread.Rollback: numTurns must be >= 1, got %d", numTurns)
+		return fmt.Errorf("%s: numTurns must be >= 1, got %d", caller, numTurns)
 	}
 	if t.isClosed() {
-		return fmt.Errorf("codex.Thread.Rollback: %w", types.ErrThreadClosed)
+		return fmt.Errorf("%s: %w", caller, types.ErrThreadClosed)
 	}
-	_, err := t.client.sendRaw(ctx, "Thread.Rollback", "thread/rollback", map[string]any{
-		"threadId": t.id,
-		"numTurns": numTurns,
-	})
-	return err
+	if err := t.client.checkApprovalReentry(ctx); err != nil {
+		return fmt.Errorf("%s: %w", caller, err)
+	}
+	demux := t.client.session.Demux()
+	if demux == nil || !t.client.session.Connected() {
+		if t.client.session.Closed() {
+			return fmt.Errorf("%s: %w", caller, types.ErrClientClosed)
+		}
+		return fmt.Errorf("%s: %w", caller, types.ErrClientNotConnected)
+	}
+	if err := t.record.Rollback(ctx, t.id, numTurns, t.executionWire(), demux.Send); err != nil {
+		return fmt.Errorf("%s: %w", caller, err)
+	}
+	return nil
 }
 
 // SetName updates this thread's user-facing name. After the RPC ack

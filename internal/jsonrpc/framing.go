@@ -16,6 +16,10 @@ import (
 // notifications past that (e.g., long command_execution output chunks).
 const MinReadBufferSize = 2 * 1024 * 1024
 
+// DefaultReadBufferSize bounds unconfigured readers. Full MCP tool inventories
+// from authenticated Codex sessions can exceed the minimum.
+const DefaultReadBufferSize = 8 * 1024 * 1024
+
 // ErrFramePoisoned means the write side can no longer carry intact frames.
 var ErrFramePoisoned = errors.New("jsonrpc: unusable frame writer")
 
@@ -153,26 +157,29 @@ func (lw *LineWriter) Close() error {
 }
 
 // LineReader reads newline-terminated JSON frames from the underlying reader
-// using a bufio.Scanner with a 2 MiB buffer ceiling.
+// using a bufio.Scanner with a bounded buffer.
 type LineReader struct {
 	scanner *bufio.Scanner
+	maxSize int
 }
 
-// NewLineReader wraps r with a 2 MiB buffer. Use NewLineReaderWithSize to
-// override.
+// NewLineReader wraps r with the default buffer ceiling. Use
+// NewLineReaderWithSize to override it.
 func NewLineReader(r io.Reader) *LineReader {
-	return NewLineReaderWithSize(r, MinReadBufferSize)
+	return NewLineReaderWithSize(r, 0)
 }
 
-// NewLineReaderWithSize wraps r with a custom max buffer size. Sizes below
-// MinReadBufferSize are raised to the minimum.
+// NewLineReaderWithSize wraps r with a custom max buffer size. Zero uses
+// DefaultReadBufferSize. Other sizes below MinReadBufferSize use the minimum.
 func NewLineReaderWithSize(r io.Reader, maxSize int) *LineReader {
-	if maxSize < MinReadBufferSize {
+	if maxSize == 0 {
+		maxSize = DefaultReadBufferSize
+	} else if maxSize < MinReadBufferSize {
 		maxSize = MinReadBufferSize
 	}
 	s := bufio.NewScanner(r)
 	s.Buffer(make([]byte, 0, 64*1024), maxSize)
-	return &LineReader{scanner: s}
+	return &LineReader{scanner: s, maxSize: maxSize}
 }
 
 // ReadLine returns the next complete line without its trailing newline.
@@ -181,7 +188,7 @@ func (lr *LineReader) ReadLine() ([]byte, error) {
 	if !lr.scanner.Scan() {
 		if err := lr.scanner.Err(); err != nil {
 			if errors.Is(err, bufio.ErrTooLong) {
-				return nil, fmt.Errorf("jsonrpc.LineReader.ReadLine: line exceeded %d bytes: %w", MinReadBufferSize, err)
+				return nil, fmt.Errorf("jsonrpc.LineReader.ReadLine: line exceeded %d bytes: %w", lr.maxSize, err)
 			}
 			return nil, fmt.Errorf("jsonrpc.LineReader.ReadLine: %w", err)
 		}

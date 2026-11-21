@@ -143,6 +143,274 @@ func TestClient_CancelBeforeAcknowledgementInterruptsOwnedTurn(t *testing.T) {
 	}
 }
 
+func TestClient_StartDetachedReviewDeliveryCompatibility(t *testing.T) {
+	t.Parallel()
+
+	const (
+		source = "52d4aa24-06ca-4a00-9a9b-00ebd8c3ae28"
+		child  = "review-child"
+	)
+	const detachedUnsupported = "Invalid request: unknown variant `detached`, expected `inline`"
+	const reviewResult = `{"reviewThreadId":"review-child","turn":{"id":"review-turn","status":"inProgress"}}`
+	for _, tc := range []struct {
+		name         string
+		nativeError  *jsonrpc.RPCError
+		forkID       string
+		inlineError  *jsonrpc.RPCError
+		inlineResult json.RawMessage
+		wantRequests string
+		wantErr      string
+	}{
+		{
+			name: "legacy native delivery", wantRequests: "thread/start review/start:detached",
+		},
+		{
+			name:         "fork and start inline",
+			nativeError:  &jsonrpc.RPCError{Code: -32600, Message: detachedUnsupported},
+			forkID:       child,
+			inlineResult: json.RawMessage(reviewResult),
+			wantRequests: "thread/start review/start:detached thread/fork review/start:inline",
+		},
+		{
+			name:         "arbitrary invalid request does not fork",
+			nativeError:  &jsonrpc.RPCError{Code: -32600, Message: "invalid review target"},
+			wantRequests: "thread/start review/start:detached",
+			wantErr:      "invalid review target",
+		},
+		{
+			name:         "matching text with different error code does not fork",
+			nativeError:  &jsonrpc.RPCError{Code: -32603, Message: detachedUnsupported},
+			wantRequests: "thread/start review/start:detached",
+			wantErr:      detachedUnsupported,
+		},
+		{
+			name:         "fork cannot alias the original thread",
+			nativeError:  &jsonrpc.RPCError{Code: -32600, Message: detachedUnsupported},
+			forkID:       strings.ToUpper(source),
+			wantRequests: "thread/start review/start:detached thread/fork",
+			wantErr:      "source thread",
+		},
+		{
+			name:         "inline request rejection identifies the child",
+			nativeError:  &jsonrpc.RPCError{Code: -32600, Message: detachedUnsupported},
+			forkID:       child,
+			inlineError:  &jsonrpc.RPCError{Code: -32600, Message: "Invalid request: missing field `branch`"},
+			wantRequests: "thread/start review/start:detached thread/fork review/start:inline",
+			wantErr:      "review on forked thread \"review-child\"",
+		},
+		{
+			name:         "unexpected response identity keeps potentially active child",
+			nativeError:  &jsonrpc.RPCError{Code: -32600, Message: detachedUnsupported},
+			forkID:       child,
+			inlineResult: json.RawMessage(`{"reviewThreadId":"another-thread","turn":{"id":"review-turn"}}`),
+			wantRequests: "thread/start review/start:detached thread/fork review/start:inline",
+			wantErr:      "review thread identity",
+		},
+		{
+			name:         "ambiguous provider error keeps potentially active child",
+			nativeError:  &jsonrpc.RPCError{Code: -32600, Message: detachedUnsupported},
+			forkID:       child,
+			inlineError:  &jsonrpc.RPCError{Code: -32603, Message: "unknown outcome"},
+			wantRequests: "thread/start review/start:detached thread/fork review/start:inline",
+			wantErr:      "unknown outcome",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			opts := types.NewCodexOptions().WithCwd(t.TempDir()).
+				WithSandbox(types.SandboxDangerFullAccess).WithApprovalPolicy(types.ApprovalNever)
+			var requests []string
+			client, _ := setupMockClient(t, opts, func(req jsonrpc.Request) jsonrpc.Response {
+				label := req.Method
+				if req.Method == "review/start" {
+					var shape struct {
+						Delivery string `json:"delivery"`
+					}
+					if err := json.Unmarshal(req.Params, &shape); err != nil {
+						t.Error(err)
+					}
+					label += ":" + shape.Delivery
+				}
+				requests = append(requests, label)
+				response := jsonrpc.Response{ID: req.ID}
+				switch label {
+				case "thread/start":
+					response.Result = json.RawMessage(fmt.Sprintf(`{"thread":{"id":%q}}`, source))
+				case "review/start:detached":
+					want := fmt.Sprintf(`{"threadId":%q,"target":{"type":"uncommittedChanges"},"delivery":"detached"}`, source)
+					if string(req.Params) != want {
+						t.Errorf("native review params = %s, want %s", req.Params, want)
+					}
+					if tc.nativeError != nil {
+						response.Error = tc.nativeError
+					} else {
+						response.Result = json.RawMessage(reviewResult)
+					}
+				case "thread/fork":
+					want := fmt.Sprintf(`{"excludeTurns":true,"threadId":%q}`, source)
+					if string(req.Params) != want {
+						t.Errorf("fork params = %s, want %s", req.Params, want)
+					}
+					response.Result = json.RawMessage(fmt.Sprintf(`{"thread":{"id":%q,"status":{"type":"idle"}}}`, tc.forkID))
+				case "review/start:inline":
+					const want = `{"threadId":"review-child","target":{"type":"uncommittedChanges"},"delivery":"inline"}`
+					if string(req.Params) != want {
+						t.Errorf("forked review params = %s, want %s", req.Params, want)
+					}
+					response.Result, response.Error = tc.inlineResult, tc.inlineError
+				default:
+					t.Errorf("unexpected request %s", label)
+					response.Error = &jsonrpc.RPCError{Code: -32601, Message: "unsupported fixture request"}
+				}
+				return response
+			})
+			thread, err := client.StartThread(ctx, &types.ThreadOptions{
+				Cwd: t.TempDir(), Sandbox: types.SandboxReadOnly, ApprovalPolicy: types.ApprovalOnRequest,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := thread.StartReview(ctx, types.ReviewOptions{
+				Target: types.ReviewTargetUncommittedChanges(), Delivery: types.ReviewDetached,
+			})
+			if tc.wantErr != "" {
+				if result != nil || err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Errorf("StartReview = (%+v, %v), want error containing %q", result, err, tc.wantErr)
+				}
+				if tc.inlineError != nil {
+					var rpcErr *types.RPCError
+					if !errors.As(err, &rpcErr) || rpcErr.Code != tc.inlineError.Code || rpcErr.Message != tc.inlineError.Message {
+						t.Errorf("StartReview lost inline RPC failure: %v", err)
+					}
+				}
+			} else if err != nil || result == nil || result.ReviewThreadID != child || result.Turn.ID != "review-turn" {
+				t.Errorf("StartReview = (%+v, %v), want review-turn on distinct review-child", result, err)
+			}
+			if got := strings.Join(requests, " "); got != tc.wantRequests {
+				t.Errorf("requests = %q, want %q", got, tc.wantRequests)
+			}
+			if err := thread.Interrupt(ctx); !errors.Is(err, ErrNoActiveTurn) {
+				t.Fatalf("source interrupt = %v, want ErrNoActiveTurn", err)
+			}
+		})
+	}
+}
+
+func TestClient_StartDetachedReviewDoesNotForkOnLostReply(t *testing.T) {
+	t.Parallel()
+	ctx, watchdog := context.WithTimeout(t.Context(), 5*time.Second)
+	defer watchdog()
+	sent := make(chan struct{})
+	client, _ := setupMockClient(t, types.NewCodexOptions(), func(req jsonrpc.Request) jsonrpc.Response {
+		switch req.Method {
+		case "thread/start":
+			return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{"thread":{"id":"source"}}`)}
+		case "review/start":
+			close(sent)
+			return jsonrpc.Response{}
+		default:
+			t.Errorf("ambiguous detached submission caused %s", req.Method)
+			return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{}`)}
+		}
+	})
+	thread, err := client.StartThread(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reviewCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := thread.StartReview(reviewCtx, types.ReviewOptions{
+			Target: types.ReviewTargetUncommittedChanges(), Delivery: types.ReviewDetached,
+		})
+		done <- err
+	}()
+	select {
+	case <-sent:
+	case <-ctx.Done():
+		t.Fatal("detached review did not reach the peer")
+	}
+	cancel()
+	if err := awaitExecutionTest(t, ctx, done); !errors.Is(err, context.Canceled) {
+		t.Fatalf("StartReview = %v, want context.Canceled", err)
+	}
+}
+
+func TestClient_DetachedReviewForkHoldsSourceAdmissionUntilReply(t *testing.T) {
+	t.Parallel()
+	ctx, watchdog := context.WithTimeout(t.Context(), 5*time.Second)
+	defer watchdog()
+	forkRequests := make(chan jsonrpc.Request, 1)
+	turnRequests := make(chan jsonrpc.Request, 1)
+	client, peer := setupMockClient(t, types.NewCodexOptions(), func(req jsonrpc.Request) jsonrpc.Response {
+		switch req.Method {
+		case "thread/start":
+			return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{"thread":{"id":"source"}}`)}
+		case "review/start":
+			if strings.Contains(string(req.Params), `"threadId":"source"`) {
+				return jsonrpc.Response{ID: req.ID, Error: &jsonrpc.RPCError{
+					Code: -32600, Message: "Invalid request: unknown variant `detached`, expected `inline`",
+				}}
+			}
+			return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{"reviewThreadId":"child","turn":{"id":"review"}}`)}
+		case "thread/fork":
+			forkRequests <- req
+			return jsonrpc.Response{} // Reply explicitly after testing the reservation.
+		case "turn/start":
+			turnRequests <- req
+			return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{"turn":{"id":"after-fork"}}`)}
+		default:
+			t.Errorf("unexpected method %v", req.Method)
+			return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{}`)}
+		}
+	})
+	thread, err := client.StartThread(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, reviewErr := thread.StartReview(ctx, types.ReviewOptions{
+			Target: types.ReviewTargetUncommittedChanges(), Delivery: types.ReviewDetached,
+		})
+		done <- reviewErr
+	}()
+	fork := awaitExecutionTest(t, ctx, forkRequests)
+	wait, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
+	defer cancel()
+	if _, runErr := thread.RunStreamed(wait, "wait for the fork snapshot", nil); !errors.Is(runErr, context.DeadlineExceeded) {
+		t.Fatalf("concurrent RunStreamed = %v, want context.DeadlineExceeded", runErr)
+	}
+	select {
+	case req := <-turnRequests:
+		t.Fatalf("turn request reached the peer before the fork reply: %s", req.Params)
+	default:
+	}
+	peer.push(jsonrpc.Response{
+		ID: fork.ID, Result: json.RawMessage(`{"thread":{"id":"child","status":{"type":"idle"}}}`),
+	})
+	if reviewErr := awaitExecutionTest(t, ctx, done); reviewErr != nil {
+		t.Fatal(reviewErr)
+	}
+	stream, err := thread.RunStreamed(ctx, "run after the fork snapshot", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := awaitExecutionTest(t, ctx, turnRequests)
+	if !strings.Contains(string(req.Params), `"threadId":"source"`) {
+		t.Fatalf("expected source turn after fork, got %s", req.Params)
+	}
+	peer.push(notify("turn/completed", map[string]string{
+		"threadId": "source", "turnId": "after-fork", "status": "completed",
+	}))
+	if end, ok := awaitExecutionTest(t, ctx, stream).(*types.TurnCompleted); !ok || end.TurnID != "after-fork" {
+		t.Fatalf("source stream ended with %v, want its own completed turn", end)
+	}
+}
+
 func TestClient_TerminalBeforeReplySelectsMatchingTurn(t *testing.T) {
 	t.Parallel()
 	ctx, stop := context.WithTimeout(t.Context(), 5*time.Second)

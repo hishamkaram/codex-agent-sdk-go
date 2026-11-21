@@ -37,6 +37,10 @@ type HookHandlerConfig struct {
 // when none is specified in hooks.json. Matches the spike-verified value.
 const DefaultTimeoutSeconds = 30
 
+const hookMatcher = ".*"
+
+var callbackEvents = [...]string{"PreToolUse", "PostToolUse", "SessionStart", "UserPromptSubmit", "Stop"}
+
 // GenerateHooksJSON returns the bytes of a hooks.json that registers the
 // shim binary for every event name codex fires through the app-server
 // transport. shimPath MUST be an absolute path. timeoutSeconds bounds how
@@ -68,17 +72,12 @@ func GenerateHooksJSON(shimPath string, timeoutSeconds int) ([]byte, error) {
 		Timeout: timeoutSeconds,
 	}
 	group := HookMatcherGroup{
-		Matcher: ".*",
+		Matcher: hookMatcher,
 		Hooks:   []HookHandlerConfig{handler},
 	}
-	cfg := HooksConfig{
-		Hooks: map[string][]HookMatcherGroup{
-			"PreToolUse":       {group},
-			"PostToolUse":      {group},
-			"SessionStart":     {group},
-			"UserPromptSubmit": {group},
-			"Stop":             {group},
-		},
+	cfg := HooksConfig{Hooks: make(map[string][]HookMatcherGroup, len(callbackEvents))}
+	for _, event := range callbackEvents {
+		cfg.Hooks[event] = []HookMatcherGroup{group}
 	}
 	return json.MarshalIndent(cfg, "", "  ")
 }

@@ -44,7 +44,6 @@ func TestIntegration_BackgroundTerminalLifecycle(t *testing.T) {
 	opts := types.NewCodexOptions().
 		WithCLIPath(cliPath).
 		WithExperimentalAPI(true).
-		WithModel("gpt-5.4").
 		WithCwd(workspace)
 
 	features, err := codex.DiscoverRuntimeFeatures(ctx, opts)
@@ -68,7 +67,6 @@ func TestIntegration_BackgroundTerminalLifecycle(t *testing.T) {
 		Cwd:            workspace,
 		Sandbox:        types.SandboxDangerFullAccess,
 		ApprovalPolicy: types.ApprovalNever,
-		Model:          "gpt-5.4",
 	})
 	if err != nil {
 		t.Fatalf("StartThread: %v", err)
@@ -181,6 +179,14 @@ func waitForLiveCommandStart(
 				return started
 			}
 		case result := <-runDone:
+			if result.turn != nil {
+				for _, event := range result.turn.Events {
+					if terminal, ok := event.(*types.TurnCompleted); ok && terminal.Error != "" {
+						t.Fatalf("turn ended before a live command was observed: status=%s provider=%s", terminal.Status, terminal.Error)
+					}
+				}
+				t.Fatalf("turn ended before a live command was observed: status=%s error=%v", result.turn.Status, result.err)
+			}
 			t.Fatalf("turn ended before a live command was observed: %v", result.err)
 		case <-ctx.Done():
 			t.Fatalf("wait for command start: %v", ctx.Err())

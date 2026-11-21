@@ -2,6 +2,7 @@ package codex
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -657,10 +658,16 @@ func TestReplacementEnvironmentAcrossPublicLaunchAndProbes(t *testing.T) {
 	}
 	assertProbeStages(t, before, "--help", "--version", "app-server generate-json-schema")
 
-	_, thread := connectTurnProgramFixture(t, opts)
+	client, thread := connectTurnProgramFixture(t, opts)
 	opts.WithEnvReplacement("SDK57_PUBLIC_SELECTION=changed-after-connect")
 	program := types.CyberAccessProgramStandard
 	if _, err := thread.Run(ctx, "synthetic probe", &types.RunOptions{CyberAccessProgram: &program}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.ResumeThread(ctx, thread.ID(), nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := client.ForkThread(ctx, thread.ID(), nil); err != nil {
 		t.Fatal(err)
 	}
 	connected := readLaunchEnvironments(t, fixture.launchEnv)[len(before):]
@@ -677,11 +684,42 @@ func TestReplacementEnvironmentAcrossPublicLaunchAndProbes(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(codexHome, "hooks.json")); err != nil {
 		t.Fatalf("isolated hook file: %v", err)
 	}
+	for _, method := range []string{"thread/start", "thread/resume", "thread/fork"} {
+		assertGeneratedHookTrust(t, fixture, codexHome, method)
+	}
 	if info, err := os.Stat(socket); err != nil || info.Mode()&os.ModeSocket == 0 {
 		t.Fatalf("hook socket: info=%v err=%v", info, err)
 	}
 	if got := os.Getenv("SDK57_PUBLIC_PARENT_ONLY"); got != "parent" {
 		t.Fatalf("parent environment was mutated: %q", got)
+	}
+}
+
+func assertGeneratedHookTrust(t *testing.T, fixture turnProgramFixture, codexHome, method string) {
+	t.Helper()
+	requests := approvedPlanPeerCalls(t, fixture, method)
+	if len(requests) != 1 {
+		t.Fatalf("%s calls = %d, want 1", method, len(requests))
+	}
+	var request struct {
+		Config struct {
+			Hooks map[string]struct {
+				Hash string `json:"trusted_hash"`
+			} `json:"hooks.state"`
+		}
+	}
+	if err := json.Unmarshal(requests[0], &request); err != nil {
+		t.Fatal(err)
+	}
+	expectedEvents := []string{"pre_tool_use", "post_tool_use", "session_start", "user_prompt_submit", "stop"}
+	if len(request.Config.Hooks) != len(expectedEvents) {
+		t.Fatalf("trusted hook count = %d, want %d", len(request.Config.Hooks), len(expectedEvents))
+	}
+	for _, event := range expectedEvents {
+		key := filepath.Join(codexHome, "hooks.json") + ":" + event + ":0:0"
+		if request.Config.Hooks[key].Hash != "sha256:"+strings.Repeat("a", 64) {
+			t.Errorf("%s missing fixture hash for %s", method, event)
+		}
 	}
 }
 
@@ -824,5 +862,52 @@ func TestUserHomeHookConfigPinnedAcrossChildHomeReplacement(t *testing.T) {
 	}
 	if restored, err := os.ReadFile(hooksPath); err != nil || string(restored) != original {
 		t.Fatalf("Close did not restore the original hooks file: %v", err)
+	}
+}
+
+func TestGeneratedHookListFailureRestoresUserConfiguration(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("native fixture uses a symlink to the test executable")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	codexHome := filepath.Join(home, ".codex")
+	if err := os.MkdirAll(codexHome, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	const original = `{"original":true}`
+	hooksPath := filepath.Join(codexHome, "hooks.json")
+	if err := os.WriteFile(hooksPath, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fixture := writeTurnProgramCLI(t, turnProgramSchema)
+	if err := os.WriteFile(filepath.Join(filepath.Dir(fixture.executable), "reject-method"), []byte("hooks/list"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	exits := make(chan queryExit, 1)
+	opts := types.NewCodexOptions().WithCLIPath(fixture.executable).
+		WithObserver(queryObserver{exits: exits}).
+		WithEnvReplacement("GORACE=atexit_sleep_ms=0", "SDK57_PUBLIC_SELECTION=new").
+		WithHookCallback(types.DefaultAllowHookHandler).
+		WithHookConfigMode(types.HookConfigModeUserHome).
+		WithShimPath(fixture.executable)
+	client, err := NewClient(t.Context(), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = client.Close(context.Background()) })
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	var rpcErr *types.RPCError
+	connectErr := client.Connect(ctx)
+	if !errors.As(connectErr, &rpcErr) || rpcErr == nil || rpcErr.Code != -32123 {
+		t.Fatalf("Connect = %v, want fixture hook-list rejection", connectErr)
+	}
+	if exit := awaitExecutionTest(t, ctx, exits); !exit.requested || exit.code != 0 || exit.cause != nil {
+		t.Fatalf("process exit = %+v, want clean shutdown after failed hook initialization", exit)
+	}
+	restored, err := os.ReadFile(hooksPath)
+	if err != nil || string(restored) != original {
+		t.Fatalf("original hook file not restored: %v", err)
 	}
 }

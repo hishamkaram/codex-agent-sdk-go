@@ -207,7 +207,9 @@ func (t *Thread) Steer(ctx context.Context, text string) error {
 
 // Compact requests that codex summarize the thread's earlier turns. The
 // returned CompactResult acknowledges receipt. Wait can observe the legacy
-// thread/compacted notification with its own context.
+// thread/compacted notification with its own context. A second compaction
+// returns an error matching types.ErrCompactResultPending after the previous
+// operation completes if its result still owns the subscription.
 //
 // The Client keeps execution reserved until correlated completion. After
 // five seconds without confirmation, a new operation returns
@@ -236,17 +238,16 @@ func (t *Thread) Summarize(ctx context.Context) (*CompactResult, error) {
 // StartReview invokes codex's reviewer against the configured Target.
 // Equivalent to TUI `/review`.
 //
-// The RPC is synchronous in the sense that it returns immediately
-// with a ReviewStartResult descriptor — but the actual review OUTPUT
-// (item/* notifications) streams in the background on the review
-// thread's event channel:
+// The returned ReviewStartResult identifies the review turn. To observe
+// its live events, subscribe with Client.SubscribeThreadEvents before
+// calling StartReview and use the returned ReviewThreadID to route them.
 //
-//   - Delivery = ReviewInline (or empty default): events stream on
-//     this Thread's existing channel. Consume via RunStreamed's
-//     return channel or Client's raw notification stream.
-//   - Delivery = ReviewDetached: ReviewThreadID is a NEW thread id.
-//     The caller should ResumeThread(ctx, ReviewThreadID) to create
-//     a second Thread handle for observing the review's events.
+//   - Delivery = ReviewInline (or empty default): the review uses this
+//     Thread. StartReviewStreamed also provides a per-review channel.
+//   - Delivery = ReviewDetached: ReviewThreadID identifies a new thread.
+//     On inline-only CLIs, the SDK forks the source's persisted history and
+//     starts the review on the fork using the provider's normal rules for
+//     inherited settings.
 //
 // Target is REQUIRED — use one of the ReviewTarget* constructors.
 func (t *Thread) StartReview(ctx context.Context, opts types.ReviewOptions) (*types.ReviewStartResult, error) {
@@ -264,6 +265,12 @@ func (t *Thread) StartReview(ctx context.Context, opts types.ReviewOptions) (*ty
 			return nil, reentryErr
 		}
 		result, err = t.client.sendRaw(ctx, "Thread.StartReview", "review/start", params)
+		var rpcErr *types.RPCError
+		const inlineOnly = "Invalid request: unknown variant `detached`, expected `inline`"
+		if errors.As(err, &rpcErr) && rpcErr != nil && rpcErr.Code == -32600 && rpcErr.Message == inlineOnly {
+			// Codex rejected the delivery enum before dispatching the review.
+			return t.startReviewOnFork(ctx, opts.Target)
+		}
 	} else {
 		_, reply, startErr := t.beginOperation(ctx, threadexec.Review, false, "review/start", params)
 		result, err = reply.Result, startErr
@@ -275,7 +282,42 @@ func (t *Thread) StartReview(ctx context.Context, opts types.ReviewOptions) (*ty
 	if err := json.Unmarshal(result, &review); err != nil {
 		return nil, fmt.Errorf("codex.Thread.StartReview: decode response: %w", err)
 	}
+	if opts.Delivery == types.ReviewDetached && (review.ReviewThreadID == "" ||
+		threadexec.CanonicalID(review.ReviewThreadID) == threadexec.CanonicalID(t.id) || review.Turn.ID == "") {
+		return nil, fmt.Errorf("codex.Thread.StartReview: detached response missing a distinct review thread identity or turn ID")
+	}
 	return &review, nil
+}
+
+func (t *Thread) startReviewOnFork(ctx context.Context, target types.ReviewTarget) (*types.ReviewStartResult, error) {
+	release, err := t.record.ReserveSnapshot(ctx, t.id, t.executionWire().Unconfirmed)
+	if err != nil {
+		return nil, fmt.Errorf("codex.Thread.StartReview: reserve source snapshot: %w", err)
+	}
+	// Native detached reviews fork the source history. Do not resend client
+	// defaults here, since they would override inherited provider settings.
+	request := threadconfig.CreationRequest{Params: map[string]any{
+		"threadId": t.id, "excludeTurns": true,
+	}}
+	handle, _, err := t.client.session.ForkThread(ctx, t.id, request)
+	release()
+	if err != nil {
+		return nil, fmt.Errorf("codex.Thread.StartReview: fork review thread: %w", err)
+	}
+	if threadexec.CanonicalID(handle.ID) == threadexec.CanonicalID(t.id) {
+		return nil, fmt.Errorf("codex.Thread.StartReview: provider returned the source thread as its review fork")
+	}
+	child := t.client.threadFromHandle(handle)
+	review, err := child.StartReview(ctx, types.ReviewOptions{Target: target, Delivery: types.ReviewInline})
+	if err != nil {
+		// Expose the child identity so callers can reconcile or archive
+		// it. It may already have active work or independent observers.
+		return nil, fmt.Errorf("codex.Thread.StartReview: review on forked thread %q: %w", child.id, err)
+	}
+	if threadexec.CanonicalID(review.ReviewThreadID) != threadexec.CanonicalID(child.id) || review.Turn.ID == "" {
+		return nil, fmt.Errorf("codex.Thread.StartReview: response on forked thread %q has unexpected review thread identity or missing turn ID", child.id)
+	}
+	return review, nil
 }
 
 // StartReviewStreamed invokes codex's reviewer on the current thread and

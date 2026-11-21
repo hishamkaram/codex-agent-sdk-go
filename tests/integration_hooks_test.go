@@ -351,7 +351,11 @@ func TestHookCallback_Allow(t *testing.T) {
 
 	client := connectWithCallback(t, handler,
 		func(o *types.CodexOptions) *types.CodexOptions {
-			return o.WithSandbox(types.SandboxWorkspaceWrite).
+			shim := filepath.Join(t.TempDir(), "user's hook shim")
+			if err := os.Rename(o.ShimPath, shim); err != nil {
+				t.Fatalf("stage shim path with shell characters: %v", err)
+			}
+			return o.WithShimPath(shim).WithSandbox(types.SandboxWorkspaceWrite).
 				WithApprovalPolicy(types.ApprovalNever)
 		})
 

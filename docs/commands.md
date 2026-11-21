@@ -105,16 +105,29 @@ directly for those.
 ### `/review` → `Thread.StartReview`
 
 ```go
+events, err := client.SubscribeThreadEvents(ctx, 128)
+if err != nil { return err }
+
 result, err := thread.StartReview(ctx, types.ReviewOptions{
     Target:   types.ReviewTargetUncommittedChanges(),
     Delivery: types.ReviewDetached, // returns a new thread id
 })
 if err != nil { return err }
 
-// For detached reviews, ResumeThread on result.ReviewThreadID to
-// observe streamed review events:
-reviewThread, _ := client.ResumeThread(ctx, result.ReviewThreadID, nil)
+// Match events from result.ReviewThreadID. The review can emit events
+// before its acknowledgment, so subscribe before starting.
+for event := range events {
+    if event.Err != nil { return event.Err }
+    if event.ThreadID != result.ReviewThreadID { continue }
+    if terminal, ok := event.Event.(*types.TurnCompleted); ok && terminal.TurnID == result.Turn.ID {
+        break
+    }
+}
 ```
+
+On Codex versions that only accept inline review, detached review forks the
+source's persisted history and starts the review on the fork. The provider's
+normal fork rules determine which thread settings are inherited.
 
 ReviewTarget variants:
 - `ReviewTargetUncommittedChanges()` — staged + unstaged + untracked

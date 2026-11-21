@@ -160,34 +160,40 @@ func TestIntInteract_RollbackThenRun(t *testing.T) {
 	requireRunTurns(t)
 	c := connectReadOnlyClient(t)
 	thread := newThrowawayThread(t, c)
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Minute)
+	defer cancel()
 
-	// Run a trivial turn to populate history.
-	ctx1, cancel1 := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel1()
-	turn1, err := thread.Run(ctx1, "Reply with exactly: SEED", nil)
+	seed, err := thread.Run(ctx, "Reply with exactly: SEED_KEEP", nil)
+	if err != nil || seed == nil || seed.Status != "completed" {
+		t.Fatalf("seed turn failed: %v", err)
+	}
+	removed, err := thread.Run(ctx, "Reply with exactly: SEED_REMOVE", nil)
+	if err != nil || removed == nil || removed.Status != "completed" {
+		t.Fatalf("turn to remove failed: %v", err)
+	}
+	before, err := c.ReadThread(ctx, thread.ID(), &types.ThreadReadOptions{IncludeTurns: true})
 	if err != nil {
-		t.Fatalf("seed turn: %v", err)
+		t.Fatal(err)
 	}
-	if turn1 == nil {
-		t.Fatal("nil turn 1")
+	if len(before.Thread.Turns) != 2 || before.Thread.Turns[0].ID != seed.ID || before.Thread.Turns[1].ID != removed.ID {
+		t.Fatal("expected both seed turns to be persisted before rollback")
 	}
-
-	// Rollback that turn.
-	if err := thread.Rollback(context.Background(), 1); err != nil {
+	if err := thread.Rollback(ctx, 1); err != nil {
 		t.Fatalf("Rollback: %v", err)
 	}
-
-	// Run a new turn — thread must still be usable.
-	ctx2, cancel2 := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel2()
-	turn2, err := thread.Run(ctx2, "Reply with exactly: AFTER_ROLLBACK", nil)
+	history, err := c.ReadThread(ctx, thread.ID(), &types.ThreadReadOptions{IncludeTurns: true})
 	if err != nil {
-		t.Fatalf("post-rollback turn: %v", err)
+		t.Fatal(err)
 	}
-	if turn2 == nil {
-		t.Fatal("nil turn 2")
+	if len(history.Thread.Turns) != 1 || history.Thread.Turns[0].ID != seed.ID {
+		t.Fatalf("rollback retained %d turns, want only the first seed", len(history.Thread.Turns))
 	}
-	t.Logf("rollback+run: turn1.status=%q turn2.status=%q", turn1.Status, turn2.Status)
+
+	turn, err := thread.Run(ctx, "Reply with exactly: AFTER_ROLLBACK", nil)
+	if err != nil || turn == nil || turn.Status != "completed" || turn.ID == removed.ID ||
+		strings.TrimSpace(turn.FinalResponse) != "AFTER_ROLLBACK" {
+		t.Fatalf("post-rollback turn did not complete on a new turn ID: %v", err)
+	}
 }
 
 // ====================================================================

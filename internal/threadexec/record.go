@@ -3,7 +3,6 @@ package threadexec
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -21,6 +20,7 @@ const (
 	Turn Kind = iota
 	Review
 	Compact
+	historyAccess
 )
 
 // Record is the Client's authoritative state for one provider thread
@@ -166,7 +166,7 @@ func (e *Record) reserveLocked(threadID string, kind Kind, streamed bool) (*Oper
 	if kind == Compact {
 		ch := make(chan *types.ContextCompacted, 1)
 		if !e.compactSub.CompareAndSwap(nil, &ch) {
-			return nil, errors.New("codex: a compaction result is already pending")
+			return nil, types.ErrCompactResultPending
 		}
 		op.compactCh = &ch
 		e.compactTurnID = ""

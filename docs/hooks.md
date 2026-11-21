@@ -73,9 +73,13 @@ On `Connect` (when `WithHookCallback` is set), the SDK:
 5. Exports `CODEX_HOME=<tempdir>` and
    `CODEX_SDK_HOOK_SOCKET=<socket path>` to the codex
    subprocess so the shim can dial back.
-6. On Codex 0.131+, passes `--dangerously-bypass-hook-trust` for the invocation
-   because the SDK generated and vetted the exact ephemeral command hook
-   definition. Older or unprobed peers omit the unsupported flag.
+6. On Codex 0.171+, verifies the generated declarations against `hooks/list`
+   and attaches only their hashes to each start, resume, and fork request.
+   Codex checks those hashes against the declarations and applies trust for
+   the thread. This leaves trust for other hooks and persisted user config
+   untouched.
+7. On Codex 0.131 through 0.170, uses the legacy invocation flag. Older or
+   unprobed peers omit it.
 
 On `Close`, the SDK removes the private socket directory and isolated `CODEX_HOME`.
 

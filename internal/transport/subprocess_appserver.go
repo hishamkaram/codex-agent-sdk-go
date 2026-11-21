@@ -69,7 +69,7 @@ type AppServerConfig struct {
 	Logger *sdklog.Logger
 
 	// ReadBufferSize overrides the demux read-buffer ceiling. 0 picks the
-	// 2 MiB default.
+	// JSON-RPC reader's default.
 	ReadBufferSize int
 
 	// Observer receives subprocess-exit and demux telemetry. nil is treated as
@@ -148,11 +148,7 @@ func (t *AppServer) doConnect(ctx context.Context) error {
 	stderrDone := make(chan struct{})
 	waitDone := make(chan error, 1)
 	lw := jsonrpc.NewLineWriter(proc.stdin)
-	bufSize := t.cfg.ReadBufferSize
-	if bufSize < jsonrpc.MinReadBufferSize {
-		bufSize = jsonrpc.MinReadBufferSize
-	}
-	lr := jsonrpc.NewLineReaderWithSize(proc.stdout, bufSize)
+	lr := jsonrpc.NewLineReaderWithSize(proc.stdout, t.cfg.ReadBufferSize)
 	demux := jsonrpc.NewDemux(lr, lw, t.logger,
 		jsonrpc.WithOrderedServerMessages(),
 		jsonrpc.WithObserver(t.observer),

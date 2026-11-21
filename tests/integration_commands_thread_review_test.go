@@ -4,7 +4,10 @@ package tests
 
 import (
 	"context"
+	"errors"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -197,8 +200,8 @@ func TestIntCmd_Compact_EmptyThreadAckSucceeds(t *testing.T) {
 }
 
 func TestIntCmd_Compact_InFlightSecondCallRejected(t *testing.T) {
-	// Two back-to-back Compact calls with no Wait in between —
-	// the second MUST return the "already in flight" error.
+	// The second Compact must be rejected whether the provider has sent
+	// completion for the first operation or it still needs confirmation.
 	c := connectReadOnlyClient(t)
 	thread := newThrowawayThread(t, c)
 	result1, err := thread.Compact(context.Background(), nil)
@@ -211,12 +214,10 @@ func TestIntCmd_Compact_InFlightSecondCallRejected(t *testing.T) {
 		_, _ = result1.Wait(ctx) // drain + detach
 	})
 
-	_, err = thread.Compact(context.Background(), nil)
-	if err == nil {
-		t.Fatal("expected 'already in flight' error on second Compact")
-	}
-	if !strings.Contains(err.Error(), "already in flight") {
-		t.Errorf("err = %q, want 'already in flight'", err)
+	result2, err := thread.Compact(context.Background(), nil)
+	if result2 != nil || (!errors.Is(err, types.ErrCompactResultPending) &&
+		!errors.Is(err, codex.ErrThreadExecutionUnconfirmed)) {
+		t.Fatalf("second Compact = (%v, %v), want a pending or unconfirmed operation error", result2, err)
 	}
 }
 
@@ -233,7 +234,7 @@ func TestIntCmd_CompactResult_WaitCtxCancelAndReEnter(t *testing.T) {
 	_, _ = r1.Wait(ctx)
 	cancel()
 
-	// Second Compact — must NOT see "already in flight".
+	// The completed wait releases the subscription for a second compaction.
 	r2, err := thread.Compact(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("second Compact after Wait ctx-cancel: %v", err)
@@ -286,49 +287,102 @@ func TestIntCmd_StartReview_UncommittedChanges_Detached(t *testing.T) {
 	if os.Getenv("CODEX_SDK_RUN_TURNS") != "1" {
 		t.Skip("set CODEX_SDK_RUN_TURNS=1 to run review (consumes quota)")
 	}
-	c := connectReadOnlyClient(t)
-	thread := newThrowawayThread(t, c)
-
-	// Codex refuses review on an empty thread ("No such file or
-	// directory" for the rollout file). Run one trivial turn first
-	// to create the rollout.
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 	defer cancel()
-	_, err := thread.Run(ctx, "Reply with exactly: OK", nil)
+	cwd := schemaWorkspace(t)
+	gitCommit := exec.CommandContext(ctx, "git", "-C", cwd, "-c", "user.name=SDK Integration",
+		"-c", "user.email=sdk@example.invalid", "-c", "commit.gpgsign=false", "commit",
+		"--allow-empty", "--quiet", "-m", "Seed review workspace")
+	if out, err := gitCommit.CombinedOutput(); err != nil {
+		t.Fatalf("seed review workspace: %v: %s", err, out)
+	}
+	if err := os.WriteFile(filepath.Join(cwd, "review-fixture.txt"), []byte("SDK review fixture\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c := connectReadOnlyClient(t)
+	thread, err := c.StartThread(ctx, &types.ThreadOptions{
+		Cwd: cwd, Sandbox: types.SandboxReadOnly, ApprovalPolicy: types.ApprovalNever,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	archive := func(id string) {
+		t.Cleanup(func() {
+			cleanup, stop := context.WithTimeout(context.Background(), 10*time.Second)
+			defer stop()
+			if err := c.ArchiveThread(cleanup, id); err != nil {
+				t.Logf("archive review fixture thread: %v", err)
+			}
+		})
+	}
+	archive(thread.ID())
+
+	// Materialize the source history that both native and SDK-forked
+	// detached reviews inherit.
+	seed, err := thread.Run(ctx, "Reply with exactly: OK. Do not use tools.", nil)
 	if err != nil {
 		t.Fatalf("seed turn: %v", err)
 	}
+	if seed.Status != "completed" || seed.ID == "" {
+		t.Fatalf("seed turn did not complete: status=%s", seed.Status)
+	}
+	events, err := c.SubscribeThreadEvents(ctx, 512)
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	opts := types.ReviewOptions{
+	result, err := thread.StartReview(ctx, types.ReviewOptions{
 		Target:   types.ReviewTargetUncommittedChanges(),
 		Delivery: types.ReviewDetached,
-	}
-	result, err := thread.StartReview(context.Background(), opts)
+	})
 	if err != nil {
 		t.Fatalf("StartReview: %v", err)
 	}
-	if result == nil {
-		t.Fatal("nil result")
+	if result == nil || result.ReviewThreadID == "" || result.ReviewThreadID == thread.ID() || result.Turn.ID == "" {
+		t.Fatalf("review did not acknowledge a turn on a distinct thread: %+v", result)
 	}
-	// Detached review → new thread id.
-	if result.ReviewThreadID == "" {
-		t.Error("ReviewThreadID empty")
-	}
-	if result.ReviewThreadID == thread.ID() {
-		t.Errorf("detached review should have NEW thread id, got original: %s", result.ReviewThreadID)
-	}
-	if result.Turn.ID == "" {
-		t.Error("Turn.ID empty")
-	}
-	t.Logf("detached review: reviewThreadId=%q turnId=%q status=%q",
-		result.ReviewThreadID, result.Turn.ID, result.Turn.Status)
+	archive(result.ReviewThreadID)
+	waitForDetachedReview(t, ctx, events, result.ReviewThreadID, result.Turn.ID)
 
-	// Best-effort archive of the review thread.
-	t.Cleanup(func() {
-		archCtx, archCancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer archCancel()
-		_ = c.ArchiveThread(archCtx, result.ReviewThreadID)
-	})
+	source, err := c.ReadThread(ctx, thread.ID(), &types.ThreadReadOptions{IncludeTurns: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(source.Thread.Turns) != 1 || source.Thread.Turns[0].ID != seed.ID {
+		t.Fatal("detached review changed the source's persisted turns")
+	}
+	t.Log("detached review completed on its own thread and preserved source history")
+}
+
+func waitForDetachedReview(t *testing.T, ctx context.Context, events <-chan codex.ThreadEventEnvelope, threadID, turnID string) {
+	t.Helper()
+	for {
+		select {
+		case <-ctx.Done():
+			t.Fatalf("wait for detached review: %v", ctx.Err())
+		case event, open := <-events:
+			if !open || event.Err != nil {
+				t.Fatalf("detached review event stream ended: %v", event.Err)
+			}
+			if event.ThreadID != threadID {
+				continue
+			}
+			switch terminal := event.Event.(type) {
+			case *types.TurnCompleted:
+				if terminal.TurnID != turnID {
+					continue
+				}
+				if terminal.Status != "completed" {
+					t.Fatalf("detached review ended with status %q: %s", terminal.Status, terminal.Error)
+				}
+				return
+			case *types.TurnFailed:
+				if terminal.TurnID == turnID {
+					t.Fatalf("detached review failed: %s", terminal.Message)
+				}
+			}
+		}
+	}
 }
 
 func TestIntCmd_StartReview_CommitTarget(t *testing.T) {

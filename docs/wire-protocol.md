@@ -10,7 +10,7 @@ quirks.
 - `"jsonrpc":"2.0"` field is OMITTED on both directions. The server
   tolerates its absence; omitting saves bytes and matches the upstream
   Python SDK.
-- SDK read buffer minimum 2 MiB. User input cap is 1 MiB;
+- SDK read buffer defaults to 8 MiB and has a 2 MiB minimum. User input cap is 1 MiB;
   envelope overhead pushes some notifications past that.
 
 ## Three frame classes

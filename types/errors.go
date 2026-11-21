@@ -19,6 +19,9 @@ var (
 	// ErrThreadClosed is wrapped when a Thread operation is attempted after the
 	// owning client closed or the thread was otherwise retired.
 	ErrThreadClosed = errors.New("codex: thread closed")
+	// ErrCompactResultPending is wrapped when a previous compaction result
+	// still owns the thread's compaction subscription.
+	ErrCompactResultPending = errors.New("codex: a compaction result is already pending")
 )
 
 // CLINotFoundError is returned when the codex CLI binary cannot be located or

@@ -129,6 +129,13 @@ func (s *Session) Connect(ctx context.Context) (err error) {
 		return fmt.Errorf("codex.Client.Connect: initialized: %w", err)
 	}
 
+	if s.needsScopedHookTrust() {
+		if err := s.loadHookTrust(connectCtx, demux); err != nil {
+			s.closeTransportAfterConnectError(ctx, tr)
+			return fmt.Errorf("codex.Client.Connect: %w", err)
+		}
+	}
+
 	dispatcherCtx, dispatcherCancel := context.WithCancel(context.WithoutCancel(ctx))
 	if err := s.StartDispatcher(dispatcherCtx, dispatcherCancel, demux, s.Dispatch); err != nil {
 		dispatcherCancel()

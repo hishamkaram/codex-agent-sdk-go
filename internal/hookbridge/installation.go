@@ -24,6 +24,8 @@ type installationResources struct {
 	listener    *Listener
 	logger      *sdklog.Logger
 	hooksPath   string
+	shimCommand string
+	trust       map[string]hookTrust
 	backupPath  string
 	configLease *os.File
 	codexHome   string
@@ -78,6 +80,7 @@ func (i *Installation) Setup(ctx context.Context, cfg InstallationConfig) (_ []s
 	if err != nil {
 		return nil, err
 	}
+	resources.shimCommand = shellCommandPath(shimPath)
 	resources.listener, err = New(ctx, Config{
 		SocketPath: socketPath,
 		Handler:    cfg.Handler,

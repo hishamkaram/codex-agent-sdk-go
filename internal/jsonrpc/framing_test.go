@@ -1,6 +1,7 @@
 package jsonrpc
 
 import (
+	"bufio"
 	"bytes"
 	"errors"
 	"io"
@@ -81,8 +82,8 @@ func TestLineReader_ReadsTwoFrames(t *testing.T) {
 
 func TestLineReader_HandlesLargeFrame(t *testing.T) {
 	t.Parallel()
-	// 1.5 MiB frame — above the old 64 KiB default but within the 2 MiB cap.
-	payload := strings.Repeat("A", 1500*1024)
+	// A 3 MiB frame models a full authenticated MCP inventory reply.
+	payload := strings.Repeat("A", 3*1024*1024)
 	line := `{"method":"big","params":{"blob":"` + payload + `"}}`
 	src := strings.NewReader(line + "\n")
 	lr := NewLineReader(src)
@@ -97,13 +98,23 @@ func TestLineReader_HandlesLargeFrame(t *testing.T) {
 
 func TestLineReader_RejectsOversizedFrame(t *testing.T) {
 	t.Parallel()
-	// Make a frame just above the 2 MiB ceiling.
-	payload := strings.Repeat("A", MinReadBufferSize+1024)
-	src := strings.NewReader(payload + "\n")
-	lr := NewLineReader(src)
-	_, err := lr.ReadLine()
-	if err == nil {
-		t.Fatal("expected error for oversized frame, got nil")
+	for _, tc := range []struct {
+		name  string
+		size  int
+		bound string
+	}{
+		{name: "default", bound: "8388608"},
+		{name: "explicit minimum", size: 2 * 1024 * 1024, bound: "2097152"},
+		{name: "explicit custom", size: 4 * 1024 * 1024, bound: "4194304"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			const oversized = 9 * 1024 * 1024
+			payload := strings.Repeat("A", oversized)
+			lr := NewLineReaderWithSize(strings.NewReader(payload+"\n"), tc.size)
+			if _, err := lr.ReadLine(); !errors.Is(err, bufio.ErrTooLong) || !strings.Contains(err.Error(), "exceeded "+tc.bound+" bytes") {
+				t.Fatalf("oversized frame error = %v, want bound %s and ErrTooLong", err, tc.bound)
+			}
+		})
 	}
 }
 

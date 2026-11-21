@@ -48,6 +48,13 @@ func TestCLICompatibilityArgs(t *testing.T) {
 			wantGlobal: []string{"--dangerously-bypass-hook-trust"},
 			wantExtra:  []string{"--enable", "hooks"},
 		},
+		{
+			name:      "modern_peer_uses_scoped_trust_without_global_flag",
+			version:   transport.SemVer{Major: 0, Minor: 171, Patch: 0},
+			known:     true,
+			callback:  true,
+			wantExtra: []string{"--enable", "hooks"},
+		},
 	}
 
 	for _, tt := range tests {
