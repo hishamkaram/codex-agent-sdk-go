@@ -290,3 +290,8 @@ func readIfExists(path string) (data []byte, exists bool, err error) {
 	}
 	return nil, false, err
 }
+
+// IsHooksConfigKeyPath reports whether a config edit targets the hook settings.
+func IsHooksConfigKeyPath(keyPath string) bool {
+	return keyPath == "hooks" || strings.HasPrefix(keyPath, "hooks.")
+}
