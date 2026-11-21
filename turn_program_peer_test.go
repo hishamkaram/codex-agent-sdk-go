@@ -92,50 +92,64 @@ func generateTurnProgramPeerSchema(dir string, args []string) error {
 	if mkdirErr := os.MkdirAll(out, 0o700); mkdirErr != nil {
 		return mkdirErr
 	}
-	return os.WriteFile(filepath.Join(out, "TurnStartParams.json"), body, 0o600)
+	if err := os.WriteFile(filepath.Join(out, "TurnStartParams.json"), body, 0o600); err != nil {
+		return err
+	}
+	return copyApprovedPlanPeerSchema(dir, args[2])
+}
+
+type turnProgramPeerRequest struct {
+	ID     int    `json:"id"`
+	Method string `json:"method"`
+	Params struct {
+		ThreadID string `json:"threadId"`
+		Program  string `json:"cyberAccessProgram"`
+		Markdown string `json:"markdown"`
+	} `json:"params"`
 }
 
 func serveTurnProgramPeerRPC(dir string) error {
 	scanner := bufio.NewScanner(os.Stdin)
+	starts := 0
 	for scanner.Scan() {
 		line := scanner.Text()
 		if err := appendPeerLog(filepath.Join(dir, "calls.jsonl"), line+"\n"); err != nil {
 			return err
 		}
-		var frame struct {
-			ID     int    `json:"id"`
-			Method string `json:"method"`
-			Params struct {
-				Program string `json:"cyberAccessProgram"`
-			} `json:"params"`
-		}
+		var frame turnProgramPeerRequest
 		if err := json.Unmarshal([]byte(line), &frame); err != nil {
 			return err
 		}
-		if err := replyTurnProgramPeer(frame.ID, frame.Method, frame.Params.Program); err != nil {
+		if frame.Method == "thread/start" {
+			starts++
+		}
+		if err := replyTurnProgramPeer(frame, starts); err != nil {
 			return err
 		}
 	}
 	return scanner.Err()
 }
 
-func replyTurnProgramPeer(id int, method, program string) error {
-	switch method {
+func replyTurnProgramPeer(frame turnProgramPeerRequest, starts int) error {
+	id := frame.ID
+	switch frame.Method {
 	case "initialize":
 		_, err := fmt.Fprintf(os.Stdout, "{\"id\":%d,\"result\":{}}\n", id)
 		return err
 	case "thread/start":
-		_, err := fmt.Fprintf(os.Stdout, "{\"id\":%d,\"result\":{\"thread\":{\"id\":\"t1\"}}}\n", id)
+		_, err := fmt.Fprintf(os.Stdout, "{\"id\":%d,\"result\":{\"thread\":{\"id\":\"t%d\"}}}\n", id, starts)
 		return err
+	case "thread/prepareApprovedPlan":
+		return replyApprovedPlanPeer(frame)
 	case "turn/start":
-		if program == "daybreakRed" {
+		if frame.Params.Program == "daybreakRed" {
 			_, err := fmt.Fprintf(os.Stdout, "{\"id\":%d,\"error\":{\"code\":-32123,\"message\":\"test provider denied requested program\"}}\n", id)
 			return err
 		}
-		_, err := fmt.Fprintf(os.Stdout, `{"method":"turn/started","params":{"threadId":"t1","turn":{"id":"turn-%d"}}}
+		_, err := fmt.Fprintf(os.Stdout, `{"method":"turn/started","params":{"threadId":%q,"turn":{"id":"turn-%d"}}}
 {"id":%d,"result":{"turn":{"id":"turn-%d"}}}
-{"method":"turn/completed","params":{"threadId":"t1","turn":{"id":"turn-%d","status":"completed"}}}
-`, id, id, id, id)
+{"method":"turn/completed","params":{"threadId":%q,"turn":{"id":"turn-%d","status":"completed"}}}
+`, frame.Params.ThreadID, id, id, id, frame.Params.ThreadID, id)
 		return err
 	default:
 		return nil
