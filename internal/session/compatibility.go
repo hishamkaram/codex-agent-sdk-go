@@ -9,6 +9,7 @@ import (
 
 var (
 	hookTrustBypassMinVersion   = transport.SemVer{Major: 0, Minor: 131, Patch: 0}
+	scopedHookTrustMinVersion   = transport.SemVer{Major: 0, Minor: 171, Patch: 0}
 	canonicalHooksMinVersion    = transport.SemVer{Major: 0, Minor: 144, Patch: 0}
 	approvalOnFailureEndVersion = transport.SemVer{Major: 0, Minor: 143, Patch: 0}
 )
@@ -44,7 +45,7 @@ func cliCompatibilityArgs(
 		}
 		extraArgs = append(extraArgs, "--enable", feature)
 	}
-	if opts.HookCallback != nil && versionKnown && version.AtLeast(hookTrustBypassMinVersion) {
+	if opts.HookCallback != nil && versionKnown && version.AtLeast(hookTrustBypassMinVersion) && !version.AtLeast(scopedHookTrustMinVersion) {
 		globalArgs = []string{"--dangerously-bypass-hook-trust"}
 	}
 	return globalArgs, extraArgs
@@ -68,4 +69,9 @@ func (s *Session) ValidateApprovalPolicy(policy types.ApprovalPolicy) error {
 		return nil
 	}
 	return validateApprovalPolicyCompatibility(policy, state.version, state.known)
+}
+
+func (s *Session) needsScopedHookTrust() bool {
+	state := s.cliCompatibility.Load()
+	return s.opts.HookCallback != nil && state != nil && state.known && state.version.AtLeast(scopedHookTrustMinVersion)
 }

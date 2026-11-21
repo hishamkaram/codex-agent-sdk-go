@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -276,7 +277,7 @@ func TestInstallationCloseConcurrentIsRaceFree(t *testing.T) {
 	}
 	workers.Wait()
 
-	if installation.resources != (installationResources{}) {
+	if !reflect.DeepEqual(installation.resources, installationResources{}) {
 		t.Fatal("installation retained resources after Close")
 	}
 	for _, path := range []string{codexHome, socket} {

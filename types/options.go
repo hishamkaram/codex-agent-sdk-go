@@ -302,8 +302,8 @@ func (o *CodexOptions) WithHooks(enabled bool) *CodexOptions {
 // CODEX_SDK_HOOK_SOCKET to the codex subprocess.
 //
 // This option implies WithHooks(true). Because the SDK generates and owns the
-// exact ephemeral command hook definition, it also bypasses Codex's interactive
-// hook-trust prompt for this invocation.
+// exact ephemeral command hook definitions, supported app-servers can trust
+// those declarations automatically for the threads the SDK opens.
 //
 // WARNING: the callback runs inside the SDK process on the bridge
 // listener's goroutine. Do NOT call Thread.Run, Thread.RunStreamed, or
