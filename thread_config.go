@@ -2,7 +2,9 @@ package codex
 
 import (
 	"cmp"
+	"context"
 	"encoding/json"
+	"slices"
 
 	"github.com/hishamkaram/codex-agent-sdk-go/types"
 )
@@ -50,6 +52,7 @@ type threadCreationRequest struct {
 	params         map[string]any
 	cwd            string
 	workspaceWrite *workspaceWriteSettings
+	webSearchMode  types.WebSearchMode
 }
 
 // buildThreadStartParams builds the common start and fork request fields.
@@ -87,13 +90,13 @@ func buildThreadStartParams(defaults *types.CodexOptions, opts *types.ThreadOpti
 	if len(servers) == 0 {
 		servers = defaults.DefaultMCPServers
 	}
-	overrides := threadConfigOverrides{
+	overrides := (threadConfigOverrides{
 		webSearchMode:   opts.WebSearchMode,
 		reasoningEffort: opts.ReasoningEffort,
 		mcpServers:      servers,
 		workspaceWrite:  workspaceWrite,
-	}
-	if config := buildThreadConfig(overrides.withDefaults(defaults)); config != nil {
+	}).withDefaults(defaults)
+	if config := buildThreadConfig(overrides); config != nil {
 		params["config"] = config
 	}
 	if workspaceWrite != nil {
@@ -102,7 +105,28 @@ func buildThreadStartParams(defaults *types.CodexOptions, opts *types.ThreadOpti
 			return threadCreationRequest{}, err
 		}
 	}
-	return threadCreationRequest{params: params, cwd: cwd, workspaceWrite: workspaceWrite}, nil
+	return threadCreationRequest{
+		params: params, cwd: cwd, workspaceWrite: workspaceWrite, webSearchMode: overrides.webSearchMode,
+	}, nil
+}
+
+// validateThreadWebSearchMode checks managed constraints before Codex can
+// substitute its own allowed mode for the SDK's requested mode.
+func (c *Client) validateThreadWebSearchMode(ctx context.Context, mode types.WebSearchMode) error {
+	if mode == "" {
+		return nil
+	}
+	requirements, err := c.ReadConfigRequirements(ctx)
+	if err != nil {
+		return err
+	}
+	if requirements == nil || requirements.AllowedWebSearchModes == nil {
+		return nil
+	}
+	if !slices.Contains(requirements.AllowedWebSearchModes, mode) {
+		return &types.WebSearchModeDisallowedError{Mode: mode}
+	}
+	return nil
 }
 
 func (r threadCreationRequest) responseCwd(result json.RawMessage, id string) (string, error) {

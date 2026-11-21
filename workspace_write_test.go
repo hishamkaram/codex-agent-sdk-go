@@ -95,6 +95,7 @@ func TestVerifyWorkspaceWriteRequiresEffectivePolicy(t *testing.T) {
 	for _, tc := range []fixture{
 		{"matches", cwd, map[string]any{"type": "workspaceWrite", "networkAccess": false, "writableRoots": []string{root}}, withRoots, ""},
 		{"cwd changed", base, map[string]any{"type": "workspaceWrite", "networkAccess": false, "writableRoots": []string{root}}, withRoots, "cwd"},
+		{"cwd traverses parent", cwd + string(filepath.Separator) + ".." + string(filepath.Separator) + filepath.Base(cwd), map[string]any{"type": "workspaceWrite", "networkAccess": false, "writableRoots": []string{root}}, withRoots, "cwd"},
 		{"cwd missing", "", map[string]any{"type": "workspaceWrite"}, withRoots, "cwd"},
 		{"sandbox ignored", cwd, map[string]any{"type": "dangerFullAccess"}, withRoots, "sandbox.type"},
 		{"sandbox missing", cwd, nil, withRoots, "sandbox.type"},

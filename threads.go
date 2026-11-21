@@ -341,6 +341,9 @@ func (c *Client) StartThread(ctx context.Context, opts *types.ThreadOptions) (*T
 	if err != nil {
 		return nil, fmt.Errorf("codex.Client.StartThread: %w", err)
 	}
+	if policyErr := c.validateThreadWebSearchMode(ctx, request.webSearchMode); policyErr != nil {
+		return nil, fmt.Errorf("codex.Client.StartThread: %w", policyErr)
+	}
 	resp, err := c.demux.Send(ctx, "thread/start", request.params)
 	if err != nil {
 		return nil, fmt.Errorf("codex.Client.StartThread: %w", err)
@@ -392,6 +395,9 @@ func (c *Client) ResumeThread(ctx context.Context, threadID string, opts *types.
 	if config := buildThreadConfig(configOverrides); config != nil {
 		params["config"] = config
 	}
+	if policyErr := c.validateThreadWebSearchMode(ctx, configOverrides.webSearchMode); policyErr != nil {
+		return nil, fmt.Errorf("codex.Client.ResumeThread: %w", policyErr)
+	}
 	observationID := threadExecutionID(threadID)
 	observation := c.beginResumeObservation(observationID)
 	if observation == nil {
@@ -411,12 +417,15 @@ func (c *Client) ResumeThread(ctx context.Context, threadID string, opts *types.
 	if id == "" {
 		id = threadID
 	}
-	if err := verifyResumeReasoningEffort(resp.Result, id, configOverrides.reasoningEffort); err != nil {
-		return nil, fmt.Errorf("codex.Client.ResumeThread: %w", err)
-	}
 	t := newThread(c, id)
 	status, statusThreadID := t.seedExternalActivity(resp.Result)
 	idleProof.reconcile(status, statusThreadID, reportedID, observationID)
+	if policyErr := verifyResumeReasoningEffort(resp.Result, id, configOverrides.reasoningEffort); policyErr != nil {
+		if threadExecutionID(id) == observationID {
+			observation.reconcileExternalActivity(t.threadExecution)
+		}
+		return nil, fmt.Errorf("codex.Client.ResumeThread: %w", policyErr)
+	}
 	t.model = extractThreadModel(resp.Result)
 	if cwd == "" {
 		cwd = c.opts.DefaultCwd
@@ -452,6 +461,9 @@ func (c *Client) ForkThread(ctx context.Context, sourceThreadID string, opts *ty
 		return nil, nil, fmt.Errorf("codex.Client.ForkThread: %w", err)
 	}
 	request.params["threadId"] = sourceThreadID
+	if policyErr := c.validateThreadWebSearchMode(ctx, request.webSearchMode); policyErr != nil {
+		return nil, nil, fmt.Errorf("codex.Client.ForkThread: %w", policyErr)
+	}
 	resp, err := c.demux.Send(ctx, "thread/fork", request.params)
 	if err != nil {
 		return nil, nil, fmt.Errorf("codex.Client.ForkThread: %w", err)

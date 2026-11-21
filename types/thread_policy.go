@@ -25,3 +25,13 @@ type ThreadResumeSettingsMismatchError struct {
 func (e *ThreadResumeSettingsMismatchError) Error() string {
 	return fmt.Sprintf("codex: thread %q resumed without confirming requested reasoning effort; resume it when it is unloaded", e.ThreadID)
 }
+
+// WebSearchModeDisallowedError reports that managed Codex requirements
+// disallow an SDK-requested web-search mode. No thread request was sent.
+type WebSearchModeDisallowedError struct {
+	Mode WebSearchMode
+}
+
+func (e *WebSearchModeDisallowedError) Error() string {
+	return fmt.Sprintf("codex: web-search mode %q is disallowed by provider-managed requirements", e.Mode)
+}

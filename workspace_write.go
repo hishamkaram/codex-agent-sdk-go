@@ -49,7 +49,7 @@ func validateWritableRoots(paths []string) ([]string, error) {
 		}
 		// Lexically resolving a parent segment across a symlink can
 		// select a different directory. Require unambiguous input.
-		if slices.Contains(strings.Split(filepath.ToSlash(path), "/"), "..") {
+		if hasParentTraversal(path) {
 			return nil, fmt.Errorf("AdditionalDirectories[%d] must not contain parent traversal", i)
 		}
 		if _, exists := seen[path]; !exists {
@@ -58,6 +58,15 @@ func validateWritableRoots(paths []string) ([]string, error) {
 		}
 	}
 	return roots, nil
+}
+
+func hasParentTraversal(path string) bool {
+	if volume := filepath.VolumeName(path); len(volume) == 2 && volume[1] == ':' {
+		// A drive-relative Windows spelling such as C:.. starts with a
+		// volume prefix rather than a directory separator.
+		path = path[len(volume):]
+	}
+	return slices.Contains(strings.Split(filepath.ToSlash(path), "/"), "..")
 }
 
 type workspaceWriteReadback struct {
@@ -72,6 +81,9 @@ type workspaceWriteReadback struct {
 // expectedThreadCwd resolves a specified cwd relative to the subprocess's
 // working directory, matching the app-server's cwd override semantics.
 func expectedThreadCwd(appServerCwd, requestedCwd string) (string, error) {
+	if hasParentTraversal(requestedCwd) {
+		return "", errors.New("Cwd must not contain parent traversal when requesting workspace-write settings")
+	}
 	if requestedCwd == "" || filepath.IsAbs(requestedCwd) {
 		return requestedCwd, nil
 	}
@@ -86,7 +98,8 @@ func verifyWorkspaceWrite(result json.RawMessage, threadID, expectedCwd string, 
 	if err := json.Unmarshal(result, &reply); err != nil {
 		return "", &types.ThreadPolicyMismatchError{ThreadID: threadID, Field: "cwd or sandbox"}
 	}
-	if !filepath.IsAbs(reply.Cwd) || (expectedCwd != "" && filepath.Clean(expectedCwd) != filepath.Clean(reply.Cwd)) {
+	if !filepath.IsAbs(reply.Cwd) || hasParentTraversal(reply.Cwd) ||
+		(expectedCwd != "" && filepath.Clean(expectedCwd) != filepath.Clean(reply.Cwd)) {
 		return "", &types.ThreadPolicyMismatchError{ThreadID: threadID, Field: "cwd"}
 	}
 	if reply.Sandbox.Type != "workspaceWrite" {

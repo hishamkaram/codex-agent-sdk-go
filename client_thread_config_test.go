@@ -34,6 +34,8 @@ func TestClient_ThreadConfigurationWireScope(t *testing.T) {
 	c, server := setupMockClient(t, defaults, func(req jsonrpc.Request) jsonrpc.Response {
 		var result json.RawMessage
 		switch req.Method {
+		case "configRequirements/read":
+			result = json.RawMessage(`{"requirements":{"allowedWebSearchModes":["disabled","cached","indexed","live"]}}`)
 		case "thread/start":
 			startCalls++
 			if startCalls == 1 {
@@ -82,8 +84,13 @@ func TestClient_ThreadConfigurationWireScope(t *testing.T) {
 	}
 
 	wire := observedThreadRequests(t, server)
-	assertThreadRequestMethods(t, wire, "thread/start", "thread/start", "thread/fork", "thread/resume")
-	assertThreadConfigJSON(t, wire[0].Params, string(threadConfigFixture(t, map[string]any{
+	assertThreadRequestMethods(t, wire,
+		"configRequirements/read", "thread/start",
+		"configRequirements/read", "thread/start",
+		"configRequirements/read", "thread/fork",
+		"configRequirements/read", "thread/resume",
+	)
+	assertThreadConfigJSON(t, wire[1].Params, string(threadConfigFixture(t, map[string]any{
 		"cwd": cwd, "model": "configured-model", "sandbox": "workspace-write", "approvalPolicy": "never", "threadSource": "interactive",
 		"config": map[string]any{
 			"web_search": "disabled", "model_reasoning_effort": "high",
@@ -91,11 +98,11 @@ func TestClient_ThreadConfigurationWireScope(t *testing.T) {
 			"sandbox_workspace_write": map[string]any{"network_access": false, "writable_roots": []string{root}},
 		},
 	})))
-	assertThreadConfigJSON(t, wire[1].Params, `{
+	assertThreadConfigJSON(t, wire[3].Params, `{
 		"sandbox":"workspace-write","approvalPolicy":"on-request",
 		"config":{"web_search":"cached","model_reasoning_effort":"medium","mcp_servers":{"default":{"command":"default-mcp"}}}
 	}`)
-	assertThreadConfigJSON(t, wire[2].Params, string(threadConfigFixture(t, map[string]any{
+	assertThreadConfigJSON(t, wire[5].Params, string(threadConfigFixture(t, map[string]any{
 		"threadId": "source", "cwd": cwd, "sandbox": "workspace-write", "approvalPolicy": "on-request", "threadSource": "scheduled:daily",
 		"config": map[string]any{
 			"web_search": "indexed", "model_reasoning_effort": "medium",
@@ -103,7 +110,7 @@ func TestClient_ThreadConfigurationWireScope(t *testing.T) {
 			"sandbox_workspace_write": map[string]any{"network_access": true, "writable_roots": []string{}},
 		},
 	})))
-	assertThreadConfigJSON(t, wire[3].Params, `{"threadId":"source","config":{"web_search":"live","model_reasoning_effort":"low"}}`)
+	assertThreadConfigJSON(t, wire[7].Params, `{"threadId":"source","config":{"web_search":"live","model_reasoning_effort":"low"}}`)
 }
 
 func TestClient_ThreadPolicyRejectsBeforeRegistration(t *testing.T) {
@@ -116,6 +123,8 @@ func TestClient_ThreadPolicyRejectsBeforeRegistration(t *testing.T) {
 	startCalls := 0
 	c, server := setupMockClient(t, types.NewCodexOptions(), func(req jsonrpc.Request) jsonrpc.Response {
 		switch req.Method {
+		case "configRequirements/read":
+			return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{"requirements":null}`)}
 		case "thread/start":
 			startCalls++
 			switch startCalls {
@@ -173,8 +182,8 @@ func TestClient_ThreadPolicyRejectsBeforeRegistration(t *testing.T) {
 		t.Fatalf("provider source rejection changed: %v", err)
 	}
 	wire := observedThreadRequests(t, server)
-	assertThreadRequestMethods(t, wire, "thread/start", "thread/start", "thread/fork", "thread/start", "thread/start")
-	assertThreadConfigJSON(t, wire[4].Params, `{"sandbox":"read-only","approvalPolicy":"on-request","threadSource":"custom"}`)
+	assertThreadRequestMethods(t, wire, "thread/start", "thread/start", "thread/fork", "configRequirements/read", "thread/start", "thread/start")
+	assertThreadConfigJSON(t, wire[5].Params, `{"sandbox":"read-only","approvalPolicy":"on-request","threadSource":"custom"}`)
 }
 
 func TestClient_ResumeLoadedThreadReportsUnappliedEffort(t *testing.T) {
@@ -182,6 +191,12 @@ func TestClient_ResumeLoadedThreadReportsUnappliedEffort(t *testing.T) {
 
 	loaded := json.RawMessage(`{"thread":{"id":"loaded"},"reasoningEffort":"medium"}`)
 	c, server := setupMockClient(t, types.NewCodexOptions().WithReasoningEffort("medium"), func(req jsonrpc.Request) jsonrpc.Response {
+		if req.Method == "configRequirements/read" {
+			return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{"requirements":{"allowedWebSearchModes":null}}`)}
+		}
+		if req.Method == "thread/resume" {
+			return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{"thread":{"id":"loaded","status":{"type":"active"}},"reasoningEffort":"medium"}`)}
+		}
 		return jsonrpc.Response{ID: req.ID, Result: loaded}
 	})
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
@@ -201,9 +216,88 @@ func TestClient_ResumeLoadedThreadReportsUnappliedEffort(t *testing.T) {
 	if got := c.SessionID(); got != thread.ID() {
 		t.Fatalf("resume mismatch changed the current thread: %q", got)
 	}
+	if _, runErr := thread.RunStreamed(ctx, "must not steer provider work", nil); !errors.Is(runErr, ErrThreadExecutionUnconfirmed) {
+		t.Fatalf("resume mismatch discarded active state: %v", runErr)
+	}
 	wire := observedThreadRequests(t, server)
-	assertThreadRequestMethods(t, wire, "thread/start", "thread/resume")
-	assertThreadConfigJSON(t, wire[1].Params, `{"threadId":"loaded","config":{"model_reasoning_effort":"high","web_search":"disabled"}}`)
+	assertThreadRequestMethods(t, wire, "thread/start", "configRequirements/read", "thread/resume")
+	assertThreadConfigJSON(t, wire[2].Params, `{"threadId":"loaded","config":{"model_reasoning_effort":"high","web_search":"disabled"}}`)
+}
+
+func TestClient_ManagedWebSearchPolicyRejectsBeforeDispatch(t *testing.T) {
+	t.Parallel()
+
+	defaults := types.NewCodexOptions().WithWebSearchMode(types.WebSearchDisabled)
+	c, server := setupMockClient(t, defaults, func(req jsonrpc.Request) jsonrpc.Response {
+		if req.Method == "configRequirements/read" {
+			return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{"requirements":{"allowedWebSearchModes":["live"]}}`)}
+		}
+		// A managed peer could reply successfully while substituting live.
+		return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{"thread":{"id":"unexpected"}}`)}
+	})
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+
+	started, startErr := c.StartThread(ctx, nil)
+	resumed, resumeErr := c.ResumeThread(ctx, "loaded", &types.ResumeOptions{WebSearchMode: types.WebSearchDisabled})
+	forked, fork, forkErr := c.ForkThread(ctx, "loaded", &types.ThreadOptions{WebSearchMode: types.WebSearchCached})
+	if started != nil || resumed != nil || forked != nil || fork != nil {
+		t.Fatal("managed mode rejection exposed a thread handle")
+	}
+	for _, tc := range []struct {
+		mode types.WebSearchMode
+		err  error
+	}{
+		{types.WebSearchDisabled, startErr},
+		{types.WebSearchDisabled, resumeErr},
+		{types.WebSearchCached, forkErr},
+	} {
+		var rejected *types.WebSearchModeDisallowedError
+		if !errors.As(tc.err, &rejected) || rejected.Mode != tc.mode {
+			t.Errorf("error = %v, want managed policy rejection of %q", tc.err, tc.mode)
+		}
+	}
+	assertThreadRequestMethods(t, observedThreadRequests(t, server),
+		"configRequirements/read", "configRequirements/read", "configRequirements/read")
+}
+
+func TestClient_WebSearchRequirementErrorsReachCaller(t *testing.T) {
+	t.Parallel()
+
+	c, server := setupMockClient(t, types.NewCodexOptions(), func(req jsonrpc.Request) jsonrpc.Response {
+		return jsonrpc.Response{ID: req.ID, Error: &jsonrpc.RPCError{Code: -32601, Message: "method not found"}}
+	})
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+
+	started, err := c.StartThread(ctx, &types.ThreadOptions{WebSearchMode: types.WebSearchLive})
+	if started != nil || !errors.Is(err, ErrRuntimeControlsUnsupported) {
+		t.Fatalf("got thread=%v error=%v, want unsupported requirements error", started, err)
+	}
+	assertThreadRequestMethods(t, observedThreadRequests(t, server), "configRequirements/read")
+}
+
+func TestClient_PolicyBearingCwdRejectsAmbiguousParentTraversal(t *testing.T) {
+	t.Parallel()
+
+	sep := string(filepath.Separator)
+	root := filepath.VolumeName(t.TempDir()) + sep
+	falseReadback := workspaceThreadReply(t, "wrong-directory", root, false, []string{})
+	c, server := setupMockClient(t, types.NewCodexOptions().WithSandbox(types.SandboxWorkspaceWrite), func(req jsonrpc.Request) jsonrpc.Response {
+		return jsonrpc.Response{ID: req.ID, Result: falseReadback}
+	})
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+
+	// On Unix /bin can be a symlink to /usr/bin. Cleaning /bin/.. to /
+	// obscures the disagreement with the directory used by native lookup.
+	opts := &types.ThreadOptions{Cwd: root + "bin" + sep + "..", AdditionalDirectories: []string{}}
+	started, startErr := c.StartThread(ctx, opts)
+	forked, fork, forkErr := c.ForkThread(ctx, "parent", opts)
+	if started != nil || forked != nil || fork != nil || startErr == nil || forkErr == nil {
+		t.Fatalf("ambiguity accepted: start=%v fork=%v errors=(%v, %v)", started, forked, startErr, forkErr)
+	}
+	assertThreadRequestMethods(t, observedThreadRequests(t, server))
 }
 
 func TestClient_RelativeWorkspaceCwdUsesAppServerLaunchDirectory(t *testing.T) {
