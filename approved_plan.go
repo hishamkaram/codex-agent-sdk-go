@@ -9,10 +9,11 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/hishamkaram/codex-agent-sdk-go/internal/runtimeprobe"
 	"github.com/hishamkaram/codex-agent-sdk-go/types"
 )
 
-const prepareApprovedPlanMethod = "thread/prepareApprovedPlan"
+const prepareApprovedPlanMethod = runtimeprobe.PrepareApprovedPlanMethod
 
 type approvedPlanState uint8
 
@@ -56,7 +57,7 @@ func (t *Thread) PrepareApprovedPlan(ctx context.Context, markdown string, opts 
 		return nil, fmt.Errorf("%s: %w", caller, err)
 	}
 	if err := t.client.requireConnectedSchema(ctx, connectedSchemaFeature{
-		method: prepareApprovedPlanMethod, name: "approved plan preparation", supported: schemaSupportsApprovedPlan,
+		method: prepareApprovedPlanMethod, name: "approved plan preparation", supported: runtimeprobe.SupportsApprovedPlan,
 	}); err != nil {
 		return nil, fmt.Errorf("%s: %w", caller, err)
 	}

@@ -2,12 +2,10 @@ package codex
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"path/filepath"
-	"slices"
 
+	"github.com/hishamkaram/codex-agent-sdk-go/internal/runtimeprobe"
 	"github.com/hishamkaram/codex-agent-sdk-go/internal/transport"
 	"github.com/hishamkaram/codex-agent-sdk-go/types"
 )
@@ -39,9 +37,7 @@ func (c *Client) requireTurnProgram(ctx context.Context, program types.CyberAcce
 
 	return c.requireConnectedSchema(ctx, connectedSchemaFeature{
 		method: "turn/start", name: "cyberAccessProgram",
-		supported: func(root string) (bool, error) {
-			return schemaSupportsTurnProgram(filepath.Join(root, "v2", "TurnStartParams.json"))
-		},
+		supported: runtimeprobe.SupportsTurnProgram,
 	})
 }
 
@@ -103,7 +99,7 @@ func (r *connectedRuntime) requireSchema(ctx context.Context, feature connectedS
 		return fmt.Errorf("%s: verify Codex runtime executable: %w", feature.method, errors.Join(ErrRuntimeControlsUnsupported, err))
 	}
 	defer release()
-	outDir, cleanup, err := generateAppServerSchema(ctx, cli, feature.method, true)
+	outDir, cleanup, err := runtimeprobe.GenerateSchema(ctx, cli, feature.method, true, ErrRuntimeControlsUnsupported)
 	if err != nil {
 		return fmt.Errorf("%s: check %s support: %w", feature.method, feature.name, err)
 	}
@@ -117,45 +113,4 @@ func (r *connectedRuntime) requireSchema(ctx context.Context, feature connectedS
 	}
 	r.proved[feature.name] = struct{}{}
 	return nil
-}
-
-func schemaSupportsTurnProgram(path string) (bool, error) {
-	var schema struct {
-		runtimeObjectSchema
-		Definitions map[string]runtimePropertySchema `json:"definitions"`
-	}
-	found, err := readRuntimeSchema(path, &schema)
-	if err != nil || !found {
-		return false, err
-	}
-	raw, ok := schema.Properties["cyberAccessProgram"]
-	if !ok || !schemaTypesEqual(schema.Type, "object") || slices.Contains(schema.Required, "cyberAccessProgram") {
-		return false, nil
-	}
-	var property struct {
-		AnyOf []runtimePropertySchema `json:"anyOf"`
-	}
-	if decodeErr := json.Unmarshal(raw, &property); decodeErr != nil {
-		return false, decodeErr
-	}
-	enum := schema.Definitions["CyberAccessProgram"]
-	supported := schemaTypesEqual(enum.Type, "string") &&
-		equalStringSet(enum.Enum, []string{
-			string(types.CyberAccessProgramStandard),
-			string(types.CyberAccessProgramDaybreakBlue),
-			string(types.CyberAccessProgramDaybreakRed),
-		}) && hasTurnProgramReference(property.AnyOf)
-	return supported, nil
-}
-
-func hasTurnProgramReference(variants []runtimePropertySchema) bool {
-	if len(variants) != 2 {
-		return false
-	}
-	first, second := variants[0], variants[1]
-	if schemaTypesEqual(first.Type, "null") {
-		first, second = second, first
-	}
-	return first.Ref == "#/definitions/CyberAccessProgram" && len(first.Type) == 0 && len(first.Enum) == 0 &&
-		second.Ref == "" && len(second.Enum) == 0 && schemaTypesEqual(second.Type, "null")
 }

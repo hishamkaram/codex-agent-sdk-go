@@ -14,29 +14,6 @@ import (
 	"github.com/hishamkaram/codex-agent-sdk-go/types"
 )
 
-func TestParseRuntimeControls(t *testing.T) {
-	t.Parallel()
-	help := `
-  -s, --sandbox <SANDBOX_MODE>
-          Select sandbox
-          [possible values: read-only, workspace-write, danger-full-access]
-  -a, --ask-for-approval <APPROVAL_POLICY>
-          Configure approvals
-          Possible values:
-          - untrusted: safe commands only
-          - on-request: model decides
-          - never: never ask
-  -h, --help
-`
-	approvals, sandboxes := parseRuntimeControls(help)
-	if want := []string{"untrusted", "on-request", "never"}; !reflect.DeepEqual(approvals, want) {
-		t.Fatalf("approvals = %v, want %v", approvals, want)
-	}
-	if want := []string{"read-only", "workspace-write", "danger-full-access"}; !reflect.DeepEqual(sandboxes, want) {
-		t.Fatalf("sandboxes = %v, want %v", sandboxes, want)
-	}
-}
-
 func TestDiscoverRuntimeControlsHonorsCallerContext(t *testing.T) {
 	t.Parallel()
 
@@ -98,25 +75,6 @@ fi
 	}
 	if controls.CLIVersion != "9.1.0" {
 		t.Fatalf("CLI version = %q, want 9.1.0", controls.CLIVersion)
-	}
-}
-
-func TestRequireExperimentalSchemaCommandAllowsShortLivedInheritedOutputPipe(t *testing.T) {
-	t.Parallel()
-
-	script := filepath.Join(t.TempDir(), "codex")
-	contents := `#!/bin/sh
-if [ "$1" = "app-server" ] && [ "$2" = "generate-json-schema" ] && [ "$3" = "--help" ]; then
-  sleep 0.25 &
-  printf '%s\n' 'Usage: codex app-server generate-json-schema' '  --experimental' '  --out <DIR>'
-  exit 0
-fi
-exit 99
-`
-	writeFakeRuntimeControlsCLI(t, script, contents)
-
-	if err := requireExperimentalSchemaCommand(context.Background(), script, nil); err != nil {
-		t.Fatalf("requireExperimentalSchemaCommand() error = %v", err)
 	}
 }
 
@@ -408,22 +366,6 @@ fi
 	}
 }
 
-func TestRuntimeControlsApplyManagedRequirements(t *testing.T) {
-	t.Parallel()
-	requirements := &types.ConfigRequirements{
-		AllowedApprovalPolicies: []types.ApprovalPolicyRequirement{
-			types.NewApprovalPolicyRequirement("on-request"),
-		},
-		AllowedSandboxModes: []string{"read-only"},
-	}
-	if got := filterApprovalRequirements([]string{"untrusted", "on-request", "never"}, requirements); !reflect.DeepEqual(got, []string{"on-request"}) {
-		t.Fatalf("approval requirements = %v", got)
-	}
-	if got := filterStringRequirements([]string{"read-only", "workspace-write"}, requirements.AllowedSandboxModes); !reflect.DeepEqual(got, []string{"read-only"}) {
-		t.Fatalf("sandbox requirements = %v", got)
-	}
-}
-
 func TestApprovalPolicyRequirementDecodesGranularObject(t *testing.T) {
 	t.Parallel()
 	var got types.ConfigRequirementsReadResult
@@ -451,23 +393,6 @@ func TestApprovalPolicyRequirementDecodesGranularObject(t *testing.T) {
 	}
 	if !strings.Contains(string(roundTrip), `"skill_approval":true`) {
 		t.Fatalf("Marshal() lost granular settings: %s", roundTrip)
-	}
-}
-
-func TestRuntimeControlsRejectIncompatibleManagedGranularSettings(t *testing.T) {
-	t.Parallel()
-	requirements := &types.ConfigRequirements{
-		AllowedApprovalPolicies: []types.ApprovalPolicyRequirement{{
-			ProviderValue: string(types.ApprovalGranular),
-			Granular: granularSettings(types.GranularApprovalSettings{
-				Rules:           true,
-				MCPElicitations: true,
-			}),
-		}},
-	}
-	got := filterApprovalRequirements([]string{string(types.ApprovalGranular)}, requirements)
-	if len(got) != 0 {
-		t.Fatalf("approval requirements = %v, want incompatible granular policy removed", got)
 	}
 }
 
