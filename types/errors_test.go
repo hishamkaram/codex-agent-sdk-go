@@ -150,3 +150,78 @@ func TestV040Errors_NilSafe(t *testing.T) {
 		t.Errorf("nil AGENTSMDExistsError.Error() = %q", got)
 	}
 }
+
+func TestTypedErrorMessages(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"parsed envelope", NewMessageParseError("missing item type", "{}"), `message parse: missing item type (raw="{}")`},
+		{"approval without reason", NewApprovalDeniedError("item/fileChange/requestApproval", ""), "approval denied: item/fileChange/requestApproval"},
+		{"approval with reason", NewApprovalDeniedError("item/fileChange/requestApproval", "outside workspace"), "approval denied for item/fileChange/requestApproval: outside workspace"},
+		{"legacy policy", NewUnsupportedApprovalPolicyError(ApprovalOnFailure, "0.171.0"), `approval policy "on-failure" is not supported by codex CLI 0.171.0`},
+		{"history code fallback", NewThreadHistoryError(ThreadHistoryMalformed, "", "", nil), "malformed_history"},
+		{"history cause", NewThreadHistoryError(ThreadHistoryNotFound, "thread-1", "no saved thread", errors.New("missing")), "no saved thread (thread_id=thread-1): missing"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := tc.err.Error(); got != tc.want {
+				t.Fatalf("Error() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestThreadHistoryClassifiersUseCodeAndPreserveCause(t *testing.T) {
+	t.Parallel()
+	cause := errors.New("missing")
+	found := fmt.Errorf("history lookup: %w", NewThreadHistoryError(ThreadHistoryNotFound, "thread-1", "", cause))
+	if !IsThreadHistoryError(found) || !IsThreadNotFoundError(found) || IsInvalidThreadIDError(found) || !errors.Is(found, cause) {
+		t.Fatalf("not-found error lost type, code, or cause: %v", found)
+	}
+	invalid := NewThreadHistoryError(ThreadHistoryInvalidThreadID, "", "", nil)
+	if !IsThreadHistoryError(invalid) || IsThreadNotFoundError(invalid) || !IsInvalidThreadIDError(invalid) {
+		t.Fatalf("invalid error misclassified: %v", invalid)
+	}
+}
+
+func TestThreadHistoryClassifiersAcceptTypedNil(t *testing.T) {
+	t.Parallel()
+	var missing *ThreadHistoryError
+	err := fmt.Errorf("lookup: %w", missing)
+	for _, tc := range []struct {
+		name  string
+		check func(error) bool
+	}{
+		{"invalid thread", IsInvalidThreadIDError},
+		{"not found", IsThreadNotFoundError},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if tc.check(err) {
+				t.Fatalf("nil history error matched %s", tc.name)
+			}
+		})
+	}
+}
+
+func TestErrorChainsAcceptTypedNilCauses(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{"CLI connection", (*CLIConnectionError)(nil)},
+		{"JSON decode", (*JSONDecodeError)(nil)},
+		{"thread history", (*ThreadHistoryError)(nil)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if errors.Is(fmt.Errorf("operation: %w", tc.err), ErrThreadClosed) {
+				t.Fatalf("nil %s error matched unrelated cause", tc.name)
+			}
+		})
+	}
+}

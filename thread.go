@@ -222,7 +222,7 @@ func (t *Thread) Rollback(ctx context.Context, numTurns int) error {
 		return fmt.Errorf("codex.Thread.Rollback: numTurns must be >= 1, got %d", numTurns)
 	}
 	if t.isClosed() {
-		return fmt.Errorf("codex.Thread.Rollback: thread closed")
+		return fmt.Errorf("codex.Thread.Rollback: %w", types.ErrThreadClosed)
 	}
 	_, err := t.client.sendRaw(ctx, "Thread.Rollback", "thread/rollback", map[string]any{
 		"threadId": t.id,
@@ -243,7 +243,7 @@ func (t *Thread) SetName(ctx context.Context, name string) error {
 		return fmt.Errorf("codex.Thread.SetName: name must not be empty")
 	}
 	if t.isClosed() {
-		return fmt.Errorf("codex.Thread.SetName: thread closed")
+		return fmt.Errorf("codex.Thread.SetName: %w", types.ErrThreadClosed)
 	}
 	_, err := t.client.sendRaw(ctx, "Thread.SetName", "thread/name/set", map[string]any{
 		"threadId": t.id,
@@ -261,7 +261,7 @@ func (t *Thread) SetName(ctx context.Context, name string) error {
 // *types.FeatureNotEnabledError.
 func (t *Thread) CleanBackgroundTerminals(ctx context.Context) error {
 	if t.isClosed() {
-		return fmt.Errorf("codex.Thread.CleanBackgroundTerminals: thread closed")
+		return fmt.Errorf("codex.Thread.CleanBackgroundTerminals: %w", types.ErrThreadClosed)
 	}
 	err := t.client.CleanBackgroundTerminals(ctx, t.id)
 	if err != nil && types.IsFeatureNotEnabledError(err) {
@@ -271,4 +271,4 @@ func (t *Thread) CleanBackgroundTerminals(ctx context.Context) error {
 	return err
 }
 
-func (t *Thread) isClosed() bool { return t.record != nil && t.record.Closed() }
+func (t *Thread) isClosed() bool { return t.record == nil || t.record.Closed() }

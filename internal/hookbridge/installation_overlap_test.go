@@ -3,6 +3,7 @@ package hookbridge
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -239,4 +240,46 @@ func TestUserHomeInstallationsRejectOtherProcess(t *testing.T) {
 	checkHookConfig(t, path, installed)
 	installation.Close()
 	checkHookConfig(t, path, nil)
+}
+
+func TestUserHomeInstallationRollsBackAfterFailedBackupPublication(t *testing.T) {
+	home := t.TempDir()
+	setHookTestHome(t, home)
+	codexDir := filepath.Join(home, ".codex")
+	hooksPath := filepath.Join(codexDir, "hooks.json")
+	backupDir := filepath.Join(codexDir, fmt.Sprintf("hooks.json.sdk-backup-%d", os.Getpid()))
+	if err := os.MkdirAll(backupDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	original := []byte("{\"original\":true}\n")
+	if err := os.WriteFile(hooksPath, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var failed, retry Installation
+	t.Cleanup(failed.Close)
+	t.Cleanup(retry.Close)
+	cfg := InstallationConfig{
+		ShimPath: writeTestShim(t),
+		Handler:  types.DefaultAllowHookHandler,
+		Mode:     types.HookConfigModeUserHome,
+	}
+	env, err := failed.Setup(t.Context(), cfg)
+	if env != nil || err == nil || !strings.Contains(err.Error(), "write hooks.json backup") {
+		t.Fatalf("setup with blocked backup path = %v, %v, want backup error", env, err)
+	}
+	checkHookConfig(t, hooksPath, original)
+	temps, err := filepath.Glob(filepath.Join(codexDir, ".sdk-hook-backup-*"))
+	if err != nil || len(temps) != 0 {
+		t.Fatalf("backup temp files = %v, %v, want none", temps, err)
+	}
+
+	if err := os.Remove(backupDir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := retry.Setup(t.Context(), cfg); err != nil {
+		t.Fatalf("setup with another installation after failure: %v", err)
+	}
+	retry.Close()
+	checkHookConfig(t, hooksPath, original)
 }

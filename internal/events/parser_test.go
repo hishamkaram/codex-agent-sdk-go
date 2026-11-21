@@ -306,9 +306,13 @@ func TestParseEvent_ContextCompactedLegacy(t *testing.T) {
 		Method: "compaction_event",
 		Params: json.RawMessage(`{"threadId":"T","turnId":"U"}`),
 	}
-	ev, _ := ParseEvent(n)
-	if _, ok := ev.(*types.ContextCompacted); !ok {
-		t.Fatalf("got %T, want *types.ContextCompacted", ev)
+	ev, err := ParseEvent(n)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compacted, ok := ev.(*types.ContextCompacted)
+	if !ok || compacted.EventMethod() != "thread/compacted" || compacted.ThreadID != "T" || compacted.TurnID != "U" {
+		t.Fatalf("legacy compaction = %#v, want canonical thread/compacted for T/U", ev)
 	}
 }
 

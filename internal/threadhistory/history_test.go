@@ -114,3 +114,88 @@ func TestReadThreadProjectsWindowAcrossTurnsWithIndependentRaw(t *testing.T) {
 		t.Fatalf("message raw bytes changed history item: %q", rawItem)
 	}
 }
+
+func TestListThreadsPagePreservesCwdWireShapeAndFilters(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name    string
+		cwd     []string
+		wantCwd string
+	}{
+		{name: "one path", cwd: []string{"/repo"}, wantCwd: `"/repo"`},
+		{name: "two paths", cwd: []string{"/repo", "/other"}, wantCwd: `["/repo","/other"]`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			archived := false
+			opts := &types.ThreadListOptions{
+				Limit: 2, Cursor: "cursor", Archived: &archived, Cwd: tc.cwd, SearchTerm: "prior work",
+				SortKey: "updated_at", SortDirection: "desc", ModelProviders: []string{"openai"},
+				SourceKinds: []string{"cli"}, UseStateDBOnly: true,
+			}
+			send := func(_ context.Context, method string, params any) (jsonrpc.Response, error) {
+				wire, err := json.Marshal(params)
+				if err != nil {
+					t.Fatal(err)
+				}
+				want := `{"archived":false,"cursor":"cursor","cwd":` + tc.wantCwd +
+					`,"limit":2,"modelProviders":["openai"],"searchTerm":"prior work","sortDirection":"desc",` +
+					`"sortKey":"updated_at","sourceKinds":["cli"],"useStateDbOnly":true}`
+				if method != "thread/list" || string(wire) != want {
+					t.Fatalf("request = %q %s, want thread/list %s", method, wire, want)
+				}
+				return jsonrpc.Response{Result: json.RawMessage(`{"data":[],"backwardsCursor":"back"}`)}, nil
+			}
+			page, err := ListThreadsPage(t.Context(), send, opts)
+			if err != nil || page == nil || page.BackwardsCursor != "back" {
+				t.Fatalf("page = %+v, err = %v, want provider backwards cursor", page, err)
+			}
+		})
+	}
+}
+
+func TestReadThreadReportsMalformedProviderPayload(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name     string
+		raw      string
+		wantBody string
+	}{
+		{name: "outer response", raw: `[]`, wantBody: `[]`},
+		{name: "missing thread", raw: `{}`},
+		{name: "thread", raw: `{"thread":[]}`, wantBody: `[]`},
+		{name: "turn", raw: `{"thread":{"id":"test-id","turns":[[]]}}`, wantBody: `[]`},
+		{
+			name:     "item",
+			raw:      `{"thread":{"id":"test-id","turns":[{"id":"turn-id","items":[{"type":1}]}]}}`,
+			wantBody: `{"type":1}`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			send := func(context.Context, string, any) (jsonrpc.Response, error) {
+				return jsonrpc.Response{Result: json.RawMessage(tc.raw)}, nil
+			}
+			read, err := ReadThread(t.Context(), send, "test-id", nil)
+			var history *types.ThreadHistoryError
+			if read != nil || !errors.As(err, &history) || history.Code != types.ThreadHistoryMalformed || history.ThreadID != "test-id" {
+				t.Fatalf("read = %+v, err = %#v, want malformed history for test-id", read, err)
+			}
+			if tc.wantBody == "" {
+				if history.Unwrap() != nil {
+					t.Fatalf("missing thread cause = %#v, want nil", history.Unwrap())
+				}
+				return
+			}
+			var decode *types.JSONDecodeError
+			var typeMismatch *json.UnmarshalTypeError
+			if !errors.As(err, &decode) || decode.Raw != tc.wantBody || !errors.As(err, &typeMismatch) {
+				t.Fatalf("malformed history cause = %#v, want type error for %s", history.Unwrap(), tc.wantBody)
+			}
+		})
+	}
+}

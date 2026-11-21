@@ -888,3 +888,40 @@ func TestTerminateBackgroundTerminalWrapsNegativeAcknowledgement(t *testing.T) {
 		t.Fatalf("error lacks operation context: %v", err)
 	}
 }
+
+func TestClientSetExperimentalFeaturesSendsOneBatch(t *testing.T) {
+	t.Parallel()
+
+	client, peer := setupMockClient(t, types.NewCodexOptions(), nil)
+	if err := client.SetExperimentalFeatures(t.Context(), map[string]bool{"shell_tool": true, "tool_search": false}); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.SetExperimentalFeatures(t.Context(), nil); err != nil {
+		t.Fatal(err)
+	}
+	requests := observedThreadRequests(t, peer)
+	assertThreadRequestMethods(t, requests, "experimentalFeature/enablement/set", "experimentalFeature/enablement/set")
+	assertThreadConfigJSON(t, requests[0].Params, `{"enablement":{"shell_tool":true,"tool_search":false}}`)
+	assertThreadConfigJSON(t, requests[1].Params, `{"enablement":{}}`)
+}
+
+func TestClientCleanBackgroundTerminalsPreservesProviderRejection(t *testing.T) {
+	t.Parallel()
+
+	client, peer := setupMockClient(t, types.NewCodexOptions(), func(req jsonrpc.Request) jsonrpc.Response {
+		return jsonrpc.Response{ID: req.ID, Error: &jsonrpc.RPCError{
+			Code: -32600, Message: "thread/backgroundTerminals/clean requires experimentalApi capability",
+		}}
+	})
+	if err := client.CleanBackgroundTerminals(t.Context(), " "); err == nil {
+		t.Fatal("expected blank thread ID rejection")
+	}
+	err := client.CleanBackgroundTerminals(t.Context(), "thread-1")
+	var feature *types.FeatureNotEnabledError
+	if !errors.As(err, &feature) || feature.Feature != "experimentalApi" || feature.Method != "thread/backgroundTerminals/clean" {
+		t.Errorf("clean failed with %v, want experimentalApi capability error", err)
+	}
+	requests := observedThreadRequests(t, peer)
+	assertThreadRequestMethods(t, requests, "thread/backgroundTerminals/clean")
+	assertThreadConfigJSON(t, requests[0].Params, `{"threadId":"thread-1"}`)
+}

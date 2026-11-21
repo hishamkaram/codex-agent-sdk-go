@@ -925,10 +925,7 @@ func assertThreadConfigJSON(t *testing.T, got any, want string) {
 
 func TestThreadCommands_InputValidation(t *testing.T) {
 	t.Parallel()
-	// Use a closed Thread so the methods short-circuit without
-	// reaching the demux. The closed-check fires after the
-	// input-validation-check for every method, so to test the input
-	// validation we use a fresh (uninitialized) Thread.
+	// Input validation precedes closed-handle rejection on these commands.
 	tests := []struct {
 		name    string
 		call    func(*Thread) error
@@ -959,8 +956,7 @@ func TestThreadCommands_InputValidation(t *testing.T) {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			th := newThread(nil, "test")
-			err := tt.call(th)
+			err := tt.call(&Thread{})
 			if err == nil {
 				t.Fatal("expected error")
 			}
@@ -977,11 +973,8 @@ func TestThread_Steer_NoActiveTurn(t *testing.T) {
 	// return "no active turn" — same precondition as Interrupt.
 	th := newThread(nil, "test")
 	err := th.Steer(context.Background(), "extend the plan")
-	if err == nil {
-		t.Fatal("expected error")
-	}
-	if !strings.Contains(err.Error(), "no active turn") {
-		t.Errorf("err = %q, want 'no active turn'", err)
+	if !errors.Is(err, ErrNoActiveTurn) {
+		t.Fatalf("err = %v, want ErrNoActiveTurn", err)
 	}
 }
 
@@ -1054,46 +1047,81 @@ func TestThread_ActiveTurnIDIgnoresOlderTerminalTurnEvent(t *testing.T) {
 	}
 }
 
-func TestThread_Mutating_ClosedThread(t *testing.T) {
+func TestThreadRejectsClosedAndUninitializedHandles(t *testing.T) {
 	t.Parallel()
+
+	client, peer := setupMockClient(t, types.NewCodexOptions(), func(req jsonrpc.Request) jsonrpc.Response {
+		switch req.Method {
+		case "thread/start":
+			return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{"thread":{"id":"retired"}}`)}
+		default:
+			return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{}`)}
+		}
+	})
+	ctx := t.Context()
+	retired, err := client.StartThread(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retired.record.Observe(&types.TurnStarted{ThreadID: retired.ID(), TurnID: "active"})
+	// Close the record while leaving the wire available to catch any send.
+	retired.record.Close()
+
+	// Both initialized and rejected handles carry the same public error.
+	program := types.CyberAccessProgramStandard
 	tests := []struct {
 		name string
 		call func(*Thread) error
 	}{
-		{"Rollback", func(th *Thread) error { return th.Rollback(context.Background(), 1) }},
-		{"SetName", func(th *Thread) error { return th.SetName(context.Background(), "new") }},
-		{"Steer", func(th *Thread) error { return th.Steer(context.Background(), "x") }},
-		{"CleanBackgroundTerminals", func(th *Thread) error { return th.CleanBackgroundTerminals(context.Background()) }},
+		{"Rollback", func(th *Thread) error { return th.Rollback(ctx, 1) }},
+		{"SetName", func(th *Thread) error { return th.SetName(ctx, "new") }},
+		{"Steer", func(th *Thread) error { return th.Steer(ctx, "continue") }},
+		{"Interrupt", func(th *Thread) error { return th.Interrupt(ctx) }},
+		{"CleanBackgroundTerminals", func(th *Thread) error { return th.CleanBackgroundTerminals(ctx) }},
+		{"RunStreamedWithProgram", func(th *Thread) error {
+			_, err := th.RunStreamed(ctx, "prompt", &types.RunOptions{CyberAccessProgram: &program})
+			return err
+		}},
 		{"Compact", func(th *Thread) error {
-			_, err := th.Compact(context.Background(), nil)
+			_, err := th.Compact(ctx, nil)
 			return err
 		}},
 		{"Summarize", func(th *Thread) error {
-			_, err := th.Summarize(context.Background())
+			_, err := th.Summarize(ctx)
 			return err
 		}},
 		{"StartReview", func(th *Thread) error {
-			_, err := th.StartReview(context.Background(), reviewOptsForTest())
+			_, err := th.StartReview(ctx, reviewOptsForTest())
+			return err
+		}},
+		{"StartDetachedReview", func(th *Thread) error {
+			opts := reviewOptsForTest()
+			opts.Delivery = types.ReviewDetached
+			_, err := th.StartReview(ctx, opts)
 			return err
 		}},
 		{"StartReviewStreamed", func(th *Thread) error {
-			_, err := th.StartReviewStreamed(context.Background(), reviewOptsForTest())
+			_, err := th.StartReviewStreamed(ctx, reviewOptsForTest())
+			return err
+		}},
+		{"GitDiff", func(th *Thread) error {
+			_, err := th.GitDiff(ctx, nil)
 			return err
 		}},
 	}
 	for _, tt := range tests {
-		tt := tt
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			th := newThread(nil, "test")
-			th.record.Observe(&types.TurnStarted{ThreadID: th.ID(), TurnID: "turn-1"}) // bypass Steer's "no active turn" check
-			th.record.Close()
-			err := tt.call(th)
-			if err == nil {
-				t.Fatal("expected error")
+		t.Run("closed/"+tt.name, func(t *testing.T) {
+			if err := tt.call(retired); !errors.Is(err, types.ErrThreadClosed) {
+				t.Errorf("closed thread error = %v, want ErrThreadClosed", err)
 			}
-			if !strings.Contains(err.Error(), "thread closed") {
-				t.Errorf("err = %q, want 'thread closed'", err)
+		})
+	}
+	assertThreadRequestMethods(t, observedThreadRequests(t, peer), "thread/start")
+	for _, tt := range tests {
+		t.Run("zero/"+tt.name, func(t *testing.T) {
+			var zero Thread
+			if err := tt.call(&zero); !errors.Is(err, types.ErrThreadClosed) {
+				t.Errorf("zero thread error = %v, want ErrThreadClosed", err)
 			}
 		})
 	}

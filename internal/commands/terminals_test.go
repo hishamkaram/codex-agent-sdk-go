@@ -91,3 +91,41 @@ func TestListBackgroundTerminalsRejectsInvalidContinuationRows(t *testing.T) {
 		})
 	}
 }
+
+func TestCleanBackgroundTerminalsSendsExactThreadAndPreservesResult(t *testing.T) {
+	t.Parallel()
+	rejected := errors.New("terminal cleanup rejected")
+	for _, tc := range []struct {
+		name       string
+		threadID   string
+		replyError error
+	}{
+		{"blank thread", "  ", nil},
+		{"successful cleanup", "thread:remote/1", nil},
+		{"provider rejection", "thread:remote/1", rejected},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			calls := 0
+			send := func(_ context.Context, caller, method string, params any) (json.RawMessage, error) {
+				calls++
+				wire, err := json.Marshal(params)
+				if err != nil || caller != "CleanBackgroundTerminals" || method != "thread/backgroundTerminals/clean" ||
+					string(wire) != `{"threadId":"thread:remote/1"}` {
+					t.Fatalf("request = %q / %q / %s, err = %v", caller, method, wire, err)
+				}
+				return json.RawMessage(`{}`), tc.replyError
+			}
+			err := CleanBackgroundTerminals(t.Context(), send, tc.threadID)
+			if tc.threadID == "  " {
+				if err == nil || !strings.Contains(err.Error(), "threadID is required") || calls != 0 {
+					t.Fatalf("blank thread: calls = %d, err = %v", calls, err)
+				}
+				return
+			}
+			if calls != 1 || !errors.Is(err, tc.replyError) {
+				t.Fatalf("calls = %d, err = %v; want one call and %v", calls, err, tc.replyError)
+			}
+		})
+	}
+}

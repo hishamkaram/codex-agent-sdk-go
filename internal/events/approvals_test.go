@@ -395,3 +395,99 @@ func checkApprovalDecision(t *testing.T, req types.ApprovalRequest, decision typ
 		t.Fatalf("got %s, want %s", b, want)
 	}
 }
+
+func TestEncodePermissionGrantsSpecialAndGlobSelections(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		access types.FileSystemPermissionAccess
+		path   types.FileSystemPermissionPath
+		want   string
+	}{
+		{
+			name:   "project subpath",
+			access: types.FileSystemPermissionRead,
+			path: types.FileSystemPermissionPath{
+				Type: types.FileSystemPathSpecial, Value: &types.FileSystemPermissionSpecial{Kind: "project_roots", Subpath: "docs"},
+			},
+			want: `{"path":{"type":"special","value":{"kind":"project_roots","subpath":"docs"}},"access":"read"}`,
+		},
+		{
+			name:   "temporary root",
+			access: types.FileSystemPermissionRead,
+			path: types.FileSystemPermissionPath{
+				Type: types.FileSystemPathSpecial, Value: &types.FileSystemPermissionSpecial{Kind: "tmpdir"},
+			},
+			want: `{"path":{"type":"special","value":{"kind":"tmpdir"}},"access":"read"}`,
+		},
+		{
+			name:   "provider-defined root",
+			access: types.FileSystemPermissionRead,
+			path: types.FileSystemPermissionPath{
+				Type: types.FileSystemPathSpecial, Value: &types.FileSystemPermissionSpecial{Kind: "unknown", Path: "scratch", Subpath: "docs"},
+			},
+			want: `{"path":{"type":"special","value":{"kind":"unknown","path":"scratch","subpath":"docs"}},"access":"read"}`,
+		},
+		{
+			name:   "root with illegal subpath",
+			access: types.FileSystemPermissionRead,
+			path: types.FileSystemPermissionPath{
+				Type: types.FileSystemPathSpecial, Value: &types.FileSystemPermissionSpecial{Kind: "minimal", Subpath: "docs"},
+			},
+		},
+		{
+			name:   "project subpath with NUL",
+			access: types.FileSystemPermissionRead,
+			path: types.FileSystemPermissionPath{
+				Type: types.FileSystemPathSpecial, Value: &types.FileSystemPermissionSpecial{Kind: "project_roots", Subpath: "docs\x00"},
+			},
+		},
+		{
+			name:   "unknown root without a name",
+			access: types.FileSystemPermissionRead,
+			path: types.FileSystemPermissionPath{
+				Type: types.FileSystemPathSpecial, Value: &types.FileSystemPermissionSpecial{Kind: "unknown"},
+			},
+		},
+		{
+			name:   "unsupported special kind",
+			access: types.FileSystemPermissionRead,
+			path: types.FileSystemPermissionPath{
+				Type: types.FileSystemPathSpecial, Value: &types.FileSystemPermissionSpecial{Kind: "future_root"},
+			},
+		},
+		{
+			name:   "glob denial",
+			access: types.FileSystemPermissionDeny,
+			path:   types.FileSystemPermissionPath{Type: types.FileSystemPathGlob, Pattern: "**/private"},
+			want:   `{"path":{"type":"glob_pattern","pattern":"**/private"},"access":"deny"}`,
+		},
+		{
+			name:   "glob read grant",
+			access: types.FileSystemPermissionRead,
+			path:   types.FileSystemPermissionPath{Type: types.FileSystemPathGlob, Pattern: "**/private"},
+		},
+		{
+			name:   "invalid access",
+			access: "future",
+			path:   types.FileSystemPermissionPath{Type: types.FileSystemPathLiteral, Path: "/work/docs"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			decision := types.PermissionsApprovalResponse{
+				Scope: types.PermissionGrantTurn,
+				Permissions: types.GrantedPermissionProfile{FileSystem: &types.GrantedFileSystemPermissions{
+					Entries: []types.FileSystemPermissionEntry{{Access: tt.access, Path: tt.path}},
+				}},
+			}
+			if tt.want == "" {
+				checkApprovalDecision(t, &types.PermissionsApprovalRequest{}, decision, `{"permissions":{},"scope":"turn"}`, true)
+				return
+			}
+			want := `{"permissions":{"fileSystem":{"entries":[` + tt.want + `]}},"scope":"turn"}`
+			checkApprovalDecision(t, &types.PermissionsApprovalRequest{}, decision, want, false)
+		})
+	}
+}
