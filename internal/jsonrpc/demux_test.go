@@ -358,6 +358,8 @@ func TestDemux_ClassifiesFrames(t *testing.T) {
 func TestDemux_InvalidIDSignalsGap(t *testing.T) {
 	t.Parallel()
 	for _, wire := range []string{
+		`{"id":null,"method":"request"}`,
+		`{"id":null,"error":{"code":-32600,"message":"invalid request"}}`,
 		`{"id":9223372036854775808,"method":"request"}`,
 		`{"id":1e2,"method":"request"}`,
 		`{"id":"1","result":{}}`,

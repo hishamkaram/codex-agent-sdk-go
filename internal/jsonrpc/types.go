@@ -89,7 +89,7 @@ func decodeFrame(line []byte) (rawFrame, error) {
 		return rawFrame{}, err
 	}
 	if string(frame.ID) == "null" {
-		frame.ID = nil
+		return rawFrame{}, errors.New("JSON-RPC ID cannot be null")
 	}
 	if frame.ID == nil {
 		return frame, nil
