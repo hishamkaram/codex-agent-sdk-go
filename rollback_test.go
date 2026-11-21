@@ -237,3 +237,72 @@ func TestThreadRollbackRejectsStaleBoundaryAfterExternalTurn(t *testing.T) {
 	}
 	assertThreadRequestMethods(t, observedThreadRequests(t, peer), "thread/start", "thread/resume", "thread/rollback", "thread/turns/list")
 }
+
+func TestThreadRollbackFencesPotentiallyCommittedRevert(t *testing.T) {
+	t.Parallel()
+	for _, scenario := range []struct {
+		name   string
+		reply  jsonrpc.RPCError
+		fenced bool
+	}{
+		{
+			name:  "unsupported history rejected",
+			reply: jsonrpc.RPCError{Code: -32600, Message: "thread/revert only supports paginated threads"},
+		},
+		{
+			name:   "runtime reload failed after history mutation",
+			reply:  jsonrpc.RPCError{Code: -32603, Message: "error reloading thread after revert: fixture"},
+			fenced: true,
+		},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			t.Parallel()
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			client, peer := setupMockClient(t, types.NewCodexOptions(), func(req jsonrpc.Request) jsonrpc.Response {
+				result := `{}`
+				switch req.Method {
+				case "thread/start":
+					result = `{"thread":{"id":"source"}}`
+				case "thread/rollback":
+					return jsonrpc.Response{ID: req.ID, Error: &jsonrpc.RPCError{Code: -32601, Message: "Method not found"}}
+				case "thread/turns/list":
+					result = `{"data":[{"id":"newest","status":"completed"}]}`
+				case "thread/revert":
+					return jsonrpc.Response{ID: req.ID, Error: &scenario.reply}
+				case "turn/start":
+					result = `{"turn":{"id":"next"}}`
+				}
+				return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(result)}
+			})
+			thread, err := client.StartThread(ctx, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var rpc *types.RPCError
+			rollbackErr := thread.Rollback(ctx, 1)
+			if !errors.As(rollbackErr, &rpc) || rpc.Code != scenario.reply.Code {
+				t.Fatalf("Rollback error = %v, want typed provider error %d", rollbackErr, scenario.reply.Code)
+			}
+			if errors.Is(rollbackErr, ErrThreadExecutionUnconfirmed) != scenario.fenced {
+				t.Fatalf("Rollback error = %v, want unconfirmed = %t", rollbackErr, scenario.fenced)
+			}
+			methods := []string{"thread/start", "thread/rollback", "thread/turns/list", "thread/revert"}
+			_, err = thread.RunStreamed(ctx, "run after revert response", nil)
+			if scenario.fenced {
+				if !errors.Is(err, ErrThreadExecutionUnconfirmed) {
+					t.Fatalf("RunStreamed error = %v, want unconfirmed mutation", err)
+				}
+				if retryErr := thread.Rollback(ctx, 1); !errors.Is(retryErr, ErrThreadExecutionUnconfirmed) {
+					t.Fatalf("second Rollback error = %v, want unconfirmed mutation", retryErr)
+				}
+			} else {
+				if err != nil {
+					t.Fatal(err)
+				}
+				methods = append(methods, "turn/start")
+			}
+			assertThreadRequestMethods(t, observedThreadRequests(t, peer), methods...)
+		})
+	}
+}

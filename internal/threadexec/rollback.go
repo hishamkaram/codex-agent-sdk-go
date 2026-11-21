@@ -50,7 +50,7 @@ func (e *Record) Rollback(ctx context.Context, id string, count int, wire Wire, 
 	if err != nil {
 		return err
 	}
-	if !rollbackMethodRejected(legacy.Error) {
+	if !rollbackMethodRejected("thread/rollback", legacy.Error) {
 		if legacy.Error != nil {
 			return types.NewRPCError(legacy.Error.Code, legacy.Error.Message, legacy.Error.Data)
 		}
@@ -67,7 +67,14 @@ func (e *Record) Rollback(ctx context.Context, id string, count int, wire Wire, 
 		return err
 	}
 	if reverted.Error != nil {
-		return types.NewRPCError(reverted.Error.Code, reverted.Error.Message, reverted.Error.Data)
+		// The provider mutates persisted history before reloading its thread
+		// runtime. An error from that reload does not undo the mutation.
+		rpcErr := types.NewRPCError(reverted.Error.Code, reverted.Error.Message, reverted.Error.Data)
+		uncertain = !revertDefinitelyRejected(reverted.Error)
+		if uncertain {
+			return errors.Join(rpcErr, wire.Unconfirmed(id))
+		}
+		return rpcErr
 	}
 	var result struct {
 		Thread struct {
@@ -87,8 +94,19 @@ func (e *Record) Rollback(ctx context.Context, id string, count int, wire Wire, 
 
 // The two cases are definitive pre-dispatch rejections. A broad
 // Invalid request, cancellation, or unexpected reply cannot prove that.
-func rollbackMethodRejected(err *jsonrpc.RPCError) bool {
-	const unknownVariant = "Invalid request: unknown variant `thread/rollback`"
+func rollbackMethodRejected(method string, err *jsonrpc.RPCError) bool {
+	unknownVariant := "Invalid request: unknown variant `" + method + "`"
 	return err != nil && (err.Code == -32601 || (err.Code == -32600 &&
 		(err.Message == unknownVariant || strings.HasPrefix(err.Message, unknownVariant+", expected "))))
+}
+
+func revertDefinitelyRejected(err *jsonrpc.RPCError) bool {
+	if rollbackMethodRejected("thread/revert", err) {
+		return true
+	}
+	// The runtime rejects these unsupported storage modes before shutdown
+	// or mutation. Preserve the running thread after those RPC errors.
+	return err.Code == -32600 &&
+		(err.Message == "ephemeral threads do not support thread/revert" ||
+			err.Message == "thread/revert only supports paginated threads")
 }

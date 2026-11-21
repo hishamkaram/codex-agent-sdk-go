@@ -210,7 +210,9 @@ func (c *Client) threadFromHandle(handle session.ThreadHandle) *Thread {
 // Codex runtimes that replaced thread/rollback with thread/revert require
 // paginated history. On those runtimes, numTurns counts persisted provider
 // turns and must not exceed the available history. Keep other clients from
-// changing the same provider thread while a rollback is in progress.
+// changing the same provider thread while a rollback is in progress. If
+// the mutation's outcome is unconfirmed, use a fresh connection to inspect
+// persisted history before attempting another rollback.
 func (t *Thread) Rollback(ctx context.Context, numTurns int) error {
 	const caller = "codex.Thread.Rollback"
 	if numTurns < 1 {
