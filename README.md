@@ -44,7 +44,7 @@ Codex's app-server exposes a JSON-RPC 2.0 protocol over stdio — bidirectional,
 
 - Go at or above the minimum declared by the `go` directive in [go.mod](go.mod)
 - Codex CLI installed: `npm install -g @openai/codex` (or your distro's equivalent)
-  - Recommended/tested CLI: `0.144.1` (verified 2026-07-12); older versions run with a soft warning and receive version-compatible hook flags.
+  - CLI compatibility floor: `0.144.1`. The current [wire schema baseline](docs/wire-protocol.md#references) and focused [integration checks](tests/coverage_matrix.md#codex-01710-contracts) use `0.171.0`.
   - Optional child-agent and background-terminal controls are enabled only when `DiscoverRuntimeFeatures` proves their exact methods and response shapes from the installed CLI schemas. A version string alone never enables them.
 - Auth (one of):
   - `OPENAI_API_KEY` environment variable (pay-per-token)

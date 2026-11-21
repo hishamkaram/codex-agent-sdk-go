@@ -6,9 +6,9 @@ v0.4.0 surface has a live-CLI integration test or an explicit
 `TEST-DEFERRED-vX.Y` annotation with rationale.
 
 The full command matrix was verified against **codex 0.121.0** on
-**2026-04-19**. Schema/parser compatibility for the current SDK target is
-verified against **codex 0.144.1** on **2026-07-12** via
-`make check-schema-drift` and `TestIntegrationSchema`.
+**2026-04-19**. Historical parser validation covered Codex 0.144.1 on
+**2026-07-12**. See the targeted [Codex 0.171.0 checks](#codex-01710-contracts)
+for the current pinned schema baseline.
 
 ## Legend
 
@@ -153,4 +153,27 @@ CODEX_SDK_LOGOUT_OK=1 CODEX_SDK_FEEDBACK_OK=1 \
 
 # Wire-shape probe (regenerate fixtures; opt-in)
 CODEX_SDK_PROBE=1 go test -tags=integration -count=1 -p 1 -run TestProbeV040Shapes . -timeout=180s
+```
+
+## Codex 0.171.0 contracts
+
+`make verify` checks the pinned stable v2 schema and deterministic protocol
+fixtures. `make check-schema-drift` compares a matching installed CLI with
+the vendored snapshot.
+
+| Behavior | Evidence |
+|---|---|
+| Persisted sandbox default | `TestCodex0171SandboxConfiguration` reads the typed and raw configuration before and after a write and after restart. |
+| MCP start configuration | `TestCodex0171MCPConfiguration` discovers tools from inert local stdio and HTTP servers that require a sentinel env value and synthetic HTTP headers and token. |
+| Inventory pagination | Strict peers verify opaque cursors, both pages, and atomic failure. |
+| Approved-plan handoff | `TestCodex0171ApprovedPlanHandoff` uses one benign authenticated turn on a fresh destination. |
+
+Run the isolated config and MCP checks against a directly launched native
+binary. Set `CODEX_SDK_0171_AUTH_FILE` to an existing Codex auth file only when
+running the handoff test. That test stages a private copy in its disposable
+Codex home.
+
+```bash
+CODEX_SDK_0171_CLI=/absolute/path/to/codex \
+  GOWORK=off go test -tags=integration -count=1 ./tests -run '^TestCodex0171(SandboxConfiguration|MCPConfiguration|ApprovedPlanHandoff)$' -v
 ```

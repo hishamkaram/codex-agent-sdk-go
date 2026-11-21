@@ -192,6 +192,11 @@ same thread can also resolve that fence after the dispatcher applies earlier
 wire messages. Newer activity preserves the fence. A canceled SDK operation
 still requires matching terminal evidence.
 
+Approved-plan preparation reserves the destination in that same execution
+record until the reply. Preparation has no turn ownership or usage accounting.
+An ambiguous response leaves the destination fenced and callers can choose a
+fresh thread. The connected runtime owns the per-capability schema proof.
+
 The five-second reconciliation window bounds the cleanup RPC and the next
 call's admission wait. A matching terminal event releases the reservation.
 Until then, ambiguous or unconfirmed work can cause

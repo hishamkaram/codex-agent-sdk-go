@@ -2,8 +2,6 @@ package events
 
 import (
 	"encoding/json"
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/hishamkaram/codex-agent-sdk-go/types"
@@ -779,29 +777,8 @@ func TestParseItem_ContextCompaction(t *testing.T) {
 	}
 }
 
-// TestParseItem_Switch_CoversAllSchemaVariants (T035-T) pins US3-AC4: the
-// ParseItem switch MUST dispatch every ThreadItem discriminator defined in
-// the vendored v2 schema to a concrete typed item — NEVER falling through to
-// *types.UnknownItem for any known schema variant.
-//
-// Strategy: load the schema, iterate ThreadItem.oneOf, synthesize a minimal
-// payload for each discriminator with the required stringy fields (via a
-// hardcoded per-discriminator fallback map), and assert the parser returns
-// a non-UnknownItem. Discriminators not in the fallback map are logged and
-// skipped (so a future codex release adding a new type does not fail this
-// test until the fallback map is extended).
-//
-// This test COMPILES without the new types existing but runtime-fails for
-// any discriminator that dispatches to UnknownItem — which includes the 7
-// new 0.121.0 types until US3 Pass B adds the dispatch cases.
-func TestParseItem_Switch_CoversAllSchemaVariants(t *testing.T) {
-	t.Parallel()
-
-	// Per-discriminator minimal payload. Includes any required non-type,
-	// non-id stringy/array/object fields from the schema so the outer
-	// json.Unmarshal does not choke on missing required fields. The key is
-	// the wire discriminator (as emitted by codex), the value is the
-	// minimal JSON payload.
+func schemaItemPayload(t *testing.T, discriminator string) json.RawMessage {
+	t.Helper()
 	minimalPayloads := map[string]string{
 		"agentMessage":        `{"type":"agentMessage","id":"test","text":""}`,
 		"userMessage":         `{"type":"userMessage","id":"test","content":[]}`,
@@ -809,75 +786,50 @@ func TestParseItem_Switch_CoversAllSchemaVariants(t *testing.T) {
 		"fileChange":          `{"type":"fileChange","id":"test","status":"inProgress","changes":[]}`,
 		"mcpToolCall":         `{"type":"mcpToolCall","id":"test","server":"s","tool":"t","arguments":{},"status":"inProgress"}`,
 		"webSearch":           `{"type":"webSearch","id":"test","query":"q"}`,
-		"memoryRead":          `{"type":"memoryRead","id":"test"}`,
-		"memoryWrite":         `{"type":"memoryWrite","id":"test"}`,
 		"plan":                `{"type":"plan","id":"test","text":""}`,
 		"reasoning":           `{"type":"reasoning","id":"test"}`,
-		"systemError":         `{"type":"systemError","id":"test","message":""}`,
 		"hookPrompt":          `{"type":"hookPrompt","id":"test","fragments":[]}`,
 		"dynamicToolCall":     `{"type":"dynamicToolCall","id":"test","tool":"t","arguments":{},"status":"inProgress"}`,
-		"collabAgentToolCall": `{"type":"collabAgentToolCall","id":"test","tool":"t","status":"inProgress","agentsStates":[],"senderThreadId":"s","receiverThreadIds":[]}`,
+		"collabAgentToolCall": `{"type":"collabAgentToolCall","id":"test","tool":"spawnAgent","status":"inProgress","agentsStates":{},"senderThreadId":"s","receiverThreadIds":[]}`,
+		"functionCallOutput":  `{"type":"functionCallOutput","id":"test","name":"tool","output":"done"}`,
 		"subAgentActivity":    `{"type":"subAgentActivity","id":"test","agentPath":"agents/reviewer","agentThreadId":"child","kind":"started"}`,
 		"imageView":           `{"type":"imageView","id":"test","path":"/x"}`,
-		"imageGeneration":     `{"type":"imageGeneration","id":"test","status":"completed","result":{}}`,
-		"enteredReviewMode":   `{"type":"enteredReviewMode","id":"test","review":{}}`,
-		"exitedReviewMode":    `{"type":"exitedReviewMode","id":"test","review":{}}`,
+		"sleep":               `{"type":"sleep","id":"test","durationMs":10}`,
+		"imageGeneration":     `{"type":"imageGeneration","id":"test","status":"completed"}`,
+		"enteredReviewMode":   `{"type":"enteredReviewMode","id":"test","review":""}`,
+		"exitedReviewMode":    `{"type":"exitedReviewMode","id":"test","review":""}`,
 		"contextCompaction":   `{"type":"contextCompaction","id":"test"}`,
 	}
-
-	// Load the schema and enumerate ThreadItem.oneOf discriminators.
-	schemaPath := filepath.Join("testdata", "schema", "codex_app_server_protocol.v2.schemas.json")
-	data, err := os.ReadFile(schemaPath)
-	if err != nil {
-		t.Fatalf("read schema: %v", err)
-	}
-	var doc struct {
-		Definitions map[string]json.RawMessage `json:"definitions"`
-	}
-	if err := json.Unmarshal(data, &doc); err != nil {
-		t.Fatalf("unmarshal schema: %v", err)
-	}
-	threadItemRaw, ok := doc.Definitions["ThreadItem"]
+	payload, ok := minimalPayloads[discriminator]
 	if !ok {
-		t.Fatalf("schema missing definitions.ThreadItem")
+		t.Fatalf("schema variant %q has no fixture or item policy", discriminator)
 	}
-	var threadItem struct {
-		OneOf []struct {
-			Title      string `json:"title"`
-			Properties struct {
-				Type struct {
-					Enum []string `json:"enum"`
-				} `json:"type"`
-			} `json:"properties"`
-		} `json:"oneOf"`
-	}
-	if err := json.Unmarshal(threadItemRaw, &threadItem); err != nil {
-		t.Fatalf("unmarshal ThreadItem: %v", err)
-	}
-	if len(threadItem.OneOf) == 0 {
-		t.Fatalf("ThreadItem.oneOf is empty")
-	}
+	return json.RawMessage(payload)
+}
 
-	for _, variant := range threadItem.OneOf {
-		variant := variant
-		if len(variant.Properties.Type.Enum) == 0 {
-			t.Logf("skipping %s — no type.enum in schema", variant.Title)
-			continue
-		}
-		discriminator := variant.Properties.Type.Enum[0]
-		payload, ok := minimalPayloads[discriminator]
-		if !ok {
-			t.Logf("skipping %q — no minimal payload fallback (extend minimalPayloads to cover this variant)", discriminator)
-			continue
-		}
-		t.Run(discriminator, func(t *testing.T) {
+// TestParseItem_Switch_CoversAllSchemaVariants verifies each stable schema item
+// is decoded as its own discriminator. Sleep retains its existing raw policy.
+func TestParseItem_Switch_CoversAllSchemaVariants(t *testing.T) {
+	t.Parallel()
+
+	for _, variant := range threadItemVariants(t, readSchemaDoc(t, vendoredV2Schema)) {
+		t.Run(variant.Discriminator, func(t *testing.T) {
 			t.Parallel()
-			it, err := ParseItem(json.RawMessage(payload))
+			payload := schemaItemPayload(t, variant.Discriminator)
+			item, err := ParseItem(payload)
 			if err != nil {
-				t.Fatalf("ParseItem(%q) returned error: %v", discriminator, err)
+				t.Fatalf("ParseItem: %v", err)
 			}
-			if _, isUnknown := it.(*types.UnknownItem); isUnknown {
-				t.Errorf("variant %q dispatched to UnknownItem; expected concrete type", discriminator)
+			if item.ItemType() != variant.Discriminator {
+				t.Fatalf("ItemType() = %q, want %q", item.ItemType(), variant.Discriminator)
+			}
+			raw, isRaw := item.(*types.UnknownItem)
+			if variant.Discriminator == "sleep" {
+				if !isRaw || string(raw.Raw) != string(payload) {
+					t.Fatalf("item = %#v, want preserved raw sleep payload %s", item, payload)
+				}
+			} else if isRaw {
+				t.Fatalf("item = %#v, want typed %q", item, variant.Discriminator)
 			}
 		})
 	}

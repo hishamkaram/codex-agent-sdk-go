@@ -140,13 +140,14 @@ install-shim:
 	@echo "Shim installed at $$(go env GOBIN || echo $$HOME/go/bin)/codex-sdk-hook-shim"
 
 regen-schema:
-	@echo "Regenerating JSON schema from local codex binary..."
+	@echo "Regenerating the aggregate v2 schema from local codex..."
 	@command -v codex > /dev/null || { echo "codex CLI not found on PATH — install @openai/codex"; exit 1; }
-	@rm -rf internal/events/testdata/schema
-	@mkdir -p internal/events/testdata/schema
-	@codex --enable hooks app-server generate-json-schema \
-	    --out internal/events/testdata/schema/
-	@echo "Schema regenerated. Review git diff + update parser.go if new methods appeared."
+	@set -eu; \
+	tmp="$$(mktemp -d)"; \
+	trap 'rm -rf "$$tmp"' EXIT; \
+	codex --enable hooks app-server generate-json-schema --out "$$tmp"; \
+	cp "$$tmp/codex_app_server_protocol.v2.schemas.json" internal/events/testdata/schema/
+	@echo "Review schema changes and update the parser coverage."
 	@echo "Then run: make test"
 
 check-schema-drift:

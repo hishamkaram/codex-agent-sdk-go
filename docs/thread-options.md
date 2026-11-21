@@ -54,3 +54,45 @@ networked := &types.ThreadOptions{
 ```
 
 For either option, the SDK checks the returned working directory and effective policy before exposing the new handle. If the app-server already created a thread and the reply cannot confirm the requested setting, use `errors.As` with `*types.ThreadPolicyMismatchError` to recover the created thread ID. The caller can inspect or archive it. The SDK leaves the saved workspace-write policy to the server on resume.
+
+## MCP server overrides
+
+`WithMCPServers` provides defaults for start and fork. A nonempty
+`ThreadOptions.MCPServers` map supplies that request's server configuration.
+Pass the Go values through these options so the SDK encodes the typed fields.
+The structs retain their legacy JSON representation for compatibility. For
+raw configuration JSON, use the Codex schema, including keys such as `env`
+for stdio or `http_headers` for HTTP.
+
+Use `ToolApprovalMode` with one of the MCP-specific values. For a legacy
+`DefaultApprovalMode: types.ApprovalOnRequest` initializer, choose
+`ToolApprovalMode: types.MCPToolApprovalPrompt` explicitly. Existing native MCP
+approval spellings remain accepted in the deprecated field.
+
+Set `BearerTokenEnvVar` to the **name** of the token variable available to the
+Codex process. Replace uses of the deprecated raw `BearerToken` field with that
+environment reference. For HTTP authentication flows, use the typed `Auth`
+option. See the [MCP example](../examples/with_mcp/main.go).
+
+## Approved-plan handoff
+
+With experimental API enabled, call `PrepareApprovedPlan` on a **fresh
+destination thread**. This can add the approved Markdown to the destination's
+history. Pass the returned prompt unchanged to its first `Run` while you
+have exclusive use of that destination. Use same-thread collaboration mode
+for interactive planning within an existing thread.
+
+An optional attachment path must be absolute on the app-server host. Codex
+checks whether its executor can read the exact plan and chooses how to
+prepare the prompt. The SDK requires schema proof from a directly launched
+native Linux Codex executable.
+
+Conflicting activity such as an active turn can cause
+`ErrThreadExecutionUnconfirmed` before the SDK sends the preparation request.
+A pre-write rejection sends no request for that attempt. The same error also
+applies when earlier unconfirmed preparation fences the destination against
+new preparation and SDK turn starts.
+
+If a sent preparation or the first turn's startup fails, retain the original
+thread and plan. Create a fresh destination if you decide to retry.
+See the [approved-plan example](../examples/approved_plan/main.go).

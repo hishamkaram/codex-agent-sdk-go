@@ -2,10 +2,9 @@
 // so the codex agent can call external tools. Two transports are shown:
 // stdio (local subprocess speaking MCP) and streamable HTTP (remote).
 //
-// Note: v0.1.0 delivers MCP config via CodexOptions.DefaultMCPServers;
-// the SDK serializes this into the thread/start params (future versions
-// may migrate to config/batchWrite). The fixture transcript does not
-// cover this path, so per-server behavior is CLI-version dependent.
+// WithMCPServers configures defaults for new threads. To try the HTTP
+// server, replace the example URL with your MCP endpoint and set
+// DOCS_MCP_TOKEN in the environment before launching the example.
 //
 // Run: go run ./examples/with_mcp
 package main
@@ -34,14 +33,13 @@ func run() error {
 		WithSandbox(types.SandboxReadOnly).
 		WithMCPServers(map[string]types.McpServerConfig{
 			"fetch": types.McpStdioConfig{
-				Command:             "npx",
-				Args:                []string{"-y", "@modelcontextprotocol/server-fetch"},
-				DefaultApprovalMode: types.ApprovalOnRequest,
+				Command:          "npx",
+				Args:             []string{"-y", "@modelcontextprotocol/server-fetch"},
+				ToolApprovalMode: types.MCPToolApprovalPrompt,
 			},
 			"docs": types.McpStreamableHTTPConfig{
-				URL:      "https://mcp.example.com",
-				AuthType: "bearer",
-				// BearerToken: os.Getenv("DOCS_MCP_TOKEN"),
+				URL:               "https://mcp.example.com",
+				BearerTokenEnvVar: "DOCS_MCP_TOKEN",
 			},
 		})
 

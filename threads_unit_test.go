@@ -200,17 +200,7 @@ func TestBuildThreadStartParams_DefaultMCPServers(t *testing.T) {
 		t.Fatalf("sandbox/approval changed while adding MCP config: %+v", p)
 	}
 
-	cfg, ok := p["config"].(map[string]any)
-	if !ok {
-		t.Fatalf("config = %T, want map[string]any; params=%+v", p["config"], p)
-	}
-	got, ok := cfg["mcp_servers"].(map[string]types.McpServerConfig)
-	if !ok {
-		t.Fatalf("mcp_servers = %T, want map[string]types.McpServerConfig", cfg["mcp_servers"])
-	}
-	if got["local"].Kind() != "stdio" {
-		t.Fatalf("local kind = %q, want stdio", got["local"].Kind())
-	}
+	assertThreadConfigJSON(t, p["config"], `{"mcp_servers":{"local":{"command":"mcp-local","args":["--stdio"]}}}`)
 }
 
 func TestBuildThreadStartParams_PerThreadMCPServersOverrideDefaults(t *testing.T) {
@@ -227,14 +217,7 @@ func TestBuildThreadStartParams_PerThreadMCPServersOverrideDefaults(t *testing.T
 		&types.ThreadOptions{MCPServers: threadServers},
 	)
 
-	cfg := p["config"].(map[string]any)
-	got := cfg["mcp_servers"].(map[string]types.McpServerConfig)
-	if _, ok := got["default"]; ok {
-		t.Fatalf("default MCP server leaked into per-thread override: %+v", got)
-	}
-	if got["thread"].Kind() != "http" {
-		t.Fatalf("thread kind = %q, want http", got["thread"].Kind())
-	}
+	assertThreadConfigJSON(t, p["config"], `{"mcp_servers":{"thread":{"url":"http://127.0.0.1:8080/mcp"}}}`)
 }
 
 func TestBuildThreadStartParams_EmptyThreadMCPServersPreserveDefaults(t *testing.T) {
@@ -248,11 +231,7 @@ func TestBuildThreadStartParams_EmptyThreadMCPServersPreserveDefaults(t *testing
 		&types.ThreadOptions{MCPServers: map[string]types.McpServerConfig{}},
 	)
 
-	cfg := p["config"].(map[string]any)
-	got := cfg["mcp_servers"].(map[string]types.McpServerConfig)
-	if got["default"].Kind() != "stdio" {
-		t.Fatalf("default kind = %q, want stdio", got["default"].Kind())
-	}
+	assertThreadConfigJSON(t, p["config"], `{"mcp_servers":{"default":{"command":"default-mcp"}}}`)
 }
 
 func TestBuildThreadStartParams_GranularApprovalPolicyUsesStructuredObject(t *testing.T) {

@@ -2,13 +2,29 @@ package types
 
 import "encoding/json"
 
-// MCPServerStatusListResult is the response of `mcpServerStatus/list`.
-// Includes a cursor for pagination — codex 0.121.0 always returned
-// nil in the spike but the field is documented.
-//
-// Wire shape (verified live):
-//
-//	{"data": [<MCPServerStatus>, ...], "nextCursor": null}
+// MCPServerStatusDetail controls how much data a status page fetches.
+type MCPServerStatusDetail string
+
+const (
+	MCPServerStatusDetailFull             MCPServerStatusDetail = "full"
+	MCPServerStatusDetailToolsAndAuthOnly MCPServerStatusDetail = "toolsAndAuthOnly"
+)
+
+// MCPServerStatusListOptions selects one page for Client.ListMCPServerStatusPage.
+// EnvironmentID requires both ThreadID and ServerName. Omitting Detail uses
+// the provider's full-detail default.
+type MCPServerStatusListOptions struct {
+	Cursor        *string               `json:"cursor,omitempty"`
+	Limit         *uint32               `json:"limit,omitempty"`
+	ThreadID      string                `json:"threadId,omitempty"`
+	ServerName    string                `json:"serverName,omitempty"`
+	EnvironmentID string                `json:"environmentId,omitempty"`
+	Detail        MCPServerStatusDetail `json:"detail,omitempty"`
+}
+
+// MCPServerStatusListResult is one page of mcpServerStatus/list. A nil
+// NextCursor marks the last page. Otherwise, pass the exact cursor and the
+// same filters to continue.
 type MCPServerStatusListResult struct {
 	Data       []MCPServerStatus `json:"data"`
 	NextCursor *string           `json:"nextCursor,omitempty"`
@@ -20,6 +36,9 @@ type MCPServerStatusListResult struct {
 type MCPServerStatus struct {
 	// Name is the server identifier from config.toml.
 	Name string `json:"name"`
+	// EnvironmentID identifies the environment of this registration. Nil
+	// denotes a thread-wide registration or an older server that omitted it.
+	EnvironmentID *string `json:"environmentId,omitempty"`
 	// AuthStatus describes how the SDK is authenticating to the
 	// server. Observed: "bearerToken", "oauth", "none".
 	AuthStatus string `json:"authStatus,omitempty"`

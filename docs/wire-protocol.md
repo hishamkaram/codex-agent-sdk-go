@@ -40,6 +40,10 @@ field names preferred in this order: flat > nested.
 | `thread/list` | `{}` | `{threads:[…]}` | `Client.ListThreads` |
 | `thread/fork` | `{threadId,…,config?,threadSource?}` | `{thread:{id,…},model,cwd,sandbox}` | `Client.ForkThread` |
 | `thread/archive` | `{threadId}` | `{}` | `Client.ArchiveThread` |
+| `config/value/write` | `{keyPath,value,mergeStrategy}` | `{status,filePath,version}` | `Client.SetSandbox` with key `sandbox_mode` |
+| `model/list` | `{cursor?,limit?,includeHidden?,modelProvider?}` | `{data,nextCursor?}` | `Client.ListModels`, `Client.ListModelsPage` |
+| `mcpServerStatus/list` | `{cursor?,limit?,threadId?,serverName?,environmentId?,detail?}` | `{data,nextCursor?}` | `Client.ListMCPServerStatus`, `Client.ListMCPServerStatusPage` |
+| `thread/prepareApprovedPlan` (experimental) | `{threadId,markdown,attachmentPath?}` | `{prompt}` | `Thread.PrepareApprovedPlan` |
 | `turn/start` | `{threadId,input:[{type:"text"|"localImage",…}],outputSchema?,collaborationMode?,effort?}` | `{turn:{id,…}}` | `Thread.RunStreamed` |
 | `turn/interrupt` | `{threadId,turnId}` | `{}` | `Thread.Interrupt`, `Client.InterruptThreadTurn` |
 | `thread/backgroundTerminals/list` | `{threadId,cursor?,limit}` | `{data:[…],nextCursor?}` | `Client.ListBackgroundTerminals` |
@@ -153,9 +157,11 @@ still be routed instead of silently dropped.
 | `hook/completed` | `*types.HookCompleted` |
 | `error` | `*types.ErrorEvent` |
 
-Parser coverage is guarded by the vendored schema drift tests. After a
-Codex upgrade, run `make check-schema-drift`; new thread-scoped methods
-must either gain typed parser support or an intentional route/drop policy.
+The ordinary CI gate checks notification routing, item coverage, and the
+supported metadata against the pinned snapshot. New thread-scoped methods
+can use `UnknownEvent`, retaining the source thread and raw payload. Global
+notifications without a thread ID stay outside thread streams. Run
+`make check-schema-drift` to compare an installed CLI with the baseline.
 
 `Client.SubscribeThreadEvents` publishes these parsed events in FIFO order
 for every provider thread, including child threads that do not have an SDK
@@ -324,8 +330,9 @@ cancellation and reuse contract.
 - Captured transcript: `internal/events/testdata/spike-transcript.jsonl`
   (523 lines, real `codex app-server` v0.121.0)
 - Vendored schema: `internal/events/testdata/schema/codex_app_server_protocol.v2.schemas.json`
-  (regenerated from `codex app-server generate-json-schema` with Codex
-  0.144.1 on 2026-07-12)
+  (stable Codex 0.171.0, from `codex --enable hooks app-server generate-json-schema`).
+  The aggregate matches the [official tagged schema](https://github.com/openai/codex/blob/rust-v0.171.0/codex-rs/app-server-protocol/schema/json/codex_app_server_protocol.v2.schemas.json).
+  Earlier fixtures retain their original protocol shapes.
 - `internal/jsonrpc/types.go` — envelope types
 - `internal/events/parser.go` — method → event dispatch
 - `internal/events/items.go` — item.type → ThreadItem dispatch

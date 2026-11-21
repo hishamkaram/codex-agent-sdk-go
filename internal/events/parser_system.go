@@ -18,6 +18,7 @@ func parseMCPServerStartupStatus(raw json.RawMessage) (types.ThreadEvent, error)
 	var env struct {
 		ThreadID      *string         `json:"threadId"`
 		Name          string          `json:"name"`
+		EnvironmentID *string         `json:"environmentId"`
 		Status        json.RawMessage `json:"status"`
 		Error         *string         `json:"error"`
 		FailureReason *string         `json:"failureReason"`
@@ -28,6 +29,7 @@ func parseMCPServerStartupStatus(raw json.RawMessage) (types.ThreadEvent, error)
 	return &types.MCPServerStartupStatusUpdated{
 		ThreadID:      env.ThreadID,
 		Name:          env.Name,
+		EnvironmentID: env.EnvironmentID,
 		Status:        cloneRaw(env.Status),
 		Error:         env.Error,
 		FailureReason: env.FailureReason,

@@ -13,7 +13,7 @@ import (
 type threadConfigOverrides struct {
 	webSearchMode   types.WebSearchMode
 	reasoningEffort string
-	mcpServers      map[string]types.McpServerConfig
+	mcpServers      map[string]mcpServerRequest
 	workspaceWrite  *workspaceWriteSettings
 }
 
@@ -92,9 +92,9 @@ func buildThreadStartParams(defaults *types.CodexOptions, opts *types.ThreadOpti
 	if opts.ThreadSource != "" {
 		params["threadSource"] = opts.ThreadSource
 	}
-	servers := opts.MCPServers
-	if len(servers) == 0 {
-		servers = defaults.DefaultMCPServers
+	servers, err := buildMCPServerOverrides(defaults.DefaultMCPServers, opts.MCPServers)
+	if err != nil {
+		return threadCreationRequest{}, err
 	}
 	overrides := (threadConfigOverrides{
 		webSearchMode:   opts.WebSearchMode,

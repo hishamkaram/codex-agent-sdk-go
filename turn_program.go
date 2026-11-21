@@ -20,11 +20,11 @@ type connectedRuntime struct {
 	experimental bool
 	onClose      func(func()) func() bool // bound before the connection is published
 	probeSlot    chan struct{}
-	proved       bool
+	proved       map[string]struct{}
 }
 
 func newConnectedRuntime(cli transport.CLI, app *transport.AppServer, experimental bool) *connectedRuntime {
-	return &connectedRuntime{cli: cli, app: app, experimental: experimental, probeSlot: make(chan struct{}, 1)}
+	return &connectedRuntime{cli: cli, app: app, experimental: experimental, probeSlot: make(chan struct{}, 1), proved: make(map[string]struct{})}
 }
 
 func (c *Client) requireTurnProgram(ctx context.Context, program types.CyberAccessProgram) error {
@@ -37,68 +37,85 @@ func (c *Client) requireTurnProgram(ctx context.Context, program types.CyberAcce
 		return fmt.Errorf("turn/start: invalid cyberAccessProgram")
 	}
 
+	return c.requireConnectedSchema(ctx, connectedSchemaFeature{
+		method: "turn/start", name: "cyberAccessProgram",
+		supported: func(root string) (bool, error) {
+			return schemaSupportsTurnProgram(filepath.Join(root, "v2", "TurnStartParams.json"))
+		},
+	})
+}
+
+type connectedSchemaFeature struct {
+	method    string
+	name      string
+	supported func(root string) (bool, error)
+}
+
+func (c *Client) requireConnectedSchema(ctx context.Context, feature connectedSchemaFeature) error {
 	c.lifecycleMu.Lock()
 	runtime := c.runtime
 	c.lifecycleMu.Unlock()
 	if c.closed.Load() {
-		return fmt.Errorf("turn/start: %w", types.ErrClientClosed)
+		return fmt.Errorf("%s: %w", feature.method, types.ErrClientClosed)
 	}
 	if runtime == nil || !runtime.experimental {
-		return types.NewFeatureNotEnabledError("experimentalApi", "turn/start", "set WithExperimentalAPI(true) before connecting")
+		return types.NewFeatureNotEnabledError("experimentalApi", feature.method, "set WithExperimentalAPI(true) before connecting")
 	}
 	if !c.connected.Load() {
-		return fmt.Errorf("turn/start: %w", types.ErrClientNotConnected)
+		return fmt.Errorf("%s: %w", feature.method, types.ErrClientNotConnected)
 	}
 
 	probeCtx, cancel := context.WithTimeout(ctx, runtimeFeatureDiscoveryTimeout)
 	defer cancel()
 	stop := runtime.onClose(cancel)
 	defer stop()
-	probeErr := runtime.requireTurnProgramSchema(probeCtx)
+	probeErr := runtime.requireSchema(probeCtx, feature)
 	if callerErr := ctx.Err(); callerErr != nil {
-		return fmt.Errorf("turn/start: check experimental schema: %w", callerErr)
+		return fmt.Errorf("%s: check experimental schema: %w", feature.method, callerErr)
 	}
 	if c.closed.Load() {
-		return fmt.Errorf("turn/start: check experimental schema: %w", types.ErrClientClosed)
+		return fmt.Errorf("%s: check experimental schema: %w", feature.method, types.ErrClientClosed)
 	}
 	if errors.Is(probeCtx.Err(), context.DeadlineExceeded) {
-		return fmt.Errorf("turn/start: experimental schema probe exceeded the SDK deadline: %w", ErrRuntimeControlsUnsupported)
+		return fmt.Errorf("%s: experimental schema probe exceeded the SDK deadline: %w", feature.method, ErrRuntimeControlsUnsupported)
 	}
 	return probeErr
 }
 
-func (r *connectedRuntime) requireTurnProgramSchema(ctx context.Context) error {
+func (r *connectedRuntime) requireSchema(ctx context.Context, feature connectedSchemaFeature) error {
 	select {
 	case r.probeSlot <- struct{}{}:
 	case <-ctx.Done():
-		return fmt.Errorf("turn/start: check experimental schema: %w", ctx.Err())
+		return fmt.Errorf("%s: check experimental schema: %w", feature.method, ctx.Err())
 	}
 	defer func() { <-r.probeSlot }()
 	if err := ctx.Err(); err != nil {
-		return fmt.Errorf("turn/start: check experimental schema: %w", err)
+		return fmt.Errorf("%s: check experimental schema: %w", feature.method, err)
 	}
-	if r.proved && r.cli.MatchesRunningExecutable(r.app.Pid()) {
-		return nil
+	if _, proved := r.proved[feature.name]; proved {
+		if r.cli.MatchesRunningExecutable(r.app.Pid()) {
+			return nil
+		}
+		clear(r.proved)
 	}
-	r.proved = false
 	cli, release, err := r.cli.PinRunningExecutable(r.app.Pid())
 	if err != nil {
-		return fmt.Errorf("turn/start: verify Codex runtime executable: %w", errors.Join(ErrRuntimeControlsUnsupported, err))
+		return fmt.Errorf("%s: verify Codex runtime executable: %w", feature.method, errors.Join(ErrRuntimeControlsUnsupported, err))
 	}
 	defer release()
-	outDir, cleanup, err := generateAppServerSchema(ctx, cli, "turn/start", true)
+	outDir, cleanup, err := generateAppServerSchema(ctx, cli, feature.method, true)
 	if err != nil {
-		return fmt.Errorf("turn/start: check cyberAccessProgram support: %w", err)
+		return fmt.Errorf("%s: check %s support: %w", feature.method, feature.name, err)
 	}
 	defer cleanup()
-	supported, err := schemaSupportsTurnProgram(filepath.Join(outDir, "v2", "TurnStartParams.json"))
+	supported, err := feature.supported(outDir)
 	if err != nil {
-		return fmt.Errorf("turn/start: read experimental schema: %w", err)
+		return fmt.Errorf("%s: read experimental schema: %w", feature.method, err)
 	}
 	if !supported || !r.cli.MatchesRunningExecutable(r.app.Pid()) {
-		return fmt.Errorf("turn/start: connected runtime did not prove cyberAccessProgram support: %w", ErrRuntimeControlsUnsupported)
+		return fmt.Errorf("%s: connected runtime did not prove %s support: %w", feature.method, feature.name, ErrRuntimeControlsUnsupported)
 	}
-	r.proved = true
+	r.proved[feature.name] = struct{}{}
 	return nil
 }
 

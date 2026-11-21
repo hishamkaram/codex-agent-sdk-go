@@ -29,8 +29,8 @@ func TestBuildThreadConfigOptions(t *testing.T) {
 	creation := threadConfigOverrides{
 		webSearchMode:   types.WebSearchDisabled,
 		reasoningEffort: "future-model-effort",
-		mcpServers: map[string]types.McpServerConfig{
-			"custom": types.McpStdioConfig{Command: "local-mcp"},
+		mcpServers: map[string]mcpServerRequest{
+			"custom": {Command: "local-mcp"},
 		},
 		workspaceWrite: &workspaceWriteSettings{NetworkAccess: &falseValue, WritableRoots: []string{}},
 	}

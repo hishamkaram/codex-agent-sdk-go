@@ -17,7 +17,8 @@ import (
 // own this thread. The SDK sends no new work until it sees matching completion
 // or proves no operation started. A fresh idle resume reply can resolve an
 // unchanged external-only fence. An unresolved SDK operation still requires
-// terminal evidence or client close.
+// terminal evidence or client close. A destination with uncertain approved
+// plan preparation should be replaced by a fresh thread.
 var ErrThreadExecutionUnconfirmed = errors.New("codex: thread execution is unconfirmed")
 
 // ThreadExecutionUnconfirmedError identifies the affected provider thread.
@@ -48,8 +49,9 @@ type threadExecution struct {
 	mu                  sync.Mutex
 	changed             chan struct{}
 	op                  *threadOperation
-	resuming            int  // guarded by mu; new work waits for the active-status reply
-	pendingRegistration bool // guarded by Client.mu until registration
+	approvedPlan        approvedPlanState // guarded by mu
+	resuming            int               // guarded by mu; new work waits for the active-status reply
+	pendingRegistration bool              // guarded by Client.mu until registration
 
 	// Private threads were freshly created on this Client's stdio connection.
 	// An unclassified start, gap or archive permanently disqualifies ownership.
@@ -145,7 +147,7 @@ func (e *threadExecution) admit(ctx context.Context, threadID string, kind execu
 			return nil, types.ErrThreadClosed
 		}
 		op := e.op
-		if e.externalActive || op != nil && !op.complete && (op.uncertain || (!op.waitUntil.IsZero() && !time.Now().Before(op.waitUntil))) {
+		if e.dispatchUnconfirmedLocked() {
 			e.mu.Unlock()
 			return nil, &ThreadExecutionUnconfirmedError{ThreadID: threadID}
 		}
@@ -164,6 +166,14 @@ func (e *threadExecution) admit(ctx context.Context, threadID string, kind execu
 			return nil, err
 		}
 	}
+}
+
+// dispatchUnconfirmedLocked reports whether unresolved provider work prevents
+// this execution record from accepting a new turn. The caller holds e.mu.
+func (e *threadExecution) dispatchUnconfirmedLocked() bool {
+	op := e.op
+	return e.approvedPlan != approvedPlanIdle || e.externalActive ||
+		op != nil && !op.complete && (op.uncertain || !op.waitUntil.IsZero() && !time.Now().Before(op.waitUntil))
 }
 
 func (e *threadExecution) reserveLocked(kind executionKind, streamed bool) (*threadOperation, error) {
@@ -666,13 +676,23 @@ func (t *Thread) beginOperation(ctx context.Context, kind executionKind, streame
 func (t *Thread) markDispatch(ctx context.Context, op *threadOperation) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	if err := t.checkDispatchLocked(ctx, t.op == op); err != nil {
+		return err
+	}
+	op.dispatched = true
+	return nil
+}
+
+// checkDispatchLocked checks the provider activity visible at the writer
+// boundary. The caller holds the execution lock and owns the reservation.
+func (t *Thread) checkDispatchLocked(ctx context.Context, ownsReservation bool) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	if t.closed.Load() {
 		return types.ErrThreadClosed
 	}
-	if t.op != op || t.externalActive || t.resuming != 0 || t.activeID() != "" {
+	if !ownsReservation || t.externalActive || t.resuming != 0 || t.activeID() != "" {
 		return &ThreadExecutionUnconfirmedError{ThreadID: t.id}
 	}
 	threadID := threadExecutionID(t.id)
@@ -688,7 +708,6 @@ func (t *Thread) markDispatch(ctx context.Context, op *threadOperation) error {
 	if pending {
 		return &ThreadExecutionUnconfirmedError{ThreadID: t.id}
 	}
-	op.dispatched = true
 	return nil
 }
 

@@ -2,15 +2,21 @@ package types
 
 import "encoding/json"
 
-// ModelListResult is the response of `model/list`. Codex returns a
-// single page (no cursor for this method) of every model the
-// authenticated principal can route to.
-//
-// Wire shape (verified live):
-//
-//	{"data": [<ModelInfo>, ...]}
+// ModelListOptions selects one page for Client.ListModelsPage. Nil cursor and
+// limit use the provider defaults. An explicit IncludeHidden overrides the
+// provider's default filter, including when it is false.
+type ModelListOptions struct {
+	Cursor        *string `json:"cursor,omitempty"`
+	Limit         *uint32 `json:"limit,omitempty"`
+	IncludeHidden *bool   `json:"includeHidden,omitempty"`
+	ModelProvider string  `json:"modelProvider,omitempty"`
+}
+
+// ModelListResult is one page of model/list. A nil NextCursor marks the last
+// page. Otherwise, pass the exact cursor and the same filters to continue.
 type ModelListResult struct {
-	Data []ModelInfo `json:"data"`
+	Data       []ModelInfo `json:"data"`
+	NextCursor *string     `json:"nextCursor,omitempty"`
 }
 
 // ModelInfo describes one model the codex app-server is willing to
