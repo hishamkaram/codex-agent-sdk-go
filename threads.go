@@ -337,7 +337,7 @@ func (c *Client) StartThread(ctx context.Context, opts *types.ThreadOptions) (*T
 	if err := c.validateThreadApprovalPolicy(opts); err != nil {
 		return nil, fmt.Errorf("codex.Client.StartThread: %w", err)
 	}
-	request, err := buildThreadStartParams(c.opts, opts)
+	request, err := buildThreadStartParams(c.opts, opts, c.appServerWorkingDirectory())
 	if err != nil {
 		return nil, fmt.Errorf("codex.Client.StartThread: %w", err)
 	}
@@ -388,7 +388,8 @@ func (c *Client) ResumeThread(ctx context.Context, threadID string, opts *types.
 	if cwd != "" {
 		params["cwd"] = cwd
 	}
-	if config := buildThreadConfig(c.opts, configOverrides); config != nil {
+	configOverrides = configOverrides.withDefaults(c.opts)
+	if config := buildThreadConfig(configOverrides); config != nil {
 		params["config"] = config
 	}
 	observationID := threadExecutionID(threadID)
@@ -409,6 +410,9 @@ func (c *Client) ResumeThread(ctx context.Context, threadID string, opts *types.
 	id := reportedID
 	if id == "" {
 		id = threadID
+	}
+	if err := verifyResumeReasoningEffort(resp.Result, id, configOverrides.reasoningEffort); err != nil {
+		return nil, fmt.Errorf("codex.Client.ResumeThread: %w", err)
 	}
 	t := newThread(c, id)
 	status, statusThreadID := t.seedExternalActivity(resp.Result)
@@ -443,7 +447,7 @@ func (c *Client) ForkThread(ctx context.Context, sourceThreadID string, opts *ty
 	if err := c.validateThreadApprovalPolicy(opts); err != nil {
 		return nil, nil, fmt.Errorf("codex.Client.ForkThread: %w", err)
 	}
-	request, err := buildThreadStartParams(c.opts, opts)
+	request, err := buildThreadStartParams(c.opts, opts, c.appServerWorkingDirectory())
 	if err != nil {
 		return nil, nil, fmt.Errorf("codex.Client.ForkThread: %w", err)
 	}

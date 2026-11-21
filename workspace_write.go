@@ -25,7 +25,7 @@ func resolveWorkspaceWrite(sandbox types.SandboxMode, opts *types.ThreadOptions)
 		return nil, errors.New("NetworkAccessEnabled and AdditionalDirectories require an explicit workspace-write sandbox")
 	}
 
-	roots, err := normalizeWritableRoots(opts.AdditionalDirectories)
+	roots, err := validateWritableRoots(opts.AdditionalDirectories)
 	if err != nil {
 		return nil, err
 	}
@@ -37,7 +37,7 @@ func resolveWorkspaceWrite(sandbox types.SandboxMode, opts *types.ThreadOptions)
 	return settings, nil
 }
 
-func normalizeWritableRoots(paths []string) ([]string, error) {
+func validateWritableRoots(paths []string) ([]string, error) {
 	if paths == nil {
 		return nil, nil
 	}
@@ -52,7 +52,6 @@ func normalizeWritableRoots(paths []string) ([]string, error) {
 		if slices.Contains(strings.Split(filepath.ToSlash(path), "/"), "..") {
 			return nil, fmt.Errorf("AdditionalDirectories[%d] must not contain parent traversal", i)
 		}
-		path = filepath.Clean(path)
 		if _, exists := seen[path]; !exists {
 			seen[path] = struct{}{}
 			roots = append(roots, path)
@@ -76,11 +75,10 @@ func expectedThreadCwd(appServerCwd, requestedCwd string) (string, error) {
 	if requestedCwd == "" || filepath.IsAbs(requestedCwd) {
 		return requestedCwd, nil
 	}
-	base, err := filepath.Abs(appServerCwd)
-	if err != nil {
-		return "", fmt.Errorf("resolve app-server cwd: %w", err)
+	if !filepath.IsAbs(appServerCwd) {
+		return "", errors.New("app-server launch directory is required for relative thread cwd")
 	}
-	return filepath.Join(base, requestedCwd), nil
+	return filepath.Join(appServerCwd, requestedCwd), nil
 }
 
 func verifyWorkspaceWrite(result json.RawMessage, threadID, expectedCwd string, request *workspaceWriteSettings) (string, error) {
@@ -109,7 +107,7 @@ func matchingWritableRoots(requested, reported []string) bool {
 	if reported == nil {
 		return false
 	}
-	roots, err := normalizeWritableRoots(reported)
+	roots, err := validateWritableRoots(reported)
 	if err != nil || len(roots) != len(requested) {
 		return false
 	}

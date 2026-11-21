@@ -2,6 +2,7 @@ package codex
 
 import (
 	"encoding/json"
+	"errors"
 	"reflect"
 	"testing"
 
@@ -18,10 +19,10 @@ func TestBuildThreadConfigOptions(t *testing.T) {
 			"default": types.McpStdioConfig{Command: "default-mcp"},
 		})
 
-	if got := buildThreadConfig(types.NewCodexOptions(), threadConfigOverrides{}); got != nil {
+	if got := buildThreadConfig(threadConfigOverrides{}); got != nil {
 		t.Fatalf("unset options produced config: %v", got)
 	}
-	assertThreadConfigJSON(t, buildThreadConfig(defaults, threadConfigOverrides{}),
+	assertThreadConfigJSON(t, buildThreadConfig((threadConfigOverrides{}).withDefaults(defaults)),
 		`{"web_search":"cached","model_reasoning_effort":"medium"}`)
 
 	falseValue := false
@@ -33,9 +34,9 @@ func TestBuildThreadConfigOptions(t *testing.T) {
 		},
 		workspaceWrite: &workspaceWriteSettings{NetworkAccess: &falseValue, WritableRoots: []string{}},
 	}
-	assertThreadConfigJSON(t, buildThreadConfig(defaults, creation),
+	assertThreadConfigJSON(t, buildThreadConfig(creation.withDefaults(defaults)),
 		`{"web_search":"disabled","model_reasoning_effort":"future-model-effort","mcp_servers":{"custom":{"command":"local-mcp"}},"sandbox_workspace_write":{"network_access":false,"writable_roots":[]}}`)
-	assertThreadConfigJSON(t, buildThreadConfig(defaults, threadConfigOverrides{reasoningEffort: "low"}),
+	assertThreadConfigJSON(t, buildThreadConfig((threadConfigOverrides{reasoningEffort: "low"}).withDefaults(defaults)),
 		`{"web_search":"cached","model_reasoning_effort":"low"}`)
 }
 
@@ -54,5 +55,35 @@ func assertThreadConfigJSON(t *testing.T, got any, want string) {
 	}
 	if !reflect.DeepEqual(gotValue, wantValue) {
 		t.Fatalf("JSON = %s, want %s", raw, want)
+	}
+}
+
+func TestVerifyResumeReasoningEffortReadback(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name     string
+		reply    string
+		expected string
+		mismatch bool
+	}{
+		{"matches", `{"reasoningEffort":"high"}`, "high", false},
+		{"legacy reply", `{}`, "high", false},
+		{"null", `{"reasoningEffort":null}`, "high", true},
+		{"malformed", `{"reasoningEffort":123}`, "high", true},
+		{"invalid result type", `[]`, "high", true},
+		{"unset request", `{"reasoningEffort":"medium"}`, "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := verifyResumeReasoningEffort(json.RawMessage(tc.reply), "resumed", tc.expected)
+			var mismatch *types.ThreadResumeSettingsMismatchError
+			if tc.mismatch {
+				if !errors.As(err, &mismatch) || mismatch.ThreadID != "resumed" {
+					t.Fatalf("error = %v, want mismatch for resumed thread", err)
+				}
+			} else if err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }

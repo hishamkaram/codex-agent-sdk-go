@@ -61,10 +61,15 @@ func (t *AppServer) spawnWithRetry(ctx context.Context, cliPath string, args []s
 		return nil, types.NewCLIConnectionError(fmt.Sprintf("resolve %q", cliPath), err)
 	}
 
+	cwd, err := resolveAppServerWorkingDirectory(t.cfg.Cwd)
+	if err != nil {
+		return nil, types.NewCLIConnectionError("resolve app-server working directory", err)
+	}
+
 	var proc *spawnedProc
 	var pipeErr error
 	startErr := retryOnETXTBSY(ctx, func() error {
-		candidate, err := newSpawnedProc(t.newSpawnCommand(resolvedCLIPath, args))
+		candidate, err := newSpawnedProc(t.newSpawnCommand(resolvedCLIPath, cwd, args))
 		if err != nil {
 			pipeErr = err
 			return err
@@ -102,14 +107,12 @@ func resolveExplicitCLIPath(cliPath string) (string, error) {
 	return resolved, nil
 }
 
-func (t *AppServer) newSpawnCommand(cliPath string, args []string) *exec.Cmd {
+func (t *AppServer) newSpawnCommand(cliPath, cwd string, args []string) *exec.Cmd {
 	// The subprocess lifetime is owned by AppServer.Close, not by the
 	// connect-attempt context. Client.Connect cancels that context after a
 	// successful handshake; tying exec.Cmd to it kills the live app-server.
 	cmd := exec.Command(cliPath, args...)
-	if t.cfg.Cwd != "" {
-		cmd.Dir = t.cfg.Cwd
-	}
+	cmd.Dir = cwd
 	cmd.Env = BuildRuntimeEnvironment(t.cfg.Env)
 	return cmd
 }

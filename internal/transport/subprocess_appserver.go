@@ -198,6 +198,17 @@ func appServerArgs(cfg AppServerConfig) []string {
 	return append(args, cfg.ExtraArgs...)
 }
 
+// WorkingDirectory returns the subprocess's launch directory, or an empty
+// string before it has been spawned. It never reads the SDK process cwd.
+func (t *AppServer) WorkingDirectory() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.cmd == nil {
+		return ""
+	}
+	return t.cmd.Dir
+}
+
 // Demux returns the underlying demux. Valid between Connect and Close.
 func (t *AppServer) Demux() *jsonrpc.Demux {
 	t.mu.Lock()

@@ -4,7 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,7 +20,8 @@ func TestClient_ThreadConfigurationWireScope(t *testing.T) {
 	t.Parallel()
 
 	base := t.TempDir()
-	cwd, root := filepath.Join(base, "work"), filepath.Join(base, "sibling")
+	cwd := filepath.Join(base, "work")
+	root := filepath.Join(base, "sibling") + string(filepath.Separator)
 	sourceReply := workspaceThreadReply(t, "source", cwd, false, []string{root})
 	forkReply := workspaceThreadReply(t, "fork", cwd, true, []string{})
 
@@ -118,8 +123,10 @@ func TestClient_ThreadPolicyRejectsBeforeRegistration(t *testing.T) {
 				return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{"thread":{"id":"parent"}}`)}
 			case 2:
 				return jsonrpc.Response{ID: req.ID, Result: unconfirmedStart}
-			default:
+			case 3:
 				return jsonrpc.Response{ID: req.ID, Error: &jsonrpc.RPCError{Code: -32602, Message: "unsupported web search mode"}}
+			default:
+				return jsonrpc.Response{ID: req.ID, Error: &jsonrpc.RPCError{Code: -32602, Message: "unsupported thread source"}}
 			}
 		case "thread/fork":
 			return jsonrpc.Response{ID: req.ID, Result: unconfirmedFork}
@@ -156,12 +163,109 @@ func TestClient_ThreadPolicyRejectsBeforeRegistration(t *testing.T) {
 	if got := c.SessionID(); got != parent.ID() {
 		t.Fatalf("unconfirmed thread replaced the registered parent: %q", got)
 	}
-	_, err = c.StartThread(ctx, &types.ThreadOptions{WebSearchMode: types.WebSearchIndexed, ThreadSource: "custom"})
+	_, err = c.StartThread(ctx, &types.ThreadOptions{WebSearchMode: types.WebSearchIndexed})
 	var rpcError *types.RPCError
 	if !errors.As(err, &rpcError) || rpcError.Code != -32602 || rpcError.Message != "unsupported web search mode" {
 		t.Fatalf("provider rejection changed: %v", err)
 	}
-	assertThreadRequestMethods(t, observedThreadRequests(t, server), "thread/start", "thread/start", "thread/fork", "thread/start")
+	_, err = c.StartThread(ctx, &types.ThreadOptions{ThreadSource: "custom"})
+	if !errors.As(err, &rpcError) || rpcError.Code != -32602 || rpcError.Message != "unsupported thread source" {
+		t.Fatalf("provider source rejection changed: %v", err)
+	}
+	wire := observedThreadRequests(t, server)
+	assertThreadRequestMethods(t, wire, "thread/start", "thread/start", "thread/fork", "thread/start", "thread/start")
+	assertThreadConfigJSON(t, wire[4].Params, `{"sandbox":"read-only","approvalPolicy":"on-request","threadSource":"custom"}`)
+}
+
+func TestClient_ResumeLoadedThreadReportsUnappliedEffort(t *testing.T) {
+	t.Parallel()
+
+	loaded := json.RawMessage(`{"thread":{"id":"loaded"},"reasoningEffort":"medium"}`)
+	c, server := setupMockClient(t, types.NewCodexOptions().WithReasoningEffort("medium"), func(req jsonrpc.Request) jsonrpc.Response {
+		return jsonrpc.Response{ID: req.ID, Result: loaded}
+	})
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+
+	thread, err := c.StartThread(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resumed, err := c.ResumeThread(ctx, thread.ID(), &types.ResumeOptions{
+		ReasoningEffort: "high", WebSearchMode: types.WebSearchDisabled,
+	})
+	var mismatch *types.ThreadResumeSettingsMismatchError
+	if resumed != nil || !errors.As(err, &mismatch) || mismatch.ThreadID != thread.ID() {
+		t.Fatalf("loaded resume: thread=%v error=%v", resumed, err)
+	}
+	if got := c.SessionID(); got != thread.ID() {
+		t.Fatalf("resume mismatch changed the current thread: %q", got)
+	}
+	wire := observedThreadRequests(t, server)
+	assertThreadRequestMethods(t, wire, "thread/start", "thread/resume")
+	assertThreadConfigJSON(t, wire[1].Params, `{"threadId":"loaded","config":{"model_reasoning_effort":"high","web_search":"disabled"}}`)
+}
+
+func TestClient_RelativeWorkspaceCwdUsesAppServerLaunchDirectory(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fixture uses a POSIX shell")
+	}
+	launchCwd, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(t.TempDir(), "launch-alias")
+	if linkErr := os.Symlink(launchCwd, alias); linkErr != nil {
+		t.Fatal(linkErr)
+	}
+	t.Chdir(alias)
+	clientCwd := t.TempDir()
+	want := filepath.Join(launchCwd, "project")
+	fixtureDir := t.TempDir()
+	marker := filepath.Join(fixtureDir, "cwd")
+	helper := filepath.Join(fixtureDir, "codex-helper")
+	reply := threadConfigFixture(t, map[string]any{
+		"id":     2,
+		"result": workspaceThreadReply(t, "relative", want, false, []string{}),
+	})
+	script := fmt.Sprintf(`#!/bin/sh
+if [ "$1" = "--version" ]; then echo "codex 0.171.0"; exit 0; fi
+pwd -P > %q
+IFS= read -r _initialize
+printf '%%s
+' '{"id":1,"result":{}}'
+IFS= read -r _initialized
+IFS= read -r _start
+printf '%%s
+' %q
+while IFS= read -r _line; do :; done
+`, marker, string(reply))
+	writeClientExecutable(t, helper, script)
+
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	c, err := NewClient(ctx, types.NewCodexOptions().WithCLIPath(helper).WithSandbox(types.SandboxWorkspaceWrite))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		closeCtx, closeCancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer closeCancel()
+		_ = c.Close(closeCtx)
+	})
+	if connectErr := c.Connect(ctx); connectErr != nil {
+		t.Fatal(connectErr)
+	}
+	t.Chdir(clientCwd)
+	falseValue := false
+	got, err := c.StartThread(ctx, &types.ThreadOptions{Cwd: "project", NetworkAccessEnabled: &falseValue})
+	if err != nil || got.Cwd() != want {
+		t.Fatalf("StartThread got %v, %v, want cwd %q", got, err, want)
+	}
+	actual, err := os.ReadFile(marker)
+	if err != nil || strings.TrimSpace(string(actual)) != launchCwd {
+		t.Fatalf("subprocess launch directory marker = %q, %v, want %q", actual, err, launchCwd)
+	}
 }
 
 func TestClient_DirectReasoningEffortDoesNotLeak(t *testing.T) {

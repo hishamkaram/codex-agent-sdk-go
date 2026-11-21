@@ -395,9 +395,10 @@ type ThreadOptions struct {
 	AdditionalDirectories []string
 }
 
-// ResumeOptions overrides settings when resuming a persisted thread.
-// Omitted options preserve the server's saved settings unless a corresponding
-// SDK default was explicitly configured.
+// ResumeOptions supplies overrides when resuming a persisted thread. To
+// apply web-search or reasoning overrides, use a connection where the thread
+// has not been loaded. Codex may retain the settings of a thread it rejoins.
+// Omitted options use the configured SDK defaults or saved server settings.
 type ResumeOptions struct {
 	Cwd             string
 	WebSearchMode   WebSearchMode

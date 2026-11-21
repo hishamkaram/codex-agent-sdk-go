@@ -14,18 +14,17 @@ type threadConfigOverrides struct {
 	workspaceWrite  *workspaceWriteSettings
 }
 
+func (opts threadConfigOverrides) withDefaults(defaults *types.CodexOptions) threadConfigOverrides {
+	if defaults != nil {
+		opts.webSearchMode = cmp.Or(opts.webSearchMode, defaults.DefaultWebSearchMode)
+		opts.reasoningEffort = cmp.Or(opts.reasoningEffort, defaults.DefaultReasoningEffort)
+	}
+	return opts
+}
+
 // buildThreadConfig returns a fresh request config. Callers supply MCP and
 // workspace settings only on the methods that already own those overrides.
-func buildThreadConfig(defaults *types.CodexOptions, opts threadConfigOverrides) map[string]any {
-	if defaults != nil {
-		if opts.webSearchMode == "" {
-			opts.webSearchMode = defaults.DefaultWebSearchMode
-		}
-		if opts.reasoningEffort == "" {
-			opts.reasoningEffort = defaults.DefaultReasoningEffort
-		}
-	}
-
+func buildThreadConfig(opts threadConfigOverrides) map[string]any {
 	config := make(map[string]any)
 	if opts.webSearchMode != "" {
 		config["web_search"] = opts.webSearchMode
@@ -54,7 +53,7 @@ type threadCreationRequest struct {
 }
 
 // buildThreadStartParams builds the common start and fork request fields.
-func buildThreadStartParams(defaults *types.CodexOptions, opts *types.ThreadOptions) (threadCreationRequest, error) {
+func buildThreadStartParams(defaults *types.CodexOptions, opts *types.ThreadOptions, appServerCwd string) (threadCreationRequest, error) {
 	if defaults == nil {
 		defaults = &types.CodexOptions{}
 	}
@@ -88,16 +87,17 @@ func buildThreadStartParams(defaults *types.CodexOptions, opts *types.ThreadOpti
 	if len(servers) == 0 {
 		servers = defaults.DefaultMCPServers
 	}
-	if config := buildThreadConfig(defaults, threadConfigOverrides{
+	overrides := threadConfigOverrides{
 		webSearchMode:   opts.WebSearchMode,
 		reasoningEffort: opts.ReasoningEffort,
 		mcpServers:      servers,
 		workspaceWrite:  workspaceWrite,
-	}); config != nil {
+	}
+	if config := buildThreadConfig(overrides.withDefaults(defaults)); config != nil {
 		params["config"] = config
 	}
 	if workspaceWrite != nil {
-		cwd, err = expectedThreadCwd(defaults.DefaultCwd, cwd)
+		cwd, err = expectedThreadCwd(appServerCwd, cwd)
 		if err != nil {
 			return threadCreationRequest{}, err
 		}
@@ -110,4 +110,39 @@ func (r threadCreationRequest) responseCwd(result json.RawMessage, id string) (s
 		return r.cwd, nil
 	}
 	return verifyWorkspaceWrite(result, id, r.cwd, r.workspaceWrite)
+}
+
+// verifyResumeReasoningEffort checks the provider's readback when available.
+// Older peers may omit reasoningEffort. A reported null means no effective
+// effort, so it also disagrees with a nonempty request.
+func verifyResumeReasoningEffort(result json.RawMessage, threadID, expected string) error {
+	if expected == "" {
+		return nil
+	}
+	var reply struct {
+		ReasoningEffort json.RawMessage `json:"reasoningEffort"`
+	}
+	if json.Unmarshal(result, &reply) != nil {
+		return &types.ThreadResumeSettingsMismatchError{ThreadID: threadID}
+	}
+	if len(reply.ReasoningEffort) == 0 {
+		return nil
+	}
+	var actual string
+	if json.Unmarshal(reply.ReasoningEffort, &actual) != nil || actual != expected {
+		return &types.ThreadResumeSettingsMismatchError{ThreadID: threadID}
+	}
+	return nil
+}
+
+// appServerWorkingDirectory reads the launch directory from the transport
+// retained by this connection. Close may clear that transport concurrently.
+func (c *Client) appServerWorkingDirectory() string {
+	c.lifecycleMu.Lock()
+	tr := c.tr
+	c.lifecycleMu.Unlock()
+	if tr == nil {
+		return ""
+	}
+	return tr.WorkingDirectory()
 }

@@ -34,8 +34,9 @@ func TestResolveWorkspaceWritePreservesExplicitValues(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(roots.WritableRoots, []string{first, second}) {
-		t.Fatalf("roots = %q, want %q", roots.WritableRoots, []string{first, second})
+	want := []string{first, second + string(filepath.Separator)}
+	if !slices.Equal(roots.WritableRoots, want) {
+		t.Fatalf("roots = %q, want %q", roots.WritableRoots, want)
 	}
 	if opts.AdditionalDirectories[1] != second+string(filepath.Separator) {
 		t.Fatalf("caller roots mutated: %q", opts.AdditionalDirectories)
@@ -101,6 +102,11 @@ func TestVerifyWorkspaceWriteRequiresEffectivePolicy(t *testing.T) {
 		{"network widened", cwd, map[string]any{"type": "workspaceWrite", "networkAccess": true, "writableRoots": []string{root}}, withRoots, "sandbox.networkAccess"},
 		{"extra ancestor", cwd, map[string]any{"type": "workspaceWrite", "networkAccess": false, "writableRoots": []string{base, root}}, withRoots, "sandbox.writableRoots"},
 		{"wrong root", cwd, map[string]any{"type": "workspaceWrite", "networkAccess": false, "writableRoots": []string{base}}, withRoots, "sandbox.writableRoots"},
+		{
+			"altered spelling", cwd,
+			map[string]any{"type": "workspaceWrite", "writableRoots": []string{root}},
+			&workspaceWriteSettings{WritableRoots: []string{root + string(filepath.Separator)}}, "sandbox.writableRoots",
+		},
 		{"explicit empty", cwd, map[string]any{"type": "workspaceWrite", "writableRoots": []string{}}, explicitEmpty, ""},
 		{"empty request ignored", cwd, map[string]any{"type": "workspaceWrite", "writableRoots": []string{root}}, explicitEmpty, "sandbox.writableRoots"},
 		{"roots missing", cwd, map[string]any{"type": "workspaceWrite"}, explicitEmpty, "sandbox.writableRoots"},

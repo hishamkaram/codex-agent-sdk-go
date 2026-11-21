@@ -128,7 +128,7 @@ func TestBuildTurnStartParams_WithCollaborationMode(t *testing.T) {
 
 func requireThreadStartParams(t *testing.T, defaults *types.CodexOptions, opts *types.ThreadOptions) map[string]any {
 	t.Helper()
-	request, err := buildThreadStartParams(defaults, opts)
+	request, err := buildThreadStartParams(defaults, opts, "")
 	if err != nil {
 		t.Fatal(err)
 	}
