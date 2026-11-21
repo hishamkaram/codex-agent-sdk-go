@@ -171,6 +171,13 @@ func TestIntInteract_RollbackThenRun(t *testing.T) {
 	if err != nil || removed == nil || removed.Status != "completed" {
 		t.Fatalf("turn to remove failed: %v", err)
 	}
+	before, err := c.ReadThread(ctx, thread.ID(), &types.ThreadReadOptions{IncludeTurns: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(before.Thread.Turns) != 2 || before.Thread.Turns[0].ID != seed.ID || before.Thread.Turns[1].ID != removed.ID {
+		t.Fatal("expected both seed turns to be persisted before rollback")
+	}
 	if err := thread.Rollback(ctx, 1); err != nil {
 		t.Fatalf("Rollback: %v", err)
 	}
@@ -183,7 +190,8 @@ func TestIntInteract_RollbackThenRun(t *testing.T) {
 	}
 
 	turn, err := thread.Run(ctx, "Reply with exactly: AFTER_ROLLBACK", nil)
-	if err != nil || turn == nil || turn.Status != "completed" || turn.ID == removed.ID {
+	if err != nil || turn == nil || turn.Status != "completed" || turn.ID == removed.ID ||
+		strings.TrimSpace(turn.FinalResponse) != "AFTER_ROLLBACK" {
 		t.Fatalf("post-rollback turn did not complete on a new turn ID: %v", err)
 	}
 }
