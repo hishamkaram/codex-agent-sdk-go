@@ -20,6 +20,7 @@ const (
 	Turn Kind = iota
 	Review
 	Compact
+	historyAccess
 )
 
 // Record is the Client's authoritative state for one provider thread
