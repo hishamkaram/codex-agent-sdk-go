@@ -7,11 +7,12 @@ import (
 	"fmt"
 
 	"github.com/hishamkaram/codex-agent-sdk-go/internal/threadconfig"
+	"github.com/hishamkaram/codex-agent-sdk-go/internal/threadexec"
 	"github.com/hishamkaram/codex-agent-sdk-go/types"
 )
 
 // ThreadInboxBuffer bounds the queued events of a streamed provider operation.
-const ThreadInboxBuffer = 256
+const ThreadInboxBuffer = threadexec.InboxBuffer
 
 // ErrNoActiveTurn is returned by Thread.Interrupt when no turn is currently
 // running. Callers can treat it as a recoverable late interrupt.
@@ -33,12 +34,12 @@ type Thread struct {
 	// means "no cwd known" — helpers that need one will error.
 	cwd string
 
-	*threadExecution
+	record *threadexec.Record
 }
 
 // newThread constructs a Thread owned by c. Register before exposing it.
 func newThread(c *Client, id string) *Thread {
-	return &Thread{client: c, id: id, threadExecution: newThreadExecution()}
+	return &Thread{client: c, id: id, record: threadexec.NewRecord(false)}
 }
 
 // ID returns the server-assigned thread identifier.
@@ -48,22 +49,13 @@ func (t *Thread) ID() string { return t.id }
 // thread. Empty means the connected CLI did not report one.
 func (t *Thread) Model() string { return t.model }
 
-// deliverEvent records state before exposing the event to stream readers.
-func (t *Thread) deliverEvent(ev types.ThreadEvent) { t.observe(ev) }
-
-func (t *Thread) markClosed() {
-	if t.threadExecution != nil {
-		t.close()
-	}
-}
-
 // Interrupt cancels the currently-running turn (if any). Sends turn/interrupt
 // to the server. Safe to call from any goroutine.
 func (t *Thread) Interrupt(ctx context.Context) error {
-	if t.closed.Load() {
+	if t.record.Closed() {
 		return fmt.Errorf("codex.Thread.Interrupt: %w", types.ErrThreadClosed)
 	}
-	tid, _ := t.activeTurnID.Load().(string)
+	tid := t.record.ActiveID()
 	if tid == "" {
 		return fmt.Errorf("codex.Thread.Interrupt: %w", ErrNoActiveTurn)
 	}
@@ -82,7 +74,7 @@ func (t *Thread) RunStreamed(ctx context.Context, prompt string, opts *types.Run
 	return events, err
 }
 
-func (t *Thread) runStreamed(ctx context.Context, prompt string, opts *types.RunOptions) (<-chan types.ThreadEvent, *threadOperation, error) {
+func (t *Thread) runStreamed(ctx context.Context, prompt string, opts *types.RunOptions) (<-chan types.ThreadEvent, *threadexec.Operation, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
 	}
@@ -96,108 +88,11 @@ func (t *Thread) runStreamed(ctx context.Context, prompt string, opts *types.Run
 		}
 	}
 	params := buildTurnStartParams(t.id, input, opts)
-	op, _, err := t.beginOperation(ctx, executeTurn, true, "turn/start", params)
+	op, _, err := t.beginOperation(ctx, threadexec.Turn, true, "turn/start", params)
 	if err != nil {
 		return nil, nil, fmt.Errorf("codex.Thread.RunStreamed: turn/start: %w", err)
 	}
-	return t.streamOperation(ctx, op), op, nil
-}
-
-func (t *Thread) streamOperation(ctx context.Context, op *threadOperation) <-chan types.ThreadEvent {
-	out := make(chan types.ThreadEvent, ThreadInboxBuffer)
-	go t.streamLoop(ctx, op, out)
-	return out
-}
-
-func (t *Thread) streamLoop(ctx context.Context, op *threadOperation, out chan<- types.ThreadEvent) {
-	defer close(out)
-	defer t.consumeDone(op)
-	expected := op.ackID
-	for {
-		select {
-		case <-ctx.Done():
-			t.startExecutionCleanup(ctx, op, nil)
-			return
-		case <-t.done:
-			return
-		case ev, ok := <-op.events:
-			if !ok {
-				t.forwardStreamEvent(ctx, out, op.terminal)
-				return
-			}
-			if expected == "" {
-				if started, ok := ev.(*types.TurnStarted); ok && isRootTurn(started.TurnID, started.RootTurnID) {
-					expected = started.TurnID
-				}
-			}
-			id := turnIDFromStreamEvent(ev)
-			if (expected == "" || id == "" || id == expected) && !t.forwardStreamEvent(ctx, out, ev) {
-				t.startExecutionCleanup(ctx, op, nil)
-				return
-			}
-		}
-	}
-}
-
-func (t *Thread) forwardStreamEvent(ctx context.Context, out chan<- types.ThreadEvent, ev types.ThreadEvent) bool {
-	if ev == nil {
-		return true
-	}
-	select {
-	case out <- ev:
-		return true
-	case <-ctx.Done():
-	case <-t.done:
-	}
-	return false
-}
-
-func turnIDFromStreamEvent(ev types.ThreadEvent) string {
-	switch event := ev.(type) {
-	case *types.TurnStarted:
-		return event.TurnID
-	case *types.ItemStarted:
-		return event.TurnID
-	case *types.ItemUpdated:
-		return event.TurnID
-	case *types.ItemCompleted:
-		return event.TurnID
-	case *types.TokenUsageUpdated:
-		return event.TurnID
-	case *types.TurnDiffUpdated:
-		return event.TurnID
-	case *types.TurnPlanUpdated:
-		return event.TurnID
-	case *types.TurnModerationMetadata:
-		return event.TurnID
-	case *types.ContextCompacted:
-		return event.TurnID
-	default:
-		return turnIDFromAuxiliaryEvent(ev)
-	}
-}
-
-func turnIDFromAuxiliaryEvent(ev types.ThreadEvent) string {
-	switch event := ev.(type) {
-	case *types.ItemGuardianApprovalReviewStarted:
-		return event.TurnID
-	case *types.ItemGuardianApprovalReviewCompleted:
-		return event.TurnID
-	case *types.FileChangePatchUpdated:
-		return event.TurnID
-	case *types.ModelRerouted:
-		return event.TurnID
-	case *types.ModelVerification:
-		return event.TurnID
-	case *types.ModelSafetyBufferingUpdated:
-		return event.TurnID
-	case *types.ErrorEvent:
-		return event.TurnID
-	case *types.UnknownEvent:
-		return event.TurnID
-	default:
-		return ""
-	}
+	return t.record.Stream(ctx, op, t.executionWire()), op, nil
 }
 
 // isTurnTerminus returns true if ev is TurnCompleted or TurnFailed whose
@@ -244,7 +139,7 @@ func (t *Thread) Run(ctx context.Context, prompt string, opts *types.RunOptions)
 	if err != nil {
 		return nil, err
 	}
-	turn := &Turn{ID: op.ackID, ThreadID: t.id}
+	turn := &Turn{ID: op.AckID(), ThreadID: t.id}
 	var turnErr error
 	for ev := range events {
 		turn.Events = append(turn.Events, ev)
@@ -263,10 +158,8 @@ func (t *Thread) Run(ctx context.Context, prompt string, opts *types.RunOptions)
 			turnErr = types.NewRPCError(-1, e.Message, nil)
 		}
 	}
-	t.mu.Lock()
-	turn.Usage, turn.UsageAvailable = op.finalUsage, op.usageAvailable
-	completed := op.complete
-	t.mu.Unlock()
+	usage, available, completed := t.record.Final(op)
+	turn.Usage, turn.UsageAvailable = usage, available
 	if ctx.Err() != nil {
 		return turn, fmt.Errorf("codex.Thread.Run: %w", ctx.Err())
 	}
@@ -368,9 +261,7 @@ func (c *Client) StartThread(ctx context.Context, opts *types.ThreadOptions) (*T
 	if err != nil {
 		return nil, fmt.Errorf("codex.Client.StartThread: %w", err)
 	}
-	t := newThread(c, id)
-	t.private = true
-	t.baseline = usageBaseline{known: true}
+	t := &Thread{client: c, id: id, record: threadexec.NewRecord(true)}
 	t.model = extractThreadModel(resp.Result)
 	t.cwd = cwd
 	c.registerThread(t)
@@ -393,12 +284,12 @@ func (c *Client) ResumeThread(ctx context.Context, threadID string, opts *types.
 	if err != nil {
 		return nil, fmt.Errorf("codex.Client.ResumeThread: %w", err)
 	}
-	observationID := threadExecutionID(threadID)
-	observation := c.beginResumeObservation(observationID)
+	observationID := threadexec.CanonicalID(threadID)
+	observation := c.threadRegistry.BeginResume(observationID, c.closed.Load)
 	if observation == nil {
 		return nil, fmt.Errorf("codex.Client.ResumeThread: %w", types.ErrClientClosed)
 	}
-	defer c.endResumeObservation(observationID, observation)
+	defer c.threadRegistry.EndResume(observationID, observation)
 	resp, idleProof, err := c.requestThreadResume(ctx, request.params, observation)
 	if err != nil {
 		return nil, fmt.Errorf("codex.Client.ResumeThread: %w", err)
@@ -413,10 +304,10 @@ func (c *Client) ResumeThread(ctx context.Context, threadID string, opts *types.
 		id = threadID
 	}
 	t := newThread(c, id)
-	status, statusThreadID := t.seedExternalActivity(resp.Result)
+	status, statusThreadID := t.record.SeedExternalActivity(resp.Result)
 	idleProof.reconcile(status, statusThreadID, reportedID, observationID)
 	if policyErr := threadconfig.VerifyResumeReasoningEffort(resp.Result, id, request.reasoningEffort); policyErr != nil {
-		c.reconcileRejectedResume(t)
+		c.threadRegistry.ReconcileRejectedResume(t.id, t.record)
 		return nil, fmt.Errorf("codex.Client.ResumeThread: %w", policyErr)
 	}
 	t.model = extractThreadModel(resp.Result)
@@ -473,7 +364,7 @@ func (c *Client) ForkThread(ctx context.Context, sourceThreadID string, opts *ty
 		return nil, nil, fmt.Errorf("codex.Client.ForkThread: %w", err)
 	}
 	t := newThread(c, newID)
-	t.seedExternalActivity(resp.Result)
+	t.record.SeedExternalActivity(resp.Result)
 	t.model = extractThreadModel(resp.Result)
 	t.cwd = cwd
 	c.registerThread(t)
@@ -496,7 +387,7 @@ func (c *Client) ArchiveThread(ctx context.Context, threadID string) error {
 	if resp.Error != nil {
 		return types.NewRPCError(resp.Error.Code, resp.Error.Message, resp.Error.Data)
 	}
-	c.unregisterThread(threadID)
+	c.threadRegistry.Archive(threadID)
 	return nil
 }
 

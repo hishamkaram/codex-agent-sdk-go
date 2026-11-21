@@ -6,6 +6,7 @@ import (
 
 	"github.com/hishamkaram/codex-agent-sdk-go/internal/events"
 	"github.com/hishamkaram/codex-agent-sdk-go/internal/jsonrpc"
+	"github.com/hishamkaram/codex-agent-sdk-go/internal/threadexec"
 	"github.com/hishamkaram/codex-agent-sdk-go/types"
 	"go.uber.org/zap"
 )
@@ -26,7 +27,7 @@ func (c *Client) dispatch(ctx context.Context, demux *jsonrpc.Demux, done chan s
 		c.connected.Store(false)
 		c.closeThreadEventSubscriptions()
 		c.clearFileApprovals()
-		c.closeThreadExecutions()
+		c.threadRegistry.CloseRecords()
 		<-denialsDone
 		<-workerDone
 		close(done)
@@ -99,20 +100,20 @@ func pendingActivityAffectsThread(n jsonrpc.Notification, threadID string) bool 
 	ev, err := events.ParseEvent(n)
 	if err != nil {
 		id, _ := extractThreadID(n.Params)
-		return id == "" || threadExecutionID(id) == threadID
+		return id == "" || threadexec.CanonicalID(id) == threadID
 	}
 	id, _ := threadIdentityFromEvent(ev)
 	if id == "" {
 		return true
 	}
-	if threadExecutionID(id) != threadID {
+	if threadexec.CanonicalID(id) != threadID {
 		return false
 	}
 	switch activity := ev.(type) {
 	case *types.TurnStarted:
-		return activity.TurnID == "" || isRootTurn(activity.TurnID, activity.RootTurnID)
+		return activity.TurnID == "" || threadexec.IsRootTurn(activity.TurnID, activity.RootTurnID)
 	case *types.ThreadStatusChanged:
-		kind := threadStatusKind(activity.Status)
+		kind := threadexec.StatusKind(activity.Status)
 		return kind == "" || kind == "active"
 	default:
 		return true
@@ -121,7 +122,7 @@ func pendingActivityAffectsThread(n jsonrpc.Notification, threadID string) bool 
 
 func (c *Client) handleNotification(n jsonrpc.Notification) {
 	if n.DecodeError != nil {
-		c.invalidateThreadExecutions("")
+		c.threadRegistry.Invalidate("")
 		c.clearFileApprovals()
 		c.failThreadEventSubscriptions(ThreadEventEnvelope{
 			Err: &ThreadEventFrameGapError{Cause: n.DecodeError},
@@ -134,7 +135,7 @@ func (c *Client) handleNotification(n jsonrpc.Notification) {
 	if err != nil {
 		c.clearFileApprovals()
 		threadID, _ := extractThreadID(n.Params)
-		c.invalidateThreadExecutions(threadID)
+		c.threadRegistry.Invalidate(threadID)
 		c.failThreadEventSubscriptions(ThreadEventEnvelope{
 			ThreadID: threadID,
 			Err: &ThreadEventParseGapError{
@@ -158,7 +159,7 @@ func (c *Client) handleNotification(n jsonrpc.Notification) {
 	threadID, identityRequired := threadIdentityFromEvent(ev)
 	if threadID == "" {
 		if identityRequired {
-			c.invalidateThreadExecutions("")
+			c.threadRegistry.Invalidate("")
 			c.clearFileApprovals()
 			c.failThreadEventSubscriptions(ThreadEventEnvelope{
 				Err: &ThreadEventParseGapError{
@@ -177,11 +178,8 @@ func (c *Client) handleNotification(n jsonrpc.Notification) {
 		return
 	}
 	c.rememberFileApproval(ev)
-	c.mu.Lock()
-	execution := c.executions[threadExecutionID(threadID)]
-	c.mu.Unlock()
 	// Record lifecycle evidence before any lossy event delivery.
-	if execution != nil && execution.observe(ev) {
+	if c.threadRegistry.Observe(threadID, ev) {
 		c.logger.Warn("operation event queue full, dropped notification",
 			zap.String("thread_id", threadID), zap.String("method", n.Method))
 	}
@@ -190,101 +188,17 @@ func (c *Client) handleNotification(n jsonrpc.Notification) {
 	c.publishThreadEvent(ThreadEventEnvelope{ThreadID: threadID, Event: ev})
 }
 
-func (c *Client) invalidateThreadExecutions(threadID string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if threadID != "" {
-		if execution := c.executions[threadExecutionID(threadID)]; execution != nil {
-			execution.invalidate()
-		}
-		return
-	}
-	for _, execution := range c.executions {
-		execution.invalidate()
-	}
-}
-
-func (c *Client) closeThreadExecutions() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	for _, execution := range c.executions {
-		execution.close()
-	}
-}
-
-// registerThread stores a Thread in the client's routing table. The caller
-// must own the thread's ID (i.e., thread/start or thread/resume succeeded).
-// Also records the thread ID as the latest for SessionID().
 func (c *Client) registerThread(t *Thread) {
-	executionID := threadExecutionID(t.id)
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.threads == nil {
-		t.markClosed()
-		return
-	}
-	if c.executions == nil {
-		c.executions = make(map[string]*threadExecution)
-	}
-	if existing := c.executions[executionID]; existing != nil {
-		existing.reconcileExternalActivity(t.threadExecution)
-		t.threadExecution = existing
-	} else {
-		if t.threadExecution == nil {
-			t.threadExecution = newThreadExecution()
-		}
-		if !c.connected.Load() {
-			t.markClosed()
-		}
-		c.executions[executionID] = t.threadExecution
-	}
-	t.pendingRegistration = false
-	c.threads[executionID] = t
-	c.latestThreadID = t.id
-}
-
-// Track ordered lifecycle events before thread/resume is sent. The
-// provisional record has the same provider ID as any eventual handle.
-func (c *Client) beginResumeObservation(threadID string) *threadExecution {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.threads == nil || c.closed.Load() {
-		return nil
-	}
-	if c.executions == nil {
-		c.executions = make(map[string]*threadExecution)
-	}
-	execution := c.executions[threadID]
-	if execution == nil {
-		execution = newThreadExecution()
-		execution.pendingRegistration = true
-		c.executions[threadID] = execution
-	}
-	execution.mu.Lock()
-	execution.resuming++
-	execution.mu.Unlock()
-	return execution
-}
-
-func (c *Client) endResumeObservation(threadID string, execution *threadExecution) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	execution.mu.Lock()
-	defer execution.mu.Unlock()
-	execution.resuming--
-	if execution.resuming == 0 && execution.pendingRegistration && c.executions[threadID] == execution {
-		delete(c.executions, threadID)
-	}
-	execution.signalLocked()
+	t.record = c.threadRegistry.Register(t.id, t.record, c.connected.Load)
 }
 
 type idleResumeProof struct {
-	execution  *threadExecution
+	execution  *threadexec.Record
 	generation uint64
 }
 
-func (c *Client) requestThreadResume(ctx context.Context, params map[string]any, execution *threadExecution) (jsonrpc.Response, idleResumeProof, error) {
-	generation, eligible := execution.resumeIdleCandidate()
+func (c *Client) requestThreadResume(ctx context.Context, params map[string]any, execution *threadexec.Record) (jsonrpc.Response, idleResumeProof, error) {
+	generation, eligible := execution.ResumeIdleCandidate()
 	if eligible && c.demux.ServerMessages() != nil {
 		reply, err := c.demux.SendOrdered(ctx, "thread/resume", params)
 		return reply, idleResumeProof{execution: execution, generation: generation}, err
@@ -294,35 +208,7 @@ func (c *Client) requestThreadResume(ctx context.Context, params map[string]any,
 }
 
 func (p idleResumeProof) reconcile(status, statusThreadID, reportedID, requestedID string) {
-	if p.execution != nil && status == "idle" && threadExecutionID(statusThreadID) == requestedID && threadExecutionID(reportedID) == requestedID {
-		p.execution.reconcileIdleResume(p.generation)
-	}
-}
-
-// A rejected resume can still reveal active work on a registered thread.
-// Resolve the provider's returned identity against the connection registry.
-func (c *Client) reconcileRejectedResume(t *Thread) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if execution := c.executions[threadExecutionID(t.id)]; execution != nil {
-		execution.reconcileExternalActivity(t.threadExecution)
-	}
-}
-
-// unregisterThread removes a Thread from routing. Called when the thread
-// is archived or the caller drops it. Clears latestThreadID when the
-// removed thread was the most recent so SessionID() reverts to "" for
-// single-thread callers.
-func (c *Client) unregisterThread(threadID string) {
-	executionID := threadExecutionID(threadID)
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	delete(c.threads, executionID)
-	if execution := c.executions[executionID]; execution != nil {
-		// Keep unresolved activity for handles that still refer to this ID.
-		execution.invalidate()
-	}
-	if threadExecutionID(c.latestThreadID) == executionID {
-		c.latestThreadID = ""
+	if p.execution != nil && status == "idle" && threadexec.CanonicalID(statusThreadID) == requestedID && threadexec.CanonicalID(reportedID) == requestedID {
+		p.execution.ReconcileIdleResume(p.generation)
 	}
 }

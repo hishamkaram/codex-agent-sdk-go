@@ -93,7 +93,7 @@ func TestClient_SessionID_TracksLatestRegisteredThread(t *testing.T) {
 				case opRegister:
 					c.registerThread(&Thread{client: c, id: op.id})
 				case opUnregister:
-					c.unregisterThread(op.id)
+					c.threadRegistry.Archive(op.id)
 				}
 			}
 			if got := c.SessionID(); got != tt.wantSID {

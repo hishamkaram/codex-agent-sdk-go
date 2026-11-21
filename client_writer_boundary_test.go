@@ -11,6 +11,7 @@ import (
 
 	"github.com/hishamkaram/codex-agent-sdk-go/internal/jsonrpc"
 	sdklog "github.com/hishamkaram/codex-agent-sdk-go/internal/log"
+	"github.com/hishamkaram/codex-agent-sdk-go/internal/threadexec"
 	"github.com/hishamkaram/codex-agent-sdk-go/types"
 )
 
@@ -92,11 +93,12 @@ func TestClient_QueuedRunRejectsProviderActivityAtWriteBoundary(t *testing.T) {
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	runDone := make(chan error, 1)
+	atWriter := make(chan struct{}, 1)
 	go func() {
-		_, runErr := thread.Run(runCtx, "must stay off wire", nil)
+		_, runErr := thread.Run(withWriterWait(runCtx, atWriter), "must stay off wire", nil)
 		runDone <- runErr
 	}()
-	awaitReservedOperation(t, ctx, thread)
+	awaitExecutionTest(t, ctx, atWriter)
 	peer.push(json.RawMessage(`{"method":"thread/status/changed","params":{"threadId":"T","status":{"type":"active","activeFlags":[]}}}`))
 	peer.push(notify("turn/started", map[string]string{"threadId": "T", "turnId": "external"}))
 	awaitExecutionTest(t, ctx, ordered)
@@ -114,45 +116,59 @@ func TestClient_QueuedRunRejectsProviderActivityAtWriteBoundary(t *testing.T) {
 	}
 }
 
-func awaitReservedOperation(t *testing.T, ctx context.Context, thread *Thread) {
-	t.Helper()
-	for {
-		thread.mu.Lock()
-		ready, changed := thread.op != nil, thread.changed
-		thread.mu.Unlock()
-		if ready {
-			return
-		}
-		awaitExecutionTest(t, ctx, changed)
-	}
-}
-
-type cancelAfterContextCheck struct {
+// The first Done read on this uncontended admission is the writer's
+// slot select. The holder already has the slot when Run enters it.
+type writerWaitContext struct {
 	context.Context
-	cancel context.CancelFunc
+	entered chan<- struct{}
 }
 
-func (c cancelAfterContextCheck) Err() error {
-	err := c.Context.Err()
-	// Make cancellation land after the guard's first observation.
-	c.cancel()
-	return err
+func withWriterWait(ctx context.Context, entered chan<- struct{}) context.Context {
+	return writerWaitContext{Context: ctx, entered: entered}
 }
 
-func TestThread_DispatchRechecksCancellationBeforeCommit(t *testing.T) {
-	t.Parallel()
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	c := &Client{demux: jsonrpc.NewDemux(nil, nil, nil, jsonrpc.WithOrderedServerMessages())}
-	thread := newThread(c, "T")
-	op, err := thread.admit(ctx, thread.ID(), executeTurn, false)
-	if err != nil {
-		t.Fatal(err)
+func (ctx writerWaitContext) Done() <-chan struct{} {
+	select {
+	case ctx.entered <- struct{}{}:
+	default:
 	}
-	err = thread.markDispatch(cancelAfterContextCheck{Context: ctx, cancel: cancel}, op)
-	if !errors.Is(err, context.Canceled) || op.dispatched {
-		t.Fatalf("dispatch error = %v, dispatched = %t, want canceled before commit", err, op.dispatched)
+	return ctx.Context.Done()
+}
+
+// Hold the owner at the pre-write receipt check so the production
+// dispatcher can rendezvous without taking a private record mutex.
+func holdExecutionGuard(t *testing.T, ctx context.Context, thread *Thread) func() {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(ctx, time.Second)
+	entered, release, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	var releaseOnce sync.Once
+	unblock := func() {
+		releaseOnce.Do(func() { close(release) })
+		<-done
 	}
+	t.Cleanup(func() {
+		cancel()
+		unblock()
+	})
+	rejected := errors.New("test held execution")
+	wire := thread.executionWire()
+	wire.PostGuarded = func(ctx context.Context, _ string, _ any, guard func(context.Context) error) (*jsonrpc.PendingResponse, error) {
+		return nil, guard(ctx)
+	}
+	wire.PendingActivity = func() (bool, error) {
+		close(entered)
+		select {
+		case <-release:
+		case <-ctx.Done():
+		}
+		return false, rejected
+	}
+	go func() {
+		defer close(done)
+		_, _, _ = thread.record.Begin(ctx, thread.ID(), threadexec.Turn, false, "turn/start", nil, wire)
+	}()
+	awaitExecutionTest(t, ctx, entered)
+	return unblock
 }
 
 func TestClient_ReceivedProviderStartFencesOnlyItsThread(t *testing.T) {
@@ -208,8 +224,8 @@ func TestClient_ReceivedProviderStartFencesOnlyItsThread(t *testing.T) {
 	// The idle reply has already been applied. Hold ordered delivery on
 	// another thread, then prove the demux has read the next external start.
 	siblingEvents := func() <-chan types.ThreadEvent {
-		blocker.mu.Lock()
-		defer blocker.mu.Unlock()
+		release := holdExecutionGuard(t, ctx, blocker)
+		defer release()
 		peer.push(notify("turn/started", map[string]string{"threadId": "blocker", "turnId": "hold"}))
 		peer.push(json.RawMessage(`{"method":"turn/started","params":{"thread":{"id":"T"},"turn":{"id":"external"}}}`))
 		if _, sendErr := c.demux.Send(ctx, "wire/barrier", nil); sendErr != nil {

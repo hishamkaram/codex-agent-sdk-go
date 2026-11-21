@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/hishamkaram/codex-agent-sdk-go/internal/jsonrpc"
+	"github.com/hishamkaram/codex-agent-sdk-go/internal/threadexec"
 	"github.com/hishamkaram/codex-agent-sdk-go/types"
 )
 
@@ -27,7 +28,7 @@ func TestStartDispatcherCannotPublishConnectedAfterSourceExit(t *testing.T) {
 	}
 
 	client := &Client{
-		threads:                make(map[string]*Thread),
+		threadRegistry:         threadexec.NewRegistry(),
 		threadEventSubscribers: make(map[uint64]*threadEventSubscriber),
 	}
 	dispatcherCtx, dispatcherCancel := context.WithCancel(context.Background())
@@ -135,13 +136,7 @@ func TestSubscribeThreadEventsObserveRegisteredThreadStateBeforeEvent(t *testing
 
 	thread := newThread(c, "registered-thread")
 	c.registerThread(thread)
-	thread.mu.Lock()
-	locked := true
-	defer func() {
-		if locked {
-			thread.mu.Unlock()
-		}
-	}()
+	release := holdExecutionGuard(t, t.Context(), thread)
 
 	notificationDone := make(chan struct{})
 	go func() {
@@ -154,15 +149,13 @@ func TestSubscribeThreadEventsObserveRegisteredThreadStateBeforeEvent(t *testing
 
 	select {
 	case event := <-events:
-		thread.mu.Unlock()
-		locked = false
+		release()
 		<-notificationDone
 		t.Fatalf("subscriber observed event before registered thread state: %+v", event)
 	case <-time.After(250 * time.Millisecond):
 	}
 
-	thread.mu.Unlock()
-	locked = false
+	release()
 	select {
 	case event := <-events:
 		if event.ThreadID != thread.ID() {

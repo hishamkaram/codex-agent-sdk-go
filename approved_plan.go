@@ -15,14 +15,6 @@ import (
 
 const prepareApprovedPlanMethod = runtimeprobe.PrepareApprovedPlanMethod
 
-type approvedPlanState uint8
-
-const (
-	approvedPlanIdle approvedPlanState = iota
-	approvedPlanPreparing
-	approvedPlanUnconfirmed
-)
-
 // PrepareApprovedPlan prepares approved Markdown on a fresh destination
 // thread and returns the provider's first-turn prompt. Keep the destination
 // for exclusive use through the first Run. The source thread is not involved.
@@ -43,7 +35,7 @@ func (t *Thread) PrepareApprovedPlan(ctx context.Context, markdown string, opts 
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("%s: %w", caller, err)
 	}
-	if t.threadExecution == nil || t.isClosed() {
+	if t.record == nil || t.isClosed() {
 		return nil, fmt.Errorf("%s: %w", caller, types.ErrThreadClosed)
 	}
 	if err := t.client.checkApprovalReentry(ctx); err != nil {
@@ -84,33 +76,18 @@ type approvedPlanParams struct {
 	AttachmentPath string `json:"attachmentPath,omitempty"`
 }
 
-// prepareApprovedPlan owns the reservation through the matching reply. The
-// request does not start a turn or enter turn accounting. An ambiguous
-// response leaves only this execution record fenced.
 func (t *Thread) prepareApprovedPlan(ctx context.Context, params approvedPlanParams) (*types.PreparedApprovedPlan, error) {
-	if err := t.reserveApprovedPlan(ctx); err != nil {
-		return nil, err
-	}
-	next := approvedPlanIdle
-	defer func() { t.finishApprovedPlan(next) }()
-
-	pending, err := t.client.demux.PostGuarded(ctx, prepareApprovedPlanMethod, params, t.checkApprovedPlanDispatch)
+	var prepared *types.PreparedApprovedPlan
+	response, err := t.record.Prepare(ctx, t.id, prepareApprovedPlanMethod, params, t.executionWire(), func(raw json.RawMessage) error {
+		var decodeErr error
+		prepared, decodeErr = decodePreparedApprovedPlan(raw)
+		return decodeErr
+	})
 	if err != nil {
 		return nil, err
-	}
-	defer pending.Release()
-	response, err := pending.Wait(ctx)
-	if err != nil {
-		next = approvedPlanUnconfirmed
-		return nil, fmt.Errorf("preparation outcome is unknown: %w", err)
 	}
 	if response.Error != nil {
 		return nil, classifyRPCError(prepareApprovedPlanMethod, response.Error)
-	}
-	prepared, err := decodePreparedApprovedPlan(response.Result)
-	if err != nil {
-		next = approvedPlanUnconfirmed
-		return nil, err
 	}
 	return prepared, nil
 }
@@ -135,34 +112,4 @@ func decodePreparedApprovedPlan(raw json.RawMessage) (*types.PreparedApprovedPla
 		return nil, errors.New("preparation response contains an empty prompt")
 	}
 	return &types.PreparedApprovedPlan{Prompt: prompt}, nil
-}
-
-func (t *Thread) reserveApprovedPlan(ctx context.Context) error {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if t.closed.Load() {
-		return types.ErrThreadClosed
-	}
-	if t.approvedPlan != approvedPlanIdle || t.op != nil || t.externalActive || t.resuming != 0 || t.activeID() != "" {
-		return &ThreadExecutionUnconfirmedError{ThreadID: t.id}
-	}
-	t.approvedPlan = approvedPlanPreparing
-	t.signalLocked()
-	return nil
-}
-
-func (t *Thread) checkApprovedPlanDispatch(ctx context.Context) error {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	return t.checkDispatchLocked(ctx, t.approvedPlan == approvedPlanPreparing && t.op == nil)
-}
-
-func (e *threadExecution) finishApprovedPlan(next approvedPlanState) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.approvedPlan = next
-	e.signalLocked()
 }

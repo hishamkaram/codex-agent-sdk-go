@@ -13,6 +13,7 @@ import (
 	"github.com/hishamkaram/codex-agent-sdk-go/internal/hookbridge"
 	"github.com/hishamkaram/codex-agent-sdk-go/internal/jsonrpc"
 	sdklog "github.com/hishamkaram/codex-agent-sdk-go/internal/log"
+	"github.com/hishamkaram/codex-agent-sdk-go/internal/threadexec"
 	"github.com/hishamkaram/codex-agent-sdk-go/internal/transport"
 	"github.com/hishamkaram/codex-agent-sdk-go/types"
 	"go.uber.org/zap"
@@ -34,9 +35,7 @@ type Client struct {
 	initResult InitializeResult
 
 	mu                          sync.Mutex
-	threads                     map[string]*Thread
-	executions                  map[string]*threadExecution // guarded by mu, keyed by provider thread ID
-	latestThreadID              string
+	threadRegistry              *threadexec.Registry
 	fileApprovals               map[fileApprovalKey]fileApprovalContext // guarded by mu
 	threadEventSubscribers      map[uint64]*threadEventSubscriber
 	nextThreadEventSubscriberID uint64
@@ -81,8 +80,7 @@ func NewClient(ctx context.Context, opts *types.CodexOptions) (*Client, error) {
 	return &Client{
 		opts:                   opts,
 		logger:                 logger,
-		threads:                make(map[string]*Thread),
-		executions:             make(map[string]*threadExecution),
+		threadRegistry:         threadexec.NewRegistry(),
 		threadEventSubscribers: make(map[uint64]*threadEventSubscriber),
 	}, nil
 }
@@ -440,9 +438,7 @@ func (c *Client) Health() types.TransportHealth {
 // a daemon session that maps 1:1 onto a codex thread and needs to
 // persist the thread ID for crash-recovery resume.
 func (c *Client) SessionID() string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.latestThreadID
+	return c.threadRegistry.Latest()
 }
 
 // Close shuts down the dispatcher, closes every Thread's inbox, and
@@ -472,16 +468,8 @@ func (c *Client) Close(ctx context.Context) error {
 		subscriber.close()
 	}
 	c.threadEventSubscribers = nil
-	for _, t := range c.threads {
-		t.markClosed()
-	}
-	for _, execution := range c.executions {
-		execution.close()
-	}
-	c.executions = nil
-	c.threads = nil
-	c.latestThreadID = ""
 	c.mu.Unlock()
+	c.threadRegistry.Close()
 
 	var trErr error
 	if tr != nil {

@@ -8,6 +8,7 @@ holds public options, events and errors and imports no SDK internals.
   stdio. It uses [jsonrpc](../internal/jsonrpc) for framing and request routing.
 - [events](../internal/events) parses JSON-RPC notifications and provider
   requests into [types](../types) and encodes callback decisions.
+- [threadexec](../internal/threadexec) owns the canonical thread registry, execution records, and operation lifetimes.
 - [threadconfig](../internal/threadconfig) builds thread requests and validates workspace policy replies.
 - [runtimeprobe](../internal/runtimeprobe) reads CLI help and checks provider schemas.
 - [hookbridge](../internal/hookbridge) owns hook installation and the socket protocol shared
@@ -26,7 +27,7 @@ and guides in the map show the corresponding public use cases.
 | Task | Owner, state and boundary | Focused checks and consumers |
 | --- | --- | --- |
 | Connect, close, route or subscribe | [Client](../client.go) owns the registry, connection attempt, and post-connect dispatcher. [Dispatch](../client_dispatch.go) reads ordered server messages, delivers to registered threads, and publishes [subscriptions](../client_thread_events.go) for provider-created child activity. Teardown belongs to Client. | [Checks](#client-lifecycle-and-subscriptions). See the [streaming example](../examples/streaming/main.go). |
-| Start, resume, fork, run, or control a thread | [Client](../client.go) owns one [execution record](../thread_execution.go) per provider thread ID. Handles share admission and lifecycle evidence. Stream readers own bounded consumption. [Thread commands](../threads_commands.go) use the same handle, and [background terminal controls](../background_terminals.go) send exact provider IDs through the Client's RPC session. | [Checks](#threads-and-turn-controls). See [commands](commands.md), the [fork example](../examples/fork/main.go) and [MCP example](../examples/with_mcp/main.go). |
+| Start, resume, fork, run, or control a thread | [The thread registry](../internal/threadexec/registry.go) owns one [execution record](../internal/threadexec/record.go) per canonical provider thread ID. Handles share admission and lifecycle evidence. Stream readers own bounded consumption. [Thread commands](../threads_commands.go) use the same handle, and [background terminal controls](../background_terminals.go) send exact provider IDs through the Client's RPC session. | [Checks](#threads-and-turn-controls). See [commands](commands.md), the [fork example](../examples/fork/main.go) and [MCP example](../examples/with_mcp/main.go). |
 | Frame, correlate, parse or reply | [LineWriter](../internal/jsonrpc/framing.go) owns frame serialization. [Demux](../internal/jsonrpc/demux.go) owns pending requests by ID. [Approval parsing and encoding](../internal/events/approvals.go) are protocol translations. The ordered dispatcher captures file-approval context. One [approval worker](../client_approval_worker.go) runs callbacks and replies on the matching request ID. | [Checks](#framing-and-approvals). See [wire protocol](wire-protocol.md), [approvals](approvals.md) and the [approval example](../examples/with_approvals/main.go). |
 | Change a public event, option, usage counter, error, or history record | [types](../types) defines the public values. [The parser](../internal/events/parser.go) maps notifications and preserves unknown shapes. [Usage parsing](../internal/events/parser_lifecycle.go) reads provider snapshots. Thread.Run assembles the buffered result ([threads.go](../threads.go)), and [history](../thread_history.go) reads persisted records by RPC. | [Checks](#public-types-and-history). See the [wire protocol guide](wire-protocol.md) and [streaming example](../examples/streaming/main.go). |
 | Change executable discovery, spawn, environment, or optional capability detection | [transport](../internal/transport) owns executable resolution, child environment, pipes and reaping. [Runtime probes](../internal/runtimeprobe) validate schemas, parse CLI help, and apply supplied provider requirements. A CLI version alone cannot prove support. | [Checks](#transport-and-capability-probes). See [runtime prerequisites](../README.md#prerequisites) and [commands](commands.md). |
@@ -44,6 +45,7 @@ go test -race -short . -run 'Test(Client_.*Connect|Client_Close|SubscribeThreadE
 #### Threads and turn controls
 
 ```bash
+go test -race -short ./internal/threadexec
 go test -race -short . -run 'Test(Client_StartThreadAndRun|Thread_Interrupt|Thread_ActiveTurnID|BuildThreadStartParams|TerminateBackgroundTerminalAndInterruptThreadTurn)'
 ```
 
@@ -97,7 +99,7 @@ affected paths.
   with `threadId` and registers the child under its own ID. See
   [thread configuration](thread-options.md).
 - **Usage.** Streaming usage preserves provider snapshots. The ordered
-  [usage ledger](../thread_usage.go) measures buffered usage from matching
+  [usage ledger](../internal/threadexec/usage.go) measures buffered usage from matching
   terminal evidence and tracks provider cache reads and writes independently.
 - **Launch options.** Transport resolves the child environment once for each
   connection and its CLI probes. Overlay is the default, and replacement uses
@@ -106,15 +108,11 @@ affected paths.
 
 ## Choosing a package
 
-Use the smallest existing owner with the state and callers needed for the
-change. The [public client and dispatch split](https://github.com/hishamkaram/codex-agent-sdk-go/pull/32)
-already leaves framing, parsing, and subprocess lifecycle in focused internals.
-Moving Client dispatch alone would expose the private thread registry and
-approval state. Moving thread execution alone would expose the execution registry and
-the Client's private RPC session. Keep both paths in the root
-package and make the next shared approval encoder in events and keep thread request policy in threadconfig. Consider package extraction
-in a focused change only when it can remove a demonstrated dependency or
-state boundary problem without changing public imports or copying state.
+Use the package that owns the invariant. Thread execution owns admission, usage,
+and local consumption. Request configuration and runtime probes own their
+validation rules. The client composes the ordered notification and RPC paths
+and adapts them to the public types. Provider wire IDs remain exact on requests
+and errors even when handles share one canonical execution record.
 
 ## Persisted history and hook configuration
 

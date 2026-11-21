@@ -37,7 +37,7 @@ const maxDefaultGitDiffBytes = 1 << 20 // 1 MiB
 //     via GitDiffResult.ExitCode and err is set to a wrapped ExitError
 //   - context canceled → ctx.Err() propagated
 func (t *Thread) GitDiff(ctx context.Context, opts *types.GitDiffOptions) (*types.GitDiffResult, error) {
-	if t.closed.Load() {
+	if t.record.Closed() {
 		return nil, fmt.Errorf("codex.Thread.GitDiff: thread closed")
 	}
 	if t.cwd == "" {

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/hishamkaram/codex-agent-sdk-go/internal/jsonrpc"
+	"github.com/hishamkaram/codex-agent-sdk-go/internal/threadexec"
 	"github.com/hishamkaram/codex-agent-sdk-go/types"
 )
 
@@ -22,7 +23,7 @@ func TestThreadExecutionID(t *testing.T) {
 		"{67E55044-10B1-426F-9247-BB680E5FE0C8}",
 		"urn:uuid:67E55044-10B1-426F-9247-BB680E5FE0C8",
 	} {
-		if got := threadExecutionID(input); got != canonicalTestThreadID {
+		if got := threadexec.CanonicalID(input); got != canonicalTestThreadID {
 			t.Errorf("normalize %q = %q", input, got)
 		}
 	}
@@ -32,7 +33,7 @@ func TestThreadExecutionID(t *testing.T) {
 		"67E55044:10B1-426F-9247-BB680E5FE0C8",
 		"URN:UUID:67E55044-10B1-426F-9247-BB680E5FE0C8",
 	} {
-		if got := threadExecutionID(input); got != input {
+		if got := threadexec.CanonicalID(input); got != input {
 			t.Errorf("changed opaque ID %q to %q", input, got)
 		}
 	}

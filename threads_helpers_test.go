@@ -59,7 +59,6 @@ func initTestRepo(t *testing.T) string {
 func threadWithCwd(cwd string) *Thread {
 	th := newThread(nil, "test")
 	th.cwd = cwd
-	th.activeTurnID.Store("")
 	return th
 }
 
@@ -246,7 +245,7 @@ func TestThread_GitDiff_EmptyCwdErrors(t *testing.T) {
 func TestThread_GitDiff_ClosedThreadErrors(t *testing.T) {
 	t.Parallel()
 	th := threadWithCwd("/some/path")
-	th.markClosed()
+	th.record.Close()
 	_, err := th.GitDiff(context.Background(), nil)
 	if err == nil {
 		t.Fatal("expected error on closed thread")

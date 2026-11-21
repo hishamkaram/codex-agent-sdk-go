@@ -53,7 +53,6 @@ func TestThreadCommands_InputValidation(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			th := newThread(nil, "test")
-			th.activeTurnID.Store("")
 			err := tt.call(th)
 			if err == nil {
 				t.Fatal("expected error")
@@ -70,7 +69,6 @@ func TestThread_Steer_NoActiveTurn(t *testing.T) {
 	// Thread with empty activeTurnID and a non-empty input should
 	// return "no active turn" — same precondition as Interrupt.
 	th := newThread(nil, "test")
-	th.activeTurnID.Store("")
 	err := th.Steer(context.Background(), "extend the plan")
 	if err == nil {
 		t.Fatal("expected error")
@@ -92,7 +90,7 @@ func TestThread_SteerSendsExpectedTurnID(t *testing.T) {
 		return jsonrpc.Response{ID: req.ID, Error: &jsonrpc.RPCError{Code: -32601, Message: "unexpected method"}}
 	})
 	thread := newThread(client, "thread-1")
-	thread.activeTurnID.Store("turn-1")
+	thread.record.Observe(&types.TurnStarted{ThreadID: thread.ID(), TurnID: "turn-1"})
 
 	if err := thread.Steer(context.Background(), "include tests"); err != nil {
 		t.Fatalf("Steer: %v", err)
@@ -114,7 +112,6 @@ func TestThread_Interrupt_NoActiveTurnIsRecoverableSentinel(t *testing.T) {
 	t.Parallel()
 
 	th := newThread(nil, "test")
-	th.activeTurnID.Store("")
 	err := th.Interrupt(context.Background())
 	if err == nil {
 		t.Fatal("expected error")
@@ -128,10 +125,10 @@ func TestThread_ActiveTurnIDClearsOnTerminalTurnEvent(t *testing.T) {
 	t.Parallel()
 
 	th := newThread(nil, "test")
-	th.activeTurnID.Store("turn-1")
-	th.deliverEvent(&types.TurnCompleted{ThreadID: "test", TurnID: "turn-1", Status: "success"})
+	th.record.Observe(&types.TurnStarted{ThreadID: th.ID(), TurnID: "turn-1"})
+	th.record.Observe(&types.TurnCompleted{ThreadID: "test", TurnID: "turn-1", Status: "success"})
 
-	got, _ := th.activeTurnID.Load().(string)
+	got := th.record.ActiveID()
 	if got != "" {
 		t.Fatalf("activeTurnID = %q, want cleared", got)
 	}
@@ -141,10 +138,10 @@ func TestThread_ActiveTurnIDIgnoresOlderTerminalTurnEvent(t *testing.T) {
 	t.Parallel()
 
 	th := newThread(nil, "test")
-	th.activeTurnID.Store("turn-2")
-	th.deliverEvent(&types.TurnCompleted{ThreadID: "test", TurnID: "turn-1", Status: "success"})
+	th.record.Observe(&types.TurnStarted{ThreadID: th.ID(), TurnID: "turn-2"})
+	th.record.Observe(&types.TurnCompleted{ThreadID: "test", TurnID: "turn-1", Status: "success"})
 
-	got, _ := th.activeTurnID.Load().(string)
+	got := th.record.ActiveID()
 	if got != "turn-2" {
 		t.Fatalf("activeTurnID = %q, want turn-2", got)
 	}
@@ -182,8 +179,8 @@ func TestThread_Mutating_ClosedThread(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			th := newThread(nil, "test")
-			th.activeTurnID.Store("turn-1") // bypass Steer's "no active turn" check
-			th.markClosed()
+			th.record.Observe(&types.TurnStarted{ThreadID: th.ID(), TurnID: "turn-1"}) // bypass Steer's "no active turn" check
+			th.record.Close()
 			err := tt.call(th)
 			if err == nil {
 				t.Fatal("expected error")
@@ -223,7 +220,6 @@ func TestThread_StartReviewStreamed_TargetRequired(t *testing.T) {
 func TestThread_StartReviewStreamed_RejectsDetachedDelivery(t *testing.T) {
 	t.Parallel()
 	th := newThread(nil, "test")
-	th.activeTurnID.Store("")
 	_, err := th.StartReviewStreamed(context.Background(), types.ReviewOptions{
 		Target:   types.ReviewTargetUncommittedChanges(),
 		Delivery: types.ReviewDetached,
@@ -242,73 +238,6 @@ func TestCompactResult_NilSafe(t *testing.T) {
 	_, err := r.Wait(context.Background())
 	if err == nil {
 		t.Fatal("expected error on nil CompactResult")
-	}
-}
-
-func TestCompactResult_WaitCtxCancel(t *testing.T) {
-	t.Parallel()
-	// Simulate a CompactResult whose subscription channel will
-	// never fire. Wait must honor ctx cancellation promptly.
-	ch := make(chan *types.ContextCompacted, 1)
-	chPtr := &ch
-	th := newThread(nil, "test")
-	th.compactSub.Store(chPtr)
-	r := &CompactResult{ThreadID: "test", thread: th, chPtr: chPtr}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // immediately
-	_, err := r.Wait(ctx)
-	if err == nil {
-		t.Fatal("expected ctx error")
-	}
-	if !strings.Contains(err.Error(), "context canceled") {
-		t.Errorf("err = %q", err)
-	}
-	// After Wait with canceled ctx, detach must have cleared the
-	// subscription so a subsequent Compact could install its own.
-	if th.compactSub.Load() != nil {
-		t.Error("detach did not clear subscription on ctx-cancel")
-	}
-}
-
-func TestCompactResult_WaitSuccessDetaches(t *testing.T) {
-	t.Parallel()
-	ch := make(chan *types.ContextCompacted, 1)
-	chPtr := &ch
-	th := newThread(nil, "test")
-	th.compactSub.Store(chPtr)
-	r := &CompactResult{ThreadID: "test", thread: th, chPtr: chPtr}
-	want := &types.ContextCompacted{ThreadID: "test"}
-	ch <- want
-
-	got, err := r.Wait(context.Background())
-	if err != nil {
-		t.Fatalf("Wait: %v", err)
-	}
-	if got != want {
-		t.Fatalf("Wait event = %p, want %p", got, want)
-	}
-	if th.compactSub.Load() != nil {
-		t.Fatal("successful Wait did not detach subscription")
-	}
-}
-
-func TestCompactResult_WaitClosedThread(t *testing.T) {
-	t.Parallel()
-	ch := make(chan *types.ContextCompacted, 1)
-	chPtr := &ch
-	th := newThread(nil, "test")
-	th.compactSub.Store(chPtr)
-	r := &CompactResult{ThreadID: "test", thread: th, chPtr: chPtr}
-
-	// markClosed closes the channel — Wait observes it.
-	th.markClosed()
-	_, err := r.Wait(context.Background())
-	if err == nil {
-		t.Fatal("expected error on closed thread")
-	}
-	if !strings.Contains(err.Error(), "thread closed before compact completed") {
-		t.Errorf("err = %q", err)
 	}
 }
 

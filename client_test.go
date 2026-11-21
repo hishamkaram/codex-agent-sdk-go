@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hishamkaram/codex-agent-sdk-go/internal/jsonrpc"
 	"github.com/hishamkaram/codex-agent-sdk-go/types"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
@@ -85,10 +86,21 @@ func TestClient_CloseWaitsForDispatcherBeforeClosingCompactSubscription(t *testi
 	t.Parallel()
 	c, _ := NewClient(context.Background(), types.NewCodexOptions())
 	thread := newThread(c, "T-close")
-	sub := make(chan *types.ContextCompacted, 1)
-	subPtr := &sub
-	thread.compactSub.Store(subPtr)
-	c.threads[thread.ID()] = thread
+	srv := newMockCodexServer()
+	t.Cleanup(srv.close)
+	c.demux = jsonrpc.NewDemux(jsonrpc.NewLineReader(srv.serverIn), jsonrpc.NewLineWriter(srv.clientOut), c.logger)
+	c.demux.Run(t.Context())
+	c.connected.Store(true)
+	c.registerThread(thread)
+	compact, err := thread.Compact(t.Context(), nil)
+	if err != nil {
+		t.Fatalf("Compact: %v", err)
+	}
+	waitDone := make(chan error, 1)
+	go func() {
+		_, waitErr := compact.Wait(t.Context())
+		waitDone <- waitErr
+	}()
 	dispatcherDone := make(chan struct{})
 	c.dispatcherDone = dispatcherDone
 
@@ -104,14 +116,12 @@ func TestClient_CloseWaitsForDispatcherBeforeClosingCompactSubscription(t *testi
 		t.Fatalf("Close returned before dispatcher stopped: %v", err)
 	case <-time.After(50 * time.Millisecond):
 	}
-	if thread.closed.Load() {
+	if thread.isClosed() {
 		t.Fatal("thread closed before dispatcher stopped")
 	}
 	select {
-	case _, ok := <-sub:
-		if !ok {
-			t.Fatal("compact subscription closed before dispatcher stopped")
-		}
+	case err := <-waitDone:
+		t.Fatalf("compact subscription ended before dispatcher stopped: %v", err)
 	default:
 	}
 
@@ -124,15 +134,15 @@ func TestClient_CloseWaitsForDispatcherBeforeClosingCompactSubscription(t *testi
 	case <-time.After(2 * time.Second):
 		t.Fatal("Close hung after dispatcher stopped")
 	}
-	if !thread.closed.Load() {
+	if !thread.isClosed() {
 		t.Fatal("thread not closed after dispatcher stopped")
 	}
 	select {
-	case _, ok := <-sub:
-		if ok {
-			t.Fatal("compact subscription still open after thread close")
+	case err := <-waitDone:
+		if err == nil || !strings.Contains(err.Error(), "thread closed before compact completed") {
+			t.Fatalf("compact Wait = %v, want thread close", err)
 		}
-	default:
+	case <-ctx.Done():
 		t.Fatal("compact subscription was not closed")
 	}
 }
