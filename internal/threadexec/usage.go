@@ -1,4 +1,4 @@
-package codex
+package threadexec
 
 import "github.com/hishamkaram/codex-agent-sdk-go/types"
 

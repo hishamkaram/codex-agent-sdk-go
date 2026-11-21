@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/hishamkaram/codex-agent-sdk-go/internal/threadexec"
 	"github.com/hishamkaram/codex-agent-sdk-go/types"
 )
 
@@ -24,11 +25,7 @@ type CompactResult struct {
 	// ThreadID is the thread the compaction was requested on.
 	ThreadID string
 
-	thread *Thread
-	// chPtr is the EXACT pointer stored in Thread.compactSub (needed
-	// for CompareAndSwap on detach — atomic.Pointer compares by
-	// pointer identity, not channel value).
-	chPtr *chan *types.ContextCompacted
+	waiter threadexec.CompactWaiter
 }
 
 // Wait blocks until the matching `thread/compacted` notification
@@ -41,22 +38,5 @@ func (r *CompactResult) Wait(ctx context.Context) (*types.ContextCompacted, erro
 	if r == nil {
 		return nil, fmt.Errorf("codex.CompactResult.Wait: nil result")
 	}
-	defer r.detach()
-	select {
-	case <-ctx.Done():
-		return nil, fmt.Errorf("codex.CompactResult.Wait: %w", ctx.Err())
-	case ev, ok := <-*r.chPtr:
-		if !ok {
-			return nil, fmt.Errorf("codex.CompactResult.Wait: thread closed before compact completed")
-		}
-		return ev, nil
-	}
-}
-
-// detach removes the subscription from the Thread. Idempotent.
-func (r *CompactResult) detach() {
-	if r == nil || r.thread == nil || r.chPtr == nil {
-		return
-	}
-	r.thread.compactSub.CompareAndSwap(r.chPtr, nil)
+	return r.waiter.Wait(ctx)
 }

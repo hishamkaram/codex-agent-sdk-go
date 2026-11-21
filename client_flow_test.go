@@ -13,6 +13,7 @@ import (
 
 	"github.com/hishamkaram/codex-agent-sdk-go/internal/jsonrpc"
 	sdklog "github.com/hishamkaram/codex-agent-sdk-go/internal/log"
+	"github.com/hishamkaram/codex-agent-sdk-go/internal/threadexec"
 	"github.com/hishamkaram/codex-agent-sdk-go/types"
 )
 
@@ -159,10 +160,10 @@ func setupMockClient(t *testing.T, opts *types.CodexOptions, handleRequest func(
 	demux.Run(context.Background())
 
 	c := &Client{
-		opts:    opts,
-		logger:  logger,
-		demux:   demux,
-		threads: make(map[string]*Thread),
+		opts:           opts,
+		logger:         logger,
+		demux:          demux,
+		threadRegistry: threadexec.NewRegistry(),
 	}
 	c.connected.Store(true)
 	dispatcherCtx, dispatcherCancel := context.WithCancel(context.Background())
@@ -615,10 +616,10 @@ func TestClient_CloseUnblocksApprovalResponseWrite(t *testing.T) {
 		})
 
 	c := &Client{
-		opts:    opts,
-		logger:  logger,
-		demux:   demux,
-		threads: make(map[string]*Thread),
+		opts:           opts,
+		logger:         logger,
+		demux:          demux,
+		threadRegistry: threadexec.NewRegistry(),
 	}
 	c.connected.Store(true)
 	dispatcherCtx, dispatcherCancel := context.WithCancel(context.Background())
@@ -681,9 +682,7 @@ func TestClient_ArchiveThreadUnregisters(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c.mu.Lock()
-	_, present := c.threads[thread.ID()]
-	c.mu.Unlock()
+	present := c.threadRegistry.Lookup(thread.ID()) != nil
 	if !present {
 		t.Fatal("thread missing from routing table after StartThread")
 	}
@@ -691,10 +690,10 @@ func TestClient_ArchiveThreadUnregisters(t *testing.T) {
 	if err := c.ArchiveThread(ctx, thread.ID()); err != nil {
 		t.Fatal(err)
 	}
-	c.mu.Lock()
-	_, present = c.threads[thread.ID()]
-	c.mu.Unlock()
-	if present {
-		t.Fatal("thread still in routing table after ArchiveThread")
+	if c.threadRegistry.Lookup(thread.ID()) == nil {
+		t.Fatal("archive discarded the execution record still held by existing handles")
+	}
+	if got := c.SessionID(); got != "" {
+		t.Fatalf("SessionID after archive = %q, want empty", got)
 	}
 }

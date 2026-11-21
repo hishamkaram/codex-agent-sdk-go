@@ -752,8 +752,8 @@ func TestClient_IdleResumeCannotOvertakeQueuedProviderStart(t *testing.T) {
 
 	// The first notification holds the dispatcher on another thread.
 	// Queue the foreign root before letting the peer write the idle reply.
-	blocker.mu.Lock()
-	defer blocker.mu.Unlock()
+	release := holdExecutionGuard(t, ctx, blocker)
+	defer release()
 	peer.push(notify("turn/started", map[string]string{"threadId": "blocker", "turnId": "barrier"}))
 	peer.push(notify("turn/started", map[string]string{"threadId": "T", "turnId": "external"}))
 	close(allowIdle)

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/hishamkaram/codex-agent-sdk-go/internal/threadexec"
 	"github.com/hishamkaram/codex-agent-sdk-go/types"
 )
 
@@ -89,8 +90,8 @@ func (t *Thread) Steer(ctx context.Context, text string) error {
 		return fmt.Errorf("codex.Thread.Steer: thread closed")
 	}
 	tid := ""
-	if t.threadExecution != nil {
-		tid = t.activeID()
+	if t.record != nil {
+		tid = t.record.ActiveID()
 	}
 	if tid == "" {
 		return fmt.Errorf("codex.Thread.Steer: no active turn")
@@ -139,11 +140,11 @@ func (t *Thread) Compact(ctx context.Context, opts *types.CompactOptions) (*Comp
 	if opts != nil && opts.Strategy != "" {
 		params.Strategy = opts.Strategy
 	}
-	op, _, err := t.beginOperation(ctx, executeCompact, false, "thread/compact/start", params)
+	op, _, err := t.beginOperation(ctx, threadexec.Compact, false, "thread/compact/start", params)
 	if err != nil {
 		return nil, fmt.Errorf("codex.Thread.Compact: %w", err)
 	}
-	return &CompactResult{ThreadID: t.id, thread: t, chPtr: op.compactCh}, nil
+	return &CompactResult{ThreadID: t.id, waiter: t.record.CompactWaiter(op)}, nil
 }
 
 // Summarize is sugar for `Compact(ctx, nil)` — a discoverable alias
@@ -184,7 +185,7 @@ func (t *Thread) StartReview(ctx context.Context, opts types.ReviewOptions) (*ty
 		}
 		result, err = t.client.sendRaw(ctx, "Thread.StartReview", "review/start", params)
 	} else {
-		_, reply, startErr := t.beginOperation(ctx, executeReview, false, "review/start", params)
+		_, reply, startErr := t.beginOperation(ctx, threadexec.Review, false, "review/start", params)
 		result, err = reply.Result, startErr
 	}
 	if err != nil {
@@ -217,9 +218,9 @@ func (t *Thread) StartReviewStreamed(ctx context.Context, opts types.ReviewOptio
 	}
 
 	params := types.ReviewStartParams{ThreadID: t.id, Target: opts.Target, Delivery: opts.Delivery}
-	op, _, err := t.beginOperation(ctx, executeReview, true, "review/start", params)
+	op, _, err := t.beginOperation(ctx, threadexec.Review, true, "review/start", params)
 	if err != nil {
 		return nil, fmt.Errorf("codex.Thread.StartReviewStreamed: %w", err)
 	}
-	return t.streamOperation(ctx, op), nil
+	return t.record.Stream(ctx, op, t.executionWire()), nil
 }
