@@ -1,8 +1,7 @@
-package codex
+package hookbridge
 
 import (
 	"bytes"
-	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,23 +13,12 @@ import (
 	"github.com/hishamkaram/codex-agent-sdk-go/types"
 )
 
-// newTestClient builds a Client with just enough wiring for the hook
-// backup/restore unit tests (no transport, no opts.HookCallback). The
-// returned client is safe to call installHooksJSON / restoreUserHooksJSON
-// on; nothing else is exercised.
-func newTestClient(t *testing.T) *Client {
-	t.Helper()
-	return &Client{
-		logger: sdklog.NewLoggerFromZap(nil),
-	}
-}
-
 func TestInstallHooksJSON_NoExistingConfig_RemoveOnRestore(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
-	c := newTestClient(t)
+	resources := installationResources{logger: sdklog.NewLoggerFromZap(nil)}
 
-	if err := c.installHooksJSON(home, "/path/to/shim"); err != nil {
+	if err := resources.installHooksJSON(home, "/path/to/shim"); err != nil {
 		t.Fatalf("installHooksJSON: %v", err)
 	}
 	hooksPath := filepath.Join(home, ".codex", "hooks.json")
@@ -44,14 +32,11 @@ func TestInstallHooksJSON_NoExistingConfig_RemoveOnRestore(t *testing.T) {
 	if !strings.Contains(string(data), `"/path/to/shim"`) {
 		t.Errorf("generated hooks.json missing shim path: %s", data)
 	}
-	if c.hookHadUserConfig {
-		t.Error("hookHadUserConfig should be false when no prior config existed")
-	}
-	if c.hookBackupPath != "" {
-		t.Errorf("hookBackupPath should be empty when no prior config: %q", c.hookBackupPath)
+	if resources.backupPath != "" {
+		t.Errorf("hookBackupPath should be empty when no prior config: %q", resources.backupPath)
 	}
 
-	c.restoreUserHooksJSON()
+	resources.restoreHooksJSON()
 	if _, err := os.Stat(hooksPath); !os.IsNotExist(err) {
 		t.Errorf("hooks.json should be removed after restore (no prior config); stat err = %v", err)
 	}
@@ -70,8 +55,8 @@ func TestInstallHooksJSON_ExistingConfig_BackupAndRestoreByteIdentical(t *testin
 		t.Fatal(err)
 	}
 
-	c := newTestClient(t)
-	if err := c.installHooksJSON(home, "/path/to/sdk-shim"); err != nil {
+	resources := installationResources{logger: sdklog.NewLoggerFromZap(nil)}
+	if err := resources.installHooksJSON(home, "/path/to/sdk-shim"); err != nil {
 		t.Fatalf("installHooksJSON: %v", err)
 	}
 
@@ -83,13 +68,10 @@ func TestInstallHooksJSON_ExistingConfig_BackupAndRestoreByteIdentical(t *testin
 	if !strings.Contains(string(got), `"/path/to/sdk-shim"`) {
 		t.Errorf("hooks.json not overwritten with SDK config: %s", got)
 	}
-	if !c.hookHadUserConfig {
-		t.Error("hookHadUserConfig should be true")
-	}
-	if c.hookBackupPath == "" {
+	if resources.backupPath == "" {
 		t.Fatal("hookBackupPath empty after backup")
 	}
-	backup, err := os.ReadFile(c.hookBackupPath)
+	backup, err := os.ReadFile(resources.backupPath)
 	if err != nil {
 		t.Fatalf("backup unreadable: %v", err)
 	}
@@ -98,7 +80,7 @@ func TestInstallHooksJSON_ExistingConfig_BackupAndRestoreByteIdentical(t *testin
 	}
 
 	// Restore — original must come back byte-for-byte and backup file removed.
-	c.restoreUserHooksJSON()
+	resources.restoreHooksJSON()
 	restored, err := os.ReadFile(hooksPath)
 	if err != nil {
 		t.Fatalf("hooks.json gone after restore: %v", err)
@@ -106,7 +88,7 @@ func TestInstallHooksJSON_ExistingConfig_BackupAndRestoreByteIdentical(t *testin
 	if !bytes.Equal(restored, original) {
 		t.Errorf("restored hooks.json not byte-identical to original:\nwant: %s\ngot:  %s", original, restored)
 	}
-	if _, err := os.Stat(c.hookBackupPath); !os.IsNotExist(err) {
+	if _, err := os.Stat(resources.backupPath); !os.IsNotExist(err) {
 		t.Errorf("backup file should be removed after successful restore: %v", err)
 	}
 }
@@ -137,8 +119,8 @@ func TestInstallHooksJSON_StaleBackupRecovered(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	c := newTestClient(t)
-	if err := c.installHooksJSON(home, "/path/to/new-shim"); err != nil {
+	resources := installationResources{logger: sdklog.NewLoggerFromZap(nil)}
+	if err := resources.installHooksJSON(home, "/path/to/new-shim"); err != nil {
 		t.Fatalf("installHooksJSON: %v", err)
 	}
 
@@ -154,7 +136,7 @@ func TestInstallHooksJSON_StaleBackupRecovered(t *testing.T) {
 	// The backup created during install should hold the user's TRUE
 	// original (recovered from the stale backup), not the dead
 	// SDK-written config that was on disk pre-install.
-	backup, err := os.ReadFile(c.hookBackupPath)
+	backup, err := os.ReadFile(resources.backupPath)
 	if err != nil {
 		t.Fatalf("backup unreadable: %v", err)
 	}
@@ -168,7 +150,7 @@ func TestInstallHooksJSON_StaleBackupRecovered(t *testing.T) {
 	}
 
 	// Round-trip: restore returns the user's original byte-for-byte.
-	c.restoreUserHooksJSON()
+	resources.restoreHooksJSON()
 	restored, err := os.ReadFile(hooksPath)
 	if err != nil {
 		t.Fatal(err)
@@ -194,8 +176,8 @@ func TestInstallHooksJSON_FreshConcurrentBackupRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	c := newTestClient(t)
-	err := c.installHooksJSON(home, "/shim")
+	resources := installationResources{logger: sdklog.NewLoggerFromZap(nil)}
+	err := resources.installHooksJSON(home, "/shim")
 	if err == nil {
 		t.Fatal("expected concurrent-SDK refusal error, got nil")
 	}
@@ -208,96 +190,115 @@ func TestInstallHooksJSON_FreshConcurrentBackupRefused(t *testing.T) {
 		t.Errorf("fresh concurrent backup must not be removed: %v", err)
 	}
 	// Our own state must be unchanged — we never wrote anything.
-	if c.hookHooksJSONPath != "" {
-		t.Errorf("hookHooksJSONPath should be empty on refusal, got %q", c.hookHooksJSONPath)
+	if resources.hooksPath != "" {
+		t.Errorf("hookHooksJSONPath should be empty on refusal, got %q", resources.hooksPath)
 	}
-	if c.hookBackupPath != "" {
-		t.Errorf("hookBackupPath should be empty on refusal, got %q", c.hookBackupPath)
+	if resources.backupPath != "" {
+		t.Errorf("hookBackupPath should be empty on refusal, got %q", resources.backupPath)
 	}
 }
 
-func TestRestoreUserHooksJSON_NoOpWhenNeverInstalled(t *testing.T) {
+func TestInstallationCloseWithoutSetup(t *testing.T) {
 	t.Parallel()
-	c := newTestClient(t)
-	// Did not call installHooksJSON. restoreUserHooksJSON must be a no-op.
-	c.restoreUserHooksJSON()
+	var installation Installation
+	installation.Close()
 }
 
-func TestSetupHookBridge_DefaultIsolatedCODEXHome(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+func writeTestShim(t *testing.T) string {
+	t.Helper()
 	shim := filepath.Join(t.TempDir(), "codex-sdk-hook-shim")
 	if err := os.WriteFile(shim, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
 		t.Fatalf("write shim: %v", err)
 	}
-	c := newTestClient(t)
-	c.opts = types.NewCodexOptions().
-		WithShimPath(shim).
-		WithHookCallback(types.DefaultAllowHookHandler)
-	var env []string
-	if err := c.setupHookBridge(context.Background(), &env, ""); err != nil {
-		t.Fatalf("setupHookBridge: %v", err)
-	}
-	t.Cleanup(func() {
-		if c.hookListener != nil {
-			_ = c.hookListener.Close()
-		}
-		c.restoreUserHooksJSON()
-		if c.hookCodexHome != "" {
-			_ = os.RemoveAll(c.hookCodexHome)
-		}
-	})
+	return shim
+}
 
-	userHooks := filepath.Join(home, ".codex", "hooks.json")
+func setupTestInstallation(t *testing.T) (*Installation, []string) {
+	t.Helper()
+	t.Setenv("HOME", t.TempDir())
+	installation := &Installation{}
+	env, err := installation.Setup(t.Context(), InstallationConfig{
+		ShimPath: writeTestShim(t),
+		Handler:  types.DefaultAllowHookHandler,
+	})
+	if err != nil {
+		t.Fatalf("setup installation: %v", err)
+	}
+	t.Cleanup(installation.Close)
+	return installation, env
+}
+
+func TestInstallationDefaultsToIsolatedCodexHome(t *testing.T) {
+	installation, env := setupTestInstallation(t)
+
+	userHooks := filepath.Join(os.Getenv("HOME"), ".codex", "hooks.json")
 	if _, err := os.Stat(userHooks); !os.IsNotExist(err) {
 		t.Fatalf("user hooks.json should not be created in isolated mode, stat err=%v", err)
 	}
-	var codexHome string
-	for _, entry := range env {
-		if strings.HasPrefix(entry, "CODEX_HOME=") {
-			codexHome = strings.TrimPrefix(entry, "CODEX_HOME=")
-		}
-	}
-	if codexHome == "" || codexHome != c.hookCodexHome {
-		t.Fatalf("CODEX_HOME env = %q, hookCodexHome=%q", codexHome, c.hookCodexHome)
+
+	codexHome := installation.resources.codexHome
+	socket := installation.resources.listener.SocketPath()
+	if len(env) != 2 || env[0] != "CODEX_HOME="+codexHome || env[1] != "CODEX_SDK_HOOK_SOCKET="+socket {
+		t.Fatalf("app-server env = %q, want isolated home %q and hook socket %q", env, codexHome, socket)
 	}
 	if _, err := os.Stat(filepath.Join(codexHome, "hooks.json")); err != nil {
 		t.Fatalf("isolated hooks.json missing: %v", err)
 	}
 }
 
-func TestClient_CloseHookBridgeConcurrentIsRaceFree(t *testing.T) {
-	home := t.TempDir()
+func TestInstallationCloseConcurrentIsRaceFree(t *testing.T) {
+	installation, _ := setupTestInstallation(t)
+	codexHome := installation.resources.codexHome
+	socket := installation.resources.listener.SocketPath()
+
+	var workers sync.WaitGroup
+	for range 8 {
+		workers.Go(installation.Close)
+	}
+	workers.Wait()
+
+	if installation.resources != (installationResources{}) {
+		t.Fatal("installation retained resources after Close")
+	}
+	for _, path := range []string{codexHome, socket} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Errorf("%s was not removed on Close: %v", path, err)
+		}
+	}
+}
+
+func TestInstallationSetupFailureRemovesRelocatedSocket(t *testing.T) {
+	home := filepath.Join(t.TempDir(), strings.Repeat("h", maxUnixSocketLen))
 	t.Setenv("HOME", home)
-	shim := filepath.Join(t.TempDir(), "codex-sdk-hook-shim")
-	if err := os.WriteFile(shim, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
-		t.Fatalf("write shim: %v", err)
+	runtimeDir, err := os.MkdirTemp("", "cxrt-")
+	if err != nil {
+		t.Fatalf("create runtime directory: %v", err)
 	}
-	c := newTestClient(t)
-	c.opts = types.NewCodexOptions().
-		WithShimPath(shim).
-		WithHookCallback(types.DefaultAllowHookHandler)
-	var env []string
-	if err := c.setupHookBridge(context.Background(), &env, ""); err != nil {
-		t.Fatalf("setupHookBridge: %v", err)
+	t.Cleanup(func() {
+		if removeErr := os.RemoveAll(runtimeDir); removeErr != nil {
+			t.Errorf("remove runtime directory: %v", removeErr)
+		}
+	})
+	if len(filepath.Join(runtimeDir, "cxh-0000000000", "h.sock")) > maxUnixSocketLen {
+		t.Skip("temporary directory too long for a relocated listener")
 	}
+	t.Setenv("XDG_RUNTIME_DIR", runtimeDir)
 
-	const workers = 8
-	var wg sync.WaitGroup
-	wg.Add(workers)
-	for i := 0; i < workers; i++ {
-		go func() {
-			defer wg.Done()
-			c.closeHookBridge()
-		}()
+	var installation Installation
+	env, err := installation.Setup(t.Context(), InstallationConfig{
+		ShimPath: writeTestShim(t),
+		Handler:  types.DefaultAllowHookHandler,
+		Mode:     "invalid",
+	})
+	if err == nil || !strings.Contains(err.Error(), "unsupported hook config mode") {
+		t.Fatalf("Setup error = %v, want unsupported hook config mode", err)
 	}
-	wg.Wait()
-
-	if c.hookListener != nil {
-		t.Fatal("hook listener was not cleared")
+	if env != nil {
+		t.Errorf("failed installation returned environment additions: %v", env)
 	}
-	if c.hookCodexHome != "" || c.hookSocketDir != "" || c.hookHooksJSONPath != "" {
-		t.Fatalf("hook bridge paths were not cleared: codexHome=%q socketDir=%q hooksPath=%q",
-			c.hookCodexHome, c.hookSocketDir, c.hookHooksJSONPath)
+	entries, err := os.ReadDir(runtimeDir)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("failed installation left a socket directory: %v, read error: %v", entries, err)
 	}
+	installation.Close()
 }

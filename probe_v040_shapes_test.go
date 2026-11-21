@@ -94,10 +94,11 @@ func safetyNetCodexConfig(t *testing.T) {
 	cfgPath := filepath.Join(home, ".codex", "config.toml")
 	stash := filepath.Join(t.TempDir(), "config.toml.stash")
 
-	original, hadOriginal, err := readIfExists(cfgPath)
-	if err != nil {
+	original, err := os.ReadFile(cfgPath)
+	if err != nil && !os.IsNotExist(err) {
 		t.Fatalf("safety-net read: %v", err)
 	}
+	hadOriginal := err == nil
 	if hadOriginal {
 		if err := os.WriteFile(stash, original, 0o600); err != nil {
 			t.Fatalf("safety-net stash: %v", err)

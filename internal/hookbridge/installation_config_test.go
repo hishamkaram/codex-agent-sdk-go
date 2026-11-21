@@ -1,4 +1,4 @@
-package codex
+package hookbridge
 
 import (
 	"fmt"
@@ -33,26 +33,23 @@ func TestDetectConcurrentSDK(t *testing.T) {
 
 	t.Run("missing dir returns nil", func(t *testing.T) {
 		t.Parallel()
-		c := newTestClient(t)
-		if err := c.detectConcurrentSDK(filepath.Join(t.TempDir(), "absent")); err != nil {
+		if err := detectConcurrentSDK(filepath.Join(t.TempDir(), "absent")); err != nil {
 			t.Fatalf("missing dir: want nil, got %v", err)
 		}
 	})
 
 	t.Run("empty dir returns nil", func(t *testing.T) {
 		t.Parallel()
-		c := newTestClient(t)
-		if err := c.detectConcurrentSDK(t.TempDir()); err != nil {
+		if err := detectConcurrentSDK(t.TempDir()); err != nil {
 			t.Fatalf("empty dir: want nil, got %v", err)
 		}
 	})
 
 	t.Run("fresh foreign-PID backup is detected", func(t *testing.T) {
 		t.Parallel()
-		c := newTestClient(t)
 		dir := t.TempDir()
 		foreignBackup(t, dir, 0)
-		err := c.detectConcurrentSDK(dir)
+		err := detectConcurrentSDK(dir)
 		if err == nil {
 			t.Fatal("fresh foreign backup: want error, got nil")
 		}
@@ -63,10 +60,9 @@ func TestDetectConcurrentSDK(t *testing.T) {
 
 	t.Run("stale foreign-PID backup is ignored", func(t *testing.T) {
 		t.Parallel()
-		c := newTestClient(t)
 		dir := t.TempDir()
 		foreignBackup(t, dir, 2*staleBackupAge)
-		if err := c.detectConcurrentSDK(dir); err != nil {
+		if err := detectConcurrentSDK(dir); err != nil {
 			t.Fatalf("stale backup: want nil, got %v", err)
 		}
 	})
