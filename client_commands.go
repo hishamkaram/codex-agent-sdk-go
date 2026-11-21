@@ -91,6 +91,13 @@ func (c *Client) ListModels(ctx context.Context) ([]types.ModelInfo, error) {
 		if err != nil {
 			return nil, err
 		}
+		if page.Data == nil {
+			// Older providers may omit data on a single terminal page.
+			if opts.Cursor == nil && page.NextCursor == nil {
+				return nil, nil
+			}
+			return nil, fmt.Errorf("codex.Client.ListModels: response data must be a non-null array")
+		}
 		models = append(models, page.Data...)
 		if page.NextCursor == nil {
 			return models, nil
@@ -112,7 +119,14 @@ func (c *Client) ListModelsPage(ctx context.Context, opts *types.ModelListOption
 	if opts != nil {
 		params = *opts
 	}
-	return c.listModelsPage(ctx, "ListModelsPage", params)
+	page, err := c.listModelsPage(ctx, "ListModelsPage", params)
+	if err != nil {
+		return nil, err
+	}
+	if page.Data == nil {
+		return nil, fmt.Errorf("codex.Client.ListModelsPage: response data must be a non-null array")
+	}
+	return page, nil
 }
 
 func (c *Client) listModelsPage(ctx context.Context, callerName string, params types.ModelListOptions) (*types.ModelListResult, error) {
@@ -123,9 +137,6 @@ func (c *Client) listModelsPage(ctx context.Context, callerName string, params t
 	var result types.ModelListResult
 	if err := json.Unmarshal(resp, &result); err != nil {
 		return nil, fmt.Errorf("codex.Client.%s: decode response: %w", callerName, err)
-	}
-	if result.Data == nil {
-		return nil, fmt.Errorf("codex.Client.%s: response data must be a non-null array", callerName)
 	}
 	return &result, nil
 }
@@ -168,7 +179,14 @@ func (c *Client) ListMCPServerStatusPage(ctx context.Context, opts *types.MCPSer
 	default:
 		return nil, fmt.Errorf("codex.Client.ListMCPServerStatusPage: invalid inventory detail")
 	}
-	return c.listMCPServerStatusPage(ctx, "ListMCPServerStatusPage", params)
+	page, err := c.listMCPServerStatusPage(ctx, "ListMCPServerStatusPage", params)
+	if err != nil {
+		return nil, err
+	}
+	if page.Data == nil {
+		return nil, fmt.Errorf("codex.Client.ListMCPServerStatusPage: response data must be a non-null array")
+	}
+	return page, nil
 }
 
 func (c *Client) listMCPServerStatusPage(ctx context.Context, callerName string, params types.MCPServerStatusListOptions) (*types.MCPServerStatusListResult, error) {
@@ -179,9 +197,6 @@ func (c *Client) listMCPServerStatusPage(ctx context.Context, callerName string,
 	var result types.MCPServerStatusListResult
 	if err := json.Unmarshal(resp, &result); err != nil {
 		return nil, fmt.Errorf("codex.Client.%s: decode response: %w", callerName, err)
-	}
-	if result.Data == nil {
-		return nil, fmt.Errorf("codex.Client.%s: response data must be a non-null array", callerName)
 	}
 	return &result, nil
 }

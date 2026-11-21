@@ -57,6 +57,56 @@ func TestListModelsEmptyInventoryWithoutCursor(t *testing.T) {
 	assertThreadConfigJSON(t, wire[0].Params, `{}`)
 }
 
+func TestListModelsKeepsLegacyNilInventory(t *testing.T) {
+	t.Parallel()
+
+	for _, response := range []string{`{}`, `{"data":null,"nextCursor":null}`} {
+		t.Run(response, func(t *testing.T) {
+			t.Parallel()
+
+			c, server := setupMockClient(t, types.NewCodexOptions(), func(req jsonrpc.Request) jsonrpc.Response {
+				return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(response)}
+			})
+			models, err := c.ListModels(t.Context())
+			if err != nil || models != nil {
+				t.Fatalf("ListModels = %#v, %v, want a nil inventory without an error", models, err)
+			}
+			wire := observedThreadRequests(t, server)
+			assertThreadRequestMethods(t, wire, "model/list")
+			assertThreadConfigJSON(t, wire[0].Params, `{}`)
+		})
+	}
+}
+
+func TestListModelsRejectsIncompleteFirstPage(t *testing.T) {
+	t.Parallel()
+
+	const response = `{"nextCursor":""}`
+	c, server := setupMockClient(t, types.NewCodexOptions(), func(req jsonrpc.Request) jsonrpc.Response {
+		return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(response)}
+	})
+	models, err := c.ListModels(t.Context())
+	if models != nil || err == nil || errors.Is(err, ErrModelPagination) {
+		t.Fatalf("ListModels = %#v, %v, want a nil inventory and a decode error on the first page", models, err)
+	}
+	assertThreadRequestMethods(t, observedThreadRequests(t, server), "model/list")
+}
+
+func TestInventoryExplicitPagesRequireDataArray(t *testing.T) {
+	t.Parallel()
+
+	c, server := setupMockClient(t, types.NewCodexOptions(), func(req jsonrpc.Request) jsonrpc.Response {
+		return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{}`)}
+	})
+	if page, err := c.ListModelsPage(t.Context(), nil); page != nil || err == nil {
+		t.Fatalf("ListModelsPage = %#v, %v, want a nil page and an error", page, err)
+	}
+	if page, err := c.ListMCPServerStatusPage(t.Context(), nil); page != nil || err == nil {
+		t.Fatalf("ListMCPServerStatusPage = %#v, %v, want a nil page and an error", page, err)
+	}
+	assertThreadRequestMethods(t, observedThreadRequests(t, server), "model/list", "mcpServerStatus/list")
+}
+
 func TestListModelsPageKeepsExactCursorAndFilters(t *testing.T) {
 	t.Parallel()
 
@@ -261,6 +311,19 @@ func TestListMCPServerStatusPagesKeepRegistrationIdentity(t *testing.T) {
 	assertThreadConfigJSON(t, wire[1].Params, `{"cursor":"mcp /+=="}`)
 	assertThreadConfigJSON(t, wire[2].Params, `{"limit":1,"threadId":"thread-id","serverName":"shared","environmentId":"env-b","detail":"toolsAndAuthOnly"}`)
 	assertThreadConfigJSON(t, wire[3].Params, `{"cursor":"filter /+==","limit":1,"threadId":"thread-id","serverName":"shared","environmentId":"env-b","detail":"toolsAndAuthOnly"}`)
+}
+
+func TestListMCPServerStatusKeepsLegacyNilData(t *testing.T) {
+	t.Parallel()
+
+	c, server := setupMockClient(t, types.NewCodexOptions(), func(req jsonrpc.Request) jsonrpc.Response {
+		return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{"data":null,"nextCursor":"next-page"}`)}
+	})
+	page, err := c.ListMCPServerStatus(t.Context())
+	if err != nil || page == nil || page.Data != nil || page.NextCursor == nil || *page.NextCursor != "next-page" {
+		t.Fatalf("ListMCPServerStatus = %#v, %v, want nil data and the cursor from the first page", page, err)
+	}
+	assertThreadRequestMethods(t, observedThreadRequests(t, server), "mcpServerStatus/list")
 }
 
 func TestListMCPServerStatusPageRejectsInvalidOptions(t *testing.T) {
