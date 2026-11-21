@@ -3,6 +3,7 @@ package codex
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/hishamkaram/codex-agent-sdk-go/internal/jsonrpc"
@@ -106,5 +107,30 @@ func TestReadThreadInvalidID(t *testing.T) {
 	_, err := c.ReadThread(context.Background(), "", nil)
 	if !types.IsInvalidThreadIDError(err) {
 		t.Fatalf("ReadThread empty err = %v, want invalid thread id", err)
+	}
+}
+
+func TestClientListThreadsReturnsOnlyFirstPage(t *testing.T) {
+	t.Parallel()
+
+	client, peer := setupMockClient(t, types.NewCodexOptions(), func(req jsonrpc.Request) jsonrpc.Response {
+		return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{"data":[{"id":"first"},{"id":"second"}],"nextCursor":"more-results"}`)}
+	})
+	threads, err := client.ListThreads(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(threads) != 2 || threads[0].ThreadID != "first" || threads[1].ThreadID != "second" {
+		t.Errorf("ListThreads() = %+v, want first-page order", threads)
+	}
+	requests := observedThreadRequests(t, peer)
+	assertThreadRequestMethods(t, requests, "thread/list")
+	assertThreadConfigJSON(t, requests[0].Params, `{}`)
+
+	if err := client.Close(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if threads, err := client.ListThreads(t.Context()); threads != nil || !errors.Is(err, types.ErrClientClosed) {
+		t.Errorf("ListThreads() after close = %v, %v, want ErrClientClosed", threads, err)
 	}
 }

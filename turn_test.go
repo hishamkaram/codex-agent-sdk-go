@@ -196,11 +196,29 @@ func TestClient_HeldApprovalKeepsDispatching(t *testing.T) {
 	defer stop()
 	entered := make(chan struct{})
 	release := make(chan struct{})
-	reentry := make(chan error, 1)
+	type callbackResult struct {
+		run, review, compact, closeClient, otherClient error
+	}
+	reentry := make(chan callbackResult, 1)
+	other, otherPeer := setupMockClient(t, types.NewCodexOptions(), func(req jsonrpc.Request) jsonrpc.Response {
+		if req.Method == "thread/start" {
+			return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{"thread":{"id":"independent"}}`)}
+		}
+		return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{}`)}
+	})
+	independent, err := other.StartThread(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var c *Client
 	var sibling *Thread
 	opts := types.NewCodexOptions().WithApprovalCallback(func(callbackCtx context.Context, _ types.ApprovalRequest) types.ApprovalDecision {
-		_, err := sibling.Run(callbackCtx, "recursive work", nil)
-		reentry <- err
+		_, runErr := sibling.Run(callbackCtx, "recursive work", nil)
+		_, reviewErr := sibling.StartReview(callbackCtx, types.ReviewOptions{Target: types.ReviewTargetUncommittedChanges()})
+		_, compactErr := sibling.Compact(callbackCtx, nil)
+		closeErr := c.Close(callbackCtx)
+		_, independentErr := independent.Compact(callbackCtx, nil)
+		reentry <- callbackResult{runErr, reviewErr, compactErr, closeErr, independentErr}
 		close(entered)
 		select {
 		case <-release:
@@ -208,7 +226,8 @@ func TestClient_HeldApprovalKeepsDispatching(t *testing.T) {
 		}
 		return types.ApprovalDeny{}
 	})
-	c, peer := setupMockClient(t, opts, func(req jsonrpc.Request) jsonrpc.Response {
+	var peer *mockCodexServer
+	c, peer = setupMockClient(t, opts, func(req jsonrpc.Request) jsonrpc.Response {
 		switch req.Method {
 		case "thread/start":
 			return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{"thread":{"id":"sibling"}}`)}
@@ -217,16 +236,26 @@ func TestClient_HeldApprovalKeepsDispatching(t *testing.T) {
 		}
 		return jsonrpc.Response{ID: req.ID, Result: json.RawMessage(`{}`)}
 	})
-	var err error
 	sibling, err = c.StartThread(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	peer.push(json.RawMessage(`{"id":"held","method":"item/permissions/requestApproval","params":{"threadId":"other","turnId":"held-turn","itemId":"i","cwd":"/work","startedAtMs":1782904297563,"permissions":{"network":{"enabled":true}}}}`))
 	awaitExecutionTest(t, ctx, entered)
-	if reentryErr := awaitExecutionTest(t, ctx, reentry); !errors.Is(reentryErr, ErrApprovalCallbackReentry) {
-		t.Fatalf("callback reentry error = %v", reentryErr)
+	result := awaitExecutionTest(t, ctx, reentry)
+	for _, operation := range []struct {
+		name string
+		err  error
+	}{{"Run", result.run}, {"StartReview", result.review}, {"Compact", result.compact}, {"Close", result.closeClient}} {
+		if !errors.Is(operation.err, ErrApprovalCallbackReentry) {
+			t.Errorf("callback %s returned %v, want ErrApprovalCallbackReentry", operation.name, operation.err)
+		}
 	}
+	if result.otherClient != nil {
+		t.Fatalf("callback failed to compact an independent client: %v", result.otherClient)
+	}
+	assertThreadRequestMethods(t, observedThreadRequests(t, peer), "thread/start")
+	assertThreadRequestMethods(t, observedThreadRequests(t, otherPeer), "thread/start", "thread/compact/start")
 	out, err := sibling.RunStreamed(ctx, "sibling work", nil)
 	if err != nil {
 		t.Fatal(err)

@@ -981,6 +981,10 @@ type turnProgramPeerRequest struct {
 }
 
 func serveTurnProgramPeerRPC(dir string) error {
+	reject, err := os.ReadFile(filepath.Join(dir, "reject-method"))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
 	scanner := bufio.NewScanner(os.Stdin)
 	starts := 0
 	for scanner.Scan() {
@@ -995,6 +999,12 @@ func serveTurnProgramPeerRPC(dir string) error {
 		if frame.Method == "thread/start" {
 			starts++
 		}
+		if len(reject) > 0 && frame.Method == string(reject) {
+			if _, err := fmt.Fprintf(os.Stdout, "{\"id\":%d,\"error\":{\"code\":-32123,\"message\":\"test provider rejected request\"}}\n", frame.ID); err != nil {
+				return err
+			}
+			continue
+		}
 		if err := replyTurnProgramPeer(frame, starts); err != nil {
 			return err
 		}
@@ -1006,10 +1016,12 @@ func replyTurnProgramPeer(frame turnProgramPeerRequest, starts int) error {
 	id := frame.ID
 	switch frame.Method {
 	case "initialize":
-		_, err := fmt.Fprintf(os.Stdout, "{\"id\":%d,\"result\":{}}\n", id)
+		_, err := fmt.Fprintf(os.Stdout, `{"id":%d,"result":{"userAgent":"sdk-peer","codexHome":"/fixture","platformFamily":"unix","platformOs":"linux"}}
+`, id)
 		return err
 	case "thread/start":
-		_, err := fmt.Fprintf(os.Stdout, "{\"id\":%d,\"result\":{\"thread\":{\"id\":\"t%d\"}}}\n", id, starts)
+		_, err := fmt.Fprintf(os.Stdout, `{"id":%d,"result":{"thread":{"id":"t%d"},"model":"fixture-model"}}
+`, id, starts)
 		return err
 	case "thread/prepareApprovedPlan":
 		return replyApprovedPlanPeer(frame)
