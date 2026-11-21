@@ -3,6 +3,7 @@ package hookbridge
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // HooksConfig is the hooks.json shape codex reads from ~/.codex/hooks.json.
@@ -63,7 +64,7 @@ func GenerateHooksJSON(shimPath string, timeoutSeconds int) ([]byte, error) {
 	}
 	handler := HookHandlerConfig{
 		Type:    "command",
-		Command: shimPath,
+		Command: shellCommandPath(shimPath),
 		Timeout: timeoutSeconds,
 	}
 	group := HookMatcherGroup{
@@ -80,4 +81,14 @@ func GenerateHooksJSON(shimPath string, timeoutSeconds int) ([]byte, error) {
 		},
 	}
 	return json.MarshalIndent(cfg, "", "  ")
+}
+
+// shellCommandPath preserves ordinary command paths and quotes paths that
+// contain shell syntax so Codex invokes the shim as one executable name.
+func shellCommandPath(path string) string {
+	const literal = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/_-."
+	if strings.IndexFunc(path, func(r rune) bool { return !strings.ContainsRune(literal, r) }) < 0 {
+		return path
+	}
+	return "'" + strings.ReplaceAll(path, "'", "'\\''") + "'"
 }

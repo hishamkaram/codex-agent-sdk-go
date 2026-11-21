@@ -102,6 +102,7 @@ type AppServer struct {
 	lastErr     error // first transport-level error (give-up, unexpected exit)
 	closedOnce  sync.Once
 	connectOnce sync.Once
+	connectErr  error     // the single launch result, published by connectOnce
 	exitOnce    sync.Once // guards the single OnSubprocessExit emission
 }
 
@@ -119,11 +120,11 @@ func NewAppServer(cfg AppServerConfig) *AppServer {
 	return &AppServer{cfg: cfg, logger: logger, observer: observer}
 }
 
-// Connect spawns the subprocess and starts the demux read loop.
+// Connect spawns the subprocess and starts the demux read loop once.
+// Repeated calls return the result of the same launch attempt.
 func (t *AppServer) Connect(ctx context.Context) error {
-	var connErr error
-	t.connectOnce.Do(func() { connErr = t.doConnect(ctx) })
-	return connErr
+	t.connectOnce.Do(func() { t.connectErr = t.doConnect(ctx) })
+	return t.connectErr
 }
 
 func (t *AppServer) doConnect(ctx context.Context) error {
