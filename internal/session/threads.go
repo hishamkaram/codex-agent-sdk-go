@@ -23,7 +23,11 @@ type ThreadHandle struct {
 
 // StartThread dispatches a prepared creation request and registers its result.
 func (s *Session) StartThread(ctx context.Context, request threadconfig.CreationRequest) (ThreadHandle, error) {
-	resp, err := s.Demux().Send(ctx, "thread/start", s.hooks.ThreadParams(request.Params))
+	params, err := s.hooks.ThreadParams(request.Params)
+	if err != nil {
+		return ThreadHandle{}, fmt.Errorf("codex.Client.StartThread: %w", err)
+	}
+	resp, err := s.Demux().Send(ctx, "thread/start", params)
 	if err != nil {
 		return ThreadHandle{}, fmt.Errorf("codex.Client.StartThread: %w", err)
 	}
@@ -45,13 +49,17 @@ func (s *Session) StartThread(ctx context.Context, request threadconfig.Creation
 // ResumeThread observes a provisional record before dispatch and reconciles
 // provider activity before publishing the resumed handle.
 func (s *Session) ResumeThread(ctx context.Context, requestedID string, params map[string]any, cwd, reasoningEffort string) (ThreadHandle, error) {
+	params, err := s.hooks.ThreadParams(params)
+	if err != nil {
+		return ThreadHandle{}, fmt.Errorf("codex.Client.ResumeThread: %w", err)
+	}
 	observationID := threadexec.CanonicalID(requestedID)
 	observation := s.Threads().BeginResume(observationID, s.Closed)
 	if observation == nil {
 		return ThreadHandle{}, fmt.Errorf("codex.Client.ResumeThread: %w", types.ErrClientClosed)
 	}
 	defer s.Threads().EndResume(observationID, observation)
-	resp, idleProof, err := s.requestThreadResume(ctx, s.hooks.ThreadParams(params), observation)
+	resp, idleProof, err := s.requestThreadResume(ctx, params, observation)
 	if err != nil {
 		return ThreadHandle{}, fmt.Errorf("codex.Client.ResumeThread: %w", err)
 	}
@@ -76,7 +84,11 @@ func (s *Session) ResumeThread(ctx context.Context, requestedID string, params m
 
 // ForkThread dispatches a prepared fork request and registers the child.
 func (s *Session) ForkThread(ctx context.Context, sourceID string, request threadconfig.CreationRequest) (ThreadHandle, *types.ForkResult, error) {
-	resp, err := s.Demux().Send(ctx, "thread/fork", s.hooks.ThreadParams(request.Params))
+	params, err := s.hooks.ThreadParams(request.Params)
+	if err != nil {
+		return ThreadHandle{}, nil, fmt.Errorf("codex.Client.ForkThread: %w", err)
+	}
+	resp, err := s.Demux().Send(ctx, "thread/fork", params)
 	if err != nil {
 		return ThreadHandle{}, nil, fmt.Errorf("codex.Client.ForkThread: %w", err)
 	}

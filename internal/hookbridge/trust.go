@@ -106,19 +106,23 @@ func (h *listedHook) matchesGenerated(command string) bool {
 
 // ThreadParams merges the installation's exact hash approvals into session
 // flags without mutating caller parameters or persisting any trust state.
-func (i *Installation) ThreadParams(params map[string]any) map[string]any {
+func (i *Installation) ThreadParams(params map[string]any) (map[string]any, error) {
 	i.mu.Lock()
 	defer i.mu.Unlock()
 	if len(i.resources.trust) == 0 {
-		return params
+		return params, nil
 	}
 	request := maps.Clone(params)
-	config, _ := request["config"].(map[string]any)
+	value := request["config"]
+	config, valid := value.(map[string]any)
+	if value != nil && !valid {
+		return nil, fmt.Errorf("thread configuration must be an object to add generated hook trust")
+	}
 	config = maps.Clone(config)
 	if config == nil {
 		config = make(map[string]any, 1)
 	}
 	config["hooks.state"] = maps.Clone(i.resources.trust)
 	request["config"] = config
-	return request
+	return request, nil
 }

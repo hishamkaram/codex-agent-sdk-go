@@ -1019,9 +1019,19 @@ func replyTurnProgramPeer(frame turnProgramPeerRequest, starts int) error {
 		_, err := fmt.Fprintf(os.Stdout, `{"id":%d,"result":{"userAgent":"sdk-peer","codexHome":"/fixture","platformFamily":"unix","platformOs":"linux"}}
 `, id)
 		return err
+	case "hooks/list":
+		return replyTurnProgramPeerHooks(id)
 	case "thread/start":
 		_, err := fmt.Fprintf(os.Stdout, `{"id":%d,"result":{"thread":{"id":"t%d"},"model":"fixture-model"}}
 `, id, starts)
+		return err
+	case "thread/resume":
+		_, err := fmt.Fprintf(os.Stdout, `{"id":%d,"result":{"thread":{"id":%q,"status":{"type":"idle"}},"model":"fixture-model"}}
+`, id, frame.Params.ThreadID)
+		return err
+	case "thread/fork":
+		_, err := fmt.Fprintf(os.Stdout, `{"id":%d,"result":{"thread":{"id":"fixture-fork","status":{"type":"idle"}},"model":"fixture-model"}}
+`, id)
 		return err
 	case "thread/prepareApprovedPlan":
 		return replyApprovedPlanPeer(frame)
@@ -1038,6 +1048,55 @@ func replyTurnProgramPeer(frame turnProgramPeerRequest, starts int) error {
 	default:
 		return nil
 	}
+}
+
+// replyTurnProgramPeerHooks models the 0.171 inventory for the generated
+// command hooks. Read the child-selected home so an environment-routing bug
+// cannot produce a successful reply from the fixture.
+func replyTurnProgramPeerHooks(id int) error {
+	path := filepath.Join(os.Getenv("CODEX_HOME"), "hooks.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var config struct {
+		Hooks map[string][]struct {
+			Hooks []struct {
+				Command string
+			}
+		}
+	}
+	if err := json.Unmarshal(data, &config); err != nil {
+		return err
+	}
+	events := [...]struct {
+		configName string
+		wireName   string
+		keyLabel   string
+		matcher    any
+	}{
+		{"PreToolUse", "preToolUse", "pre_tool_use", ".*"},
+		{"PostToolUse", "postToolUse", "post_tool_use", ".*"},
+		{"SessionStart", "sessionStart", "session_start", ".*"},
+		{"UserPromptSubmit", "userPromptSubmit", "user_prompt_submit", nil},
+		{"Stop", "stop", "stop", nil},
+	}
+	hooks := make([]map[string]any, 0, len(events))
+	for _, event := range events {
+		groups := config.Hooks[event.configName]
+		if len(groups) != 1 || len(groups[0].Hooks) != 1 {
+			return fmt.Errorf("fixture expected one command for %s", event.configName)
+		}
+		hooks = append(hooks, map[string]any{
+			"source": "user", "sourcePath": path, "eventName": event.wireName,
+			"timeoutSec": 30, "handlerType": "command", "command": groups[0].Hooks[0].Command,
+			"matcher": event.matcher, "key": path + ":" + event.keyLabel + ":0:0",
+			"currentHash": "sha256:" + strings.Repeat("a", 64),
+		})
+	}
+	return json.NewEncoder(os.Stdout).Encode(map[string]any{
+		"id": id, "result": map[string]any{"data": []map[string]any{{"hooks": hooks}}},
+	})
 }
 
 func appendPeerLog(path, text string) error {

@@ -30,7 +30,10 @@ func TestInstallationApprovesOnlyGeneratedHookDeclarations(t *testing.T) {
 	}
 	config := map[string]any{"model_reasoning_effort": "medium"}
 	params := map[string]any{"threadId": "thread", "config": config}
-	out := installation.ThreadParams(params)
+	out, err := installation.ThreadParams(params)
+	if err != nil {
+		t.Fatal(err)
+	}
 	overrides, ok := out["config"].(map[string]any)
 	if !ok {
 		t.Fatalf("config = %v, want configuration object", out["config"])
@@ -42,6 +45,9 @@ func TestInstallationApprovesOnlyGeneratedHookDeclarations(t *testing.T) {
 	}
 	if !reflect.DeepEqual(overrides["hooks.state"], want) || overrides["model_reasoning_effort"] != "medium" {
 		t.Fatalf("config = %v, want only generated hashes and original model setting", overrides)
+	}
+	if params, err := installation.ThreadParams(map[string]any{"config": "invalid"}); params != nil || err == nil {
+		t.Fatalf("invalid configuration returned params=%v, err=%v", params, err)
 	}
 	if len(config) != 1 {
 		t.Fatalf("input request configuration was changed: %v", config)
@@ -72,7 +78,7 @@ func TestInstallationRejectsChangedOrIncompleteHookInventory(t *testing.T) {
 			if err := installation.SetTrust(marshalHookInventory(t, tt.edit(fixtureListedHooks(path)))); err == nil {
 				t.Fatal("unexpected approval")
 			}
-			if params := installation.ThreadParams(map[string]any{}); len(params) != 0 {
+			if params, err := installation.ThreadParams(map[string]any{}); err != nil || len(params) != 0 {
 				t.Fatalf("invalid inventory attached state: %v", params)
 			}
 		})

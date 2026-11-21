@@ -10,7 +10,8 @@ All notable changes to the Codex Agent SDK for Go are documented in this file.
 
 ### Fixed
 - Keep rollback working on peers that replace the count-based RPC with
-  paginated thread history and a revert boundary.
+  paginated thread history and a revert boundary. Rollback waits for
+  same-client work and rejects approval callback reentry.
 - Preserve detached review by forking the source and reviewing on the child
   when the peer accepts only inline review.
 - Scope Codex 0.171+ hook trust to the generated SDK declarations on each thread.

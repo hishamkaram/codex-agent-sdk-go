@@ -206,6 +206,8 @@ func (c *Client) threadFromHandle(handle session.ThreadHandle) *Thread {
 
 // Rollback removes the last numTurns turns from this thread's history.
 // It does not revert local file changes. numTurns must be at least 1.
+// Rollback waits for this client's active work on the thread to settle and
+// rejects calls made through the same client's approval callback context.
 //
 // Codex runtimes that replaced thread/rollback with thread/revert require
 // paginated history. On those runtimes, numTurns counts persisted provider
